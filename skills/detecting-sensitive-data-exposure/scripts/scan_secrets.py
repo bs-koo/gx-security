@@ -262,6 +262,10 @@ def run_fallback(target):
             # [M-4] content 전체에 finditer → 매치 시작 위치로 라인번호 계산
             for rule_id, stack, _exts, rx in ml_patterns:
                 for m in rx.finditer(content):
+                    # [재리뷰] 단일 줄 매치는 라인단위 규칙과 중복(이중 카운트)되므로
+                    # 여러 줄에 걸친 매치만 채택한다.
+                    if "\n" not in m.group(0):
+                        continue
                     # 매치 시작 오프셋 앞의 줄바꿈 수 + 1 = 라인번호
                     line_no = content[:m.start()].count("\n") + 1
                     snippet = m.group(0).replace("\n", " ").strip()[:200]

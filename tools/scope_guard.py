@@ -51,8 +51,10 @@ _PRIVATE_NETS = [
 ]
 # 항상 차단 — 링크로컬/클라우드 메타데이터/와일드카드
 _DENY_NETS = [
-    ipaddress.ip_network("169.254.0.0/16"),
-    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),   # IPv4 링크로컬/클라우드 메타데이터
+    ipaddress.ip_network("0.0.0.0/8"),         # 와일드카드/this-network
+    ipaddress.ip_network("fe80::/10"),         # IPv6 링크로컬
+    ipaddress.ip_network("::/128"),            # IPv6 unspecified
 ]
 
 
@@ -72,21 +74,27 @@ def _host_from(target: str) -> str:
 
 
 def _as_ip(host: str):
-    """일반 IP + 정수 표기(십진/16진/8진)까지 IP로 해석. 아니면 None."""
+    """일반 IP + 정수 표기(16진/8진/십진)를 IP로 해석하고, IPv4-mapped IPv6는 v4로 언랩.
+    위장 표기(127.0.0.1→2130706433, ::ffff:169.254.169.254 등)도 실제 대역으로 검사. 아니면 None."""
+    ip = None
     try:
-        return ipaddress.ip_address(host)
+        ip = ipaddress.ip_address(host)
     except ValueError:
-        pass
-    try:
-        if re.fullmatch(r"\d+", host):
-            return ipaddress.ip_address(int(host))
-        if re.fullmatch(r"0[xX][0-9a-fA-F]+", host):
-            return ipaddress.ip_address(int(host, 16))
-        if re.fullmatch(r"0[oO][0-7]+", host):
-            return ipaddress.ip_address(int(host, 8))
-    except (ValueError, ipaddress.AddressValueError):
-        pass
-    return None
+        try:
+            if re.fullmatch(r"0[xX][0-9a-fA-F]+", host):       # 16진
+                ip = ipaddress.ip_address(int(host, 16))
+            elif re.fullmatch(r"0[oO]?[0-7]+", host):           # 0o.. 또는 leading-zero 8진
+                ip = ipaddress.ip_address(int(host, 8))
+            elif re.fullmatch(r"\d+", host):                    # 십진 정수
+                ip = ipaddress.ip_address(int(host))
+        except (ValueError, ipaddress.AddressValueError):
+            return None
+    if ip is None:
+        return None
+    # IPv4-mapped IPv6(::ffff:a.b.c.d)는 v4로 정규화 → loopback/사설/메타데이터 검사를 우회하지 못하게
+    if ip.version == 6 and getattr(ip, "ipv4_mapped", None) is not None:
+        return ip.ipv4_mapped
+    return ip
 
 
 def _env_list(name: str):
