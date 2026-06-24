@@ -23,9 +23,10 @@ except ScopeError as e:
     print(e); sys.exit(1)   # 범위 밖이면 발사하지 않음
 ```
 
-- 로컬/사설(127.x, 10.x, 192.168.x)·스테이징(`*staging*`, `*.local`, `*dev*`) → 자동 허용
-- 공인 도메인/IP → `SECURITY_PLUGIN_AUTHORIZED=1` 환경변수 + `--authorized` 플래그 동시 충족 시에만(소유자 책임)
-- `prod`/`production`/`www.` → 항상 차단
+- 로컬 loopback(127.x)·예약 TLD(`.local`/`.test`) → 자동 허용
+- 사설망(10.x/172.16/192.168)·사내 스테이징 호스트 → `SECURITY_PLUGIN_ALLOW_PRIVATE=1` 또는 `SECURITY_PLUGIN_ALLOW_HOSTS` 등록 시 허용 (기본은 차단)
+- 공인 도메인/IP → `SECURITY_PLUGIN_AUTHORIZED=1` + `--authorized` 동시 충족 시에만 (소유자 책임)
+- `prod`/`production`/`www.`·IP 위장(정수·IPv6 매핑) → 항상 차단
 
 ## 워크플로우 (정적 → 동적 연계)
 
