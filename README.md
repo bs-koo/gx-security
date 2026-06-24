@@ -59,6 +59,14 @@ python skills/auditing-web-application-security/scripts/audit.py \
 또는 Claude Code에서 한 마디:
 > "gx-security로 sef-2026 전체 점검해줘 (로컬 http://localhost:8080)"
 
+### 슬래시 커맨드
+
+| 커맨드 | 용도 |
+|---|---|
+| `/gx-security:gx-audit <소스> [URL]` | 전체 점검 (정적 진단 + 동적 모의침투) |
+| `/gx-security:gx-diagnose <소스> [종류]` | 취약점 진단 (정적 SAST, 안전·앱 불필요) |
+| `/gx-security:gx-pentest <URL> [종류]` | 모의침투 (동적 DAST, 스테이징/로컬만) |
+
 자세한 시나리오·명령 레퍼런스는 **[USAGE.md](USAGE.md)**.
 
 ## 안전 (핵심)

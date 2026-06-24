@@ -1,7 +1,7 @@
 {
   "name": "gx-security",
   "description": "SQIsoft 사업부 웹앱(JSP 레거시·Spring 모던) 전용 보안 점검 툴킷. 스택을 자동 감지해 정적 스캔으로 취약점 후보를 도출하고, 실행 중인 스테이징/로컬에 실제 공격(동적)까지 발사하여 OWASP 핵심 취약점을 '취약점·이유·공격법·해결법'으로 산출하는 정적+동적 하이브리드(SAST+DAST). scope_guard로 운영 환경 발사를 코드로 차단한다.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "SQIsoft Security"
   },
