@@ -1,98 +1,125 @@
-# gx-security
+# 🛡️ gx-security
 
-> SQIsoft 사업부 웹앱(JSP 레거시 · Spring 모던) 전용 **보안 점검 툴킷**.
-> 스택을 자동 감지해 **정적 스캔**으로 취약점 후보를 잡고, 실행 중인 스테이징/로컬에 **실제 공격(동적)**까지 발사하여 OWASP 핵심 취약점을 **"취약점 · 이유 · 공격법 · 해결법"** 으로 짚어준다.
+> **SQIsoft 사업부 웹앱 전용 AI 보안 점검 툴킷.**
+> 소스에서 취약점을 **진단**하고, 실행 중인 대상에 **실제 모의 침투**해 "정말 뚫리는지"까지 증명한다.
 
-**한 줄 정의:** 자동화 보안 엔진(스캐너·공격 스크립트)을 **AI가 운전**하는 정적+동적(SAST+DAST) 하이브리드 보안 점검 플러그인.
-
-👉 **실전 사용법은 [USAGE.md](USAGE.md) 참고.**
+JSP 레거시와 Spring 모던 스택을 **자동 감지**하고, 발견한 취약점을 항상
+**① 취약한 점 · ② 이유 · ③ 뚫리는 방법 · ④ 해결법** 네 가지로 정리해 준다.
 
 ---
 
-## 정체성 — 하이브리드
-
-두 레이어가 결합돼 있고, **둘 다로 쓸 수 있다.**
-
-| 레이어 | 구성 | 성격 |
-|---|---|---|
-| **자동화 엔진** | `scan_all.py`, `audit.py`, `skills/*/scripts/*.py`, `tools/scope_guard.py` | 독립 실행 CLI. Claude 없이도 동작(CI 연동 가능) |
-| **AI 플러그인** | `skills/*/SKILL.md`, `references/`, `payloads.md` | AI가 엔진을 운전 — 오탐 제거·컨텍스트 판단·리포트 작성 |
+## ⚡ TL;DR
 
 ```
-정적 detecting-* (소스에서 후보 도출)
-        ↓  AI 검증(오탐 제거)
-동적 exploiting-* (스테이징/로컬에 실제 페이로드 발사 → 악용 확정)
-        ↓
-통합 4요소 리포트 (취약점·이유·공격법·해결법 + 실제 증거)
+취약점 진단(정적) ─▶ 모의 침투(동적) ─▶ 4요소 리포트
+   안전, 앱 불필요        실행 중 대상 필요      취약점·이유·공격법·해결법
 ```
 
-## 대상 스택 (자동 감지)
+가장 빠른 시작 — Claude Code에서 슬래시 커맨드 하나:
 
-| 스택 | 대표 | 감지 신호 |
-|---|---|---|
-| `spring-modern` | sqisoft-sef-2026 | `build.gradle.kts`, `@RestController`, `src/main/java` |
-| `jsp-legacy` | GSEED/Gseed_Web_Renew | `WEB-INF/web.xml`, `*.jsp`, `pom.xml` |
+```
+/gx-security:gx-audit  D:\SQ\sqisoft-sef-2026  http://localhost:8080
+```
 
-한 리포에 둘이 섞여도 디렉토리별로 판별해 각각에 맞는 룰을 적용한다.
+---
 
-## 스킬 카탈로그 (12)
+## 🚀 바로 쓰기 — 3개 커맨드
 
-| 분류 | 스킬 | 비고 |
-|---|---|---|
-| 🎯 **통합(메인 진입점)** | `auditing-web-application-security` | 정적+동적을 **한 번에** 오케스트레이션 |
-| 정적 (9) | `detecting-csrf-vulnerabilities` · `detecting-xss-vulnerabilities` · `detecting-sql-injection` · `detecting-file-upload-vulnerabilities` · `detecting-path-traversal` · `detecting-broken-access-control` · `detecting-auth-session-weaknesses` · `detecting-sensitive-data-exposure` · `detecting-ssrf-and-open-redirect` | 소스 점검(SAST) |
-| 동적 (2) | `exploiting-sql-injection` · `exploiting-xss-vulnerabilities` | 실제 공격(DAST). 7종 확장 예정 |
-
-모든 점검 리포트는 취약점마다 **4요소**(① 취약한 점 ② 취약한 이유 ③ 뚫리는 방법 ④ 해결방법)를 포함한다.
-
-## 빠른 시작
+| 커맨드 | 한 일 | 안전도 |
+|:--|:--|:--:|
+| **`/gx-security:gx-diagnose`** `<소스>` | 취약점 **진단** (소스만 분석) | 🟢 안전 |
+| **`/gx-security:gx-pentest`** `<URL>` | **모의 침투** (실제 공격) | 🟡 스테이징/로컬만 |
+| **`/gx-security:gx-audit`** `<소스> [URL]` | **전체** (진단 + 침투 + 통합 리포트) | 🟡 URL 줄 때만 공격 |
 
 ```bash
-# 통합 점검 한 방 (정적만)
-python skills/auditing-web-application-security/scripts/audit.py "D:\SQ\sqisoft-sef-2026"
+# 진단만 — 앱 안 띄워도 됨, 완전 안전
+/gx-security:gx-diagnose  D:\SQ\GSEED\source\Gseed_Web_Renew
 
-# 정적 + 동적 (실행 중인 로컬/스테이징 대상)
-python skills/auditing-web-application-security/scripts/audit.py \
-    "D:\SQ\sqisoft-sef-2026" --target "http://localhost:8080" --params id,q
+# 특정 취약점만
+/gx-security:gx-diagnose  D:\SQ\sqisoft-sef-2026  xss
+
+# 모의 침투 — 실행 중인 로컬 대상에 실제 공격
+/gx-security:gx-pentest  http://localhost:8080/board?id=1  sqli --param id
 ```
 
-또는 Claude Code에서 한 마디:
-> "gx-security로 sef-2026 전체 점검해줘 (로컬 http://localhost:8080)"
+> 슬래시 커맨드 없이 **자연어**로도 됩니다 — *"gx-security로 sef-2026 점검해줘"*
+> CLI로도 됩니다 — `python scan_all.py <소스>` (Claude 없이, CI 연동 가능)
 
-### 슬래시 커맨드
+---
 
-| 커맨드 | 용도 |
-|---|---|
-| `/gx-security:gx-audit <소스> [URL]` | 전체 점검 (정적 진단 + 동적 모의침투) |
-| `/gx-security:gx-diagnose <소스> [종류]` | 취약점 진단 (정적 SAST, 안전·앱 불필요) |
-| `/gx-security:gx-pentest <URL> [종류]` | 모의침투 (동적 DAST, 스테이징/로컬만) |
+## 🧠 어떻게 동작하나 — 하이브리드
 
-자세한 시나리오·명령 레퍼런스는 **[USAGE.md](USAGE.md)**.
-
-## 안전 (핵심)
-
-- **정적은 안전** — 소스를 읽기만 한다.
-- **동적은 통제된 주의** — 실제 공격이므로 `tools/scope_guard.py`가 **운영(`prod`/`www`/공인 대상)을 코드로 차단**하고, **로컬/스테이징만 허용**한다.
-- 비파괴 기본(파괴적 페이로드는 `--allow-destructive` 필요), `reports/`는 `.gitignore`로 제외.
-- 상세: [ATTACK_SAFETY.md](ATTACK_SAFETY.md)
-
-> ⚠️ 본 도구의 공격 기능은 **권한 있는 사내 보안 테스트(펜테스트)** 목적에 한한다.
-
-## 디렉토리 구조
+**자동화 엔진**(스캐너·공격 스크립트)을 **AI가 운전**하는 구조다. 둘을 합쳐 정적의 넓은 커버리지와 동적의 확실한 증명을 모두 얻는다.
 
 ```
-gx-security/  (security-plugin)
-├── .claude-plugin/plugin.json
-├── README.md · USAGE.md · ATTACK_SAFETY.md · .gitignore
-├── scan_all.py                     # 정적 통합 런처
-├── tools/scope_guard.py            # 동적 안전게이트
+1. 진단 (정적/SAST)   소스에서 취약점 후보를 넓게 도출
+        │
+        ▼  AI가 코드를 읽어 오탐 제거
+2. 침투 (동적/DAST)   스테이징/로컬에 실제 페이로드 발사 → 악용 확정
+        │
+        ▼
+3. 리포트            취약점·이유·공격법·해결법 + 실제 증거 (reports/)
+```
+
+| 레이어 | 무엇 | 특징 |
+|:--|:--|:--|
+| ⚙️ 자동화 엔진 | `scan_all.py` · `audit.py` · `attack_*.py` · `scope_guard.py` | 독립 CLI, Claude 없이 동작 |
+| 🤖 AI 플러그인 | `skills/*/SKILL.md` · `commands/*` | 엔진 운전 · 오탐 제거 · 리포트 |
+
+---
+
+## 📦 구성
+
+**커맨드 3** + **스킬 12**
+
+- 🎯 **통합** — `auditing-web-application-security` *(gx-audit이 호출)*
+- 🔍 **진단 9종** *(gx-diagnose)* — CSRF · XSS · SQLi · 파일업로드 · Path Traversal · 접근통제 · 인증/세션 · 민감정보 · SSRF
+- 💥 **침투 2종** *(gx-pentest)* — SQLi · XSS *(7종 확장 예정)*
+
+---
+
+## 🎯 지원 스택 (자동 감지)
+
+| 스택 | 대표 프로젝트 | 감지 신호 |
+|:--|:--|:--|
+| `spring-modern` | sqisoft-sef-2026 | `build.gradle.kts` · `@RestController` |
+| `jsp-legacy` | Gseed_Web_Renew | `WEB-INF/web.xml` · `*.jsp` · `pom.xml` |
+
+한 저장소에 둘이 섞여도 **디렉토리별로 판별**해 각각에 맞는 룰을 적용한다.
+
+---
+
+## 🔒 안전장치
+
+- **정적 진단은 안전** — 소스를 읽기만 한다.
+- **동적 침투는 통제된 주의** — `tools/scope_guard.py`가 **운영(`prod`/`www`/공인) 대상을 코드로 차단**하고 **로컬/스테이징만 허용**한다.
+- **비파괴 기본** — 파괴적 페이로드는 `--allow-destructive` + 사람 승인 필요.
+- 점검 산출물 `reports/`는 `.gitignore`로 제외(민감).
+
+> ⚠️ 공격 기능은 **권한 있는 사내 보안 테스트(펜테스트)** 목적에 한한다. → [ATTACK_SAFETY.md](ATTACK_SAFETY.md)
+
+---
+
+## 📁 구조
+
+```
+gx-security/
+├── commands/        gx-audit · gx-diagnose · gx-pentest
 ├── skills/
-│   ├── auditing-web-application-security/   # 통합 오케스트레이터 + audit.py
-│   ├── detecting-*/   (9)          # 정적: SKILL.md + references + rules + scripts
-│   └── exploiting-*/  (2)          # 동적: SKILL.md + references/payloads + scripts
-└── reports/  (gitignore, 민감)
+│   ├── auditing-web-application-security/   통합 오케스트레이터
+│   ├── detecting-*/   (9)   정적 진단
+│   └── exploiting-*/  (2)   동적 침투
+├── scan_all.py · tools/scope_guard.py
+└── reports/         (gitignore, 민감)
 ```
 
-## 라이선스
+---
 
-Proprietary — SQIsoft 사내용.
+## 📖 더 보기
+
+- **[USAGE.md](USAGE.md)** — 설치 · 시나리오별 사용법 · 명령 레퍼런스 · FAQ
+- **[ATTACK_SAFETY.md](ATTACK_SAFETY.md)** — 동적 공격 안전 수칙
+
+---
+
+<sub>Proprietary · SQIsoft 사내용 · v0.2.0</sub>
