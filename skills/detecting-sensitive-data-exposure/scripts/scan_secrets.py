@@ -159,23 +159,25 @@ FALLBACK_PATTERNS = [
             r'[^)]*(?:password|passwd|pwd|주민|jumin|ssn|주민번호)[^)]*\)',
         ),
     ),
-    # System.out.println 전체 (운영 코드에 남아있으면 경고)
+    # [M-3] System.out.println 전체는 노이즈가 크므로 별도 카테고리 "debug-output-residue"로
+    # 분리하고 severity=info 수준으로 처리. 실제 민감정보 규칙과 출력에서 구분됨.
     (
-        "system-out-println",
+        "debug-output-residue",
         "spring-modern",
         (".java", ".kt"),
         re.compile(r'System\.out\.print(?:ln)?\s*\('),
     ),
 
     # --- JSP 패턴 ---
-    # JSP 주석 내 비밀번호/계정 언급
+    # [M-4] jsp-comment-credential 은 re.DOTALL 멀티라인 규칙이므로
+    # 라인단위 루프에서 제외하고 별도 멀티라인 집합에 등록 (아래 MULTILINE_PATTERNS 참조)
+    # 여기서는 단일 라인에서도 매칭되는 단순화 버전만 남긴다.
     (
         "jsp-comment-credential",
         "jsp-legacy",
         (".jsp",),
         re.compile(
-            r'(?i)<!--.*?(?:password|passwd|pwd|id/pw|계정|비밀번호|아이디).*?-->',
-            re.DOTALL,
+            r'(?i)<!--[^>]*(?:password|passwd|pwd|id/pw|계정|비밀번호|아이디)[^>]*-->',
         ),
     ),
 
@@ -190,38 +192,93 @@ FALLBACK_PATTERNS = [
     ),
 ]
 
+# [M-4] 멀티라인 전용 패턴: (rule_id, stack, 대상 확장자 튜플, 컴파일된 정규식)
+# run_fallback에서 content 전체에 finditer 적용 후 오프셋→라인번호 변환
+MULTILINE_PATTERNS = [
+    (
+        "jsp-comment-credential-multiline",
+        "jsp-legacy",
+        (".jsp",),
+        re.compile(
+            r'(?i)<!--.*?(?:password|passwd|pwd|id/pw|계정|비밀번호|아이디).*?-->',
+            re.DOTALL,
+        ),
+    ),
+]
+
+
+# [M-3] debug-output-residue 는 severity=info 로 간주하는 rule_id 집합
+INFO_RULES = {"debug-output-residue"}
+
 
 # ── 폴백 실행 ────────────────────────────────────────────────────
 def run_fallback(target):
+    """라인단위 FALLBACK_PATTERNS + 멀티라인 MULTILINE_PATTERNS 를 분리 처리.
+
+    [M-4] re.DOTALL 멀티라인 규칙은 content 전체에 finditer 적용 후
+    매치 시작 오프셋을 라인번호로 환산해 정확한 위치를 기록한다.
+    라인단위 루프와 섞으면 여러 줄 주석이 미탐되므로 완전히 분리.
+
+    [M-3] debug-output-residue(System.out.println 전체) 는 severity=info 필드를
+    추가해 실제 민감정보 규칙과 출력에서 구분될 수 있도록 한다.
+    """
     findings = []
     for root, dirs, files in os.walk(target):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         for f in files:
             ext = os.path.splitext(f)[1].lower()
-            applicable = [p for p in FALLBACK_PATTERNS if ext in p[2]]
-            if not applicable:
+            line_patterns = [p for p in FALLBACK_PATTERNS if ext in p[2]]
+            ml_patterns   = [p for p in MULTILINE_PATTERNS if ext in p[2]]
+            if not line_patterns and not ml_patterns:
                 continue
             path = os.path.join(root, f)
             try:
                 with open(path, encoding="utf-8", errors="replace") as fh:
                     content = fh.read()
-                # 라인별로 매칭
-                for i, line in enumerate(content.splitlines(), 1):
-                    for rule_id, stack, _exts, rx in applicable:
-                        if rx.search(line):
-                            snippet = line.strip()[:200]
-                            # 명백한 오탐 제외: placeholder 형태
-                            if re.search(r'\$\{[A-Z_]+\}', snippet):
-                                continue
-                            findings.append({
-                                "file": path,
-                                "line": i,
-                                "rule_id": rule_id,
-                                "stack": stack,
-                                "snippet": snippet,
-                            })
             except OSError:
                 continue
+
+            # ── 라인단위 매칭 ──────────────────────────────────────
+            lines = content.splitlines()
+            for i, line in enumerate(lines, 1):
+                for rule_id, stack, _exts, rx in line_patterns:
+                    if rx.search(line):
+                        snippet = line.strip()[:200]
+                        if re.search(r'\$\{[A-Z_]+\}', snippet):
+                            continue
+                        entry = {
+                            "file": path,
+                            "line": i,
+                            "rule_id": rule_id,
+                            "stack": stack,
+                            "snippet": snippet,
+                        }
+                        # [M-3] 디버그 잔류 출력은 info 등급 표기
+                        if rule_id in INFO_RULES:
+                            entry["severity"] = "info"
+                        findings.append(entry)
+
+            # ── 멀티라인 매칭 ──────────────────────────────────────
+            # [M-4] content 전체에 finditer → 매치 시작 위치로 라인번호 계산
+            for rule_id, stack, _exts, rx in ml_patterns:
+                for m in rx.finditer(content):
+                    # [재리뷰] 단일 줄 매치는 라인단위 규칙과 중복(이중 카운트)되므로
+                    # 여러 줄에 걸친 매치만 채택한다.
+                    if "\n" not in m.group(0):
+                        continue
+                    # 매치 시작 오프셋 앞의 줄바꿈 수 + 1 = 라인번호
+                    line_no = content[:m.start()].count("\n") + 1
+                    snippet = m.group(0).replace("\n", " ").strip()[:200]
+                    if re.search(r'\$\{[A-Z_]+\}', snippet):
+                        continue
+                    findings.append({
+                        "file": path,
+                        "line": line_no,
+                        "rule_id": rule_id,
+                        "stack": stack,
+                        "snippet": snippet,
+                    })
+
     return findings
 
 
@@ -272,19 +329,30 @@ def main():
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
+        # [M-3] info 등급(debug-output-residue)과 실제 민감정보 후보를 구분
+        info_findings = [c for c in findings if c.get("severity") == "info"]
+        real_findings = [c for c in findings if c.get("severity") != "info"]
+
         print(f"대상     : {args.target}")
         print(f"감지 스택: {', '.join(stacks)}")
         print(f"엔진     : {engine}")
-        print(f"후보     : {len(findings)}건")
+        print(f"후보     : {len(real_findings)}건 (민감정보)  /  {len(info_findings)}건 (info: 디버그 잔류)")
         if result["rule_summary"]:
             print("\n[룰별 집계]")
             for rule_id, cnt in sorted(result["rule_summary"].items(),
                                         key=lambda x: -x[1]):
-                print(f"  {rule_id}: {cnt}건")
-        print()
-        for c in findings:
-            print(f"  [{c['stack']}] {c['rule_id']}  {c['file']}:{c['line']}")
-            print(f"      {c['snippet']}")
+                tag = "  [info]" if rule_id in INFO_RULES else ""
+                print(f"  {rule_id}: {cnt}건{tag}")
+        if real_findings:
+            print("\n[민감정보 후보]")
+            for c in real_findings:
+                print(f"  [{c['stack']}] {c['rule_id']}  {c['file']}:{c['line']}")
+                print(f"      {c['snippet']}")
+        if info_findings:
+            print("\n[디버그 잔류 출력 (info — 낮은 우선순위)]")
+            for c in info_findings:
+                print(f"  [{c['stack']}] {c['rule_id']}  {c['file']}:{c['line']}")
+                print(f"      {c['snippet']}")
         print(
             "\n※ 후보일 뿐입니다. ${{...}} placeholder·공개키는 오탐, "
             "2단계 AI 컨텍스트 검증 필요."
