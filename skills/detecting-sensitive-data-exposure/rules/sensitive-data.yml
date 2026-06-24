@@ -1,0 +1,192 @@
+# SQIsoft 민감정보 노출 Semgrep ruleset
+# 사용: semgrep --config rules/sensitive-data.yml <target>
+# 두 스택(spring-modern / jsp-legacy)을 함께 커버한다.
+# 스캐너는 "넓게 후보를 잡고", 최종 판정은 SKILL.md 2단계의 AI 검증이 한다.
+# 특히 ${...} placeholder와 실제 평문 값 구분은 AI 검증 단계에서 확정한다.
+
+rules:
+  # ───────────────────────── 공통 — 하드코딩 자격증명 ─────────────────────────
+
+  - id: sqisoft-hardcoded-password-assignment
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Java 소스에서 비밀번호·시크릿이 문자열 리터럴로 직접 할당되어 있습니다.
+      형상관리에 커밋되면 접근자 전원이 자격증명을 획득합니다.
+      환경변수 또는 시크릿 저장소(Vault, AWS SM)로 분리하세요.
+    metadata:
+      cwe: "CWE-798"
+      owasp: "A02:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          # String password = "실제값" 형태
+          - pattern: |
+              String $VAR = "$VALUE";
+          - pattern: |
+              private String $VAR = "$VALUE";
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i)(password|passwd|pwd|secret|secretKey|apiKey|api_key|token|authKey|privateKey|credentials)
+      - metavariable-regex:
+          metavariable: $VALUE
+          # 길이 6자 이상, 환경변수 참조(${ 시작) 제외
+          regex: ^(?!\$\{).{6,}$
+
+  - id: sqisoft-value-annotation-default-secret
+    languages: [java]
+    severity: WARNING
+    message: >-
+      @Value 기본값에 시크릿이 하드코딩되어 있습니다.
+      환경변수가 설정되지 않은 경우 이 값이 그대로 사용됩니다.
+    metadata:
+      cwe: "CWE-798"
+      owasp: "A02:2021"
+      stack: spring-modern
+      confidence: needs-context
+    pattern-regex: '@Value\s*\(\s*"\$\{[^}]+:[^$\{"][^}]{5,}\}"\s*\)'
+
+  - id: sqisoft-hardcoded-api-key-in-string
+    languages: [java]
+    severity: WARNING
+    message: >-
+      API 키·인증키가 문자열 리터럴로 소스에 박혀 있습니다.
+      Base64 인코딩된 값도 포함됩니다. 환경변수 또는 시크릿 저장소로 분리하세요.
+    metadata:
+      cwe: "CWE-798"
+      owasp: "A02:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: |
+              String $VAR = "$VALUE";
+          - pattern: |
+              String $VAR = "$VALUE" + ...;
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i)(confmKey|apiKey|api_key|authKey|serviceKey|accessKey|gbcsKey)
+      - metavariable-regex:
+          metavariable: $VALUE
+          regex: ^[A-Za-z0-9+/=]{8,}$
+
+  # ───────────────────────── spring-modern ─────────────────────────
+
+  - id: sqisoft-spring-log-password-value
+    languages: [java]
+    severity: WARNING
+    message: >-
+      로그 출력에 비밀번호·개인정보 변수가 포함되어 있을 수 있습니다.
+      로그 파일은 평문으로 저장되므로 민감 값은 마스킹하거나 제외하세요.
+    metadata:
+      cwe: "CWE-200"
+      owasp: "A02:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: log.$METHOD($FMT, ..., $VAR, ...)
+          - pattern: log.$METHOD($FMT + $VAR)
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i)(password|passwd|pwd|주민|jumin|ssn|resno|주민번호|개인정보|email|phone|tel|mobile|birth|birthday|생년월일)
+
+  - id: sqisoft-system-out-print
+    languages: [java]
+    severity: WARNING
+    message: >-
+      System.out.println/print은 운영 환경에서 로그 파일이나 콘솔에 평문 출력됩니다.
+      SLF4J 로거로 교체하고 민감 값은 포함하지 마세요.
+    metadata:
+      cwe: "CWE-200"
+      owasp: "A02:2021"
+      stack: spring-modern
+      confidence: medium
+    patterns:
+      - pattern-either:
+          - pattern: System.out.println(...)
+          - pattern: System.out.print(...)
+          - pattern: System.err.println(...)
+
+  - id: sqisoft-dto-password-field-no-ignore
+    languages: [java]
+    severity: WARNING
+    message: >-
+      DTO/VO 클래스에 비밀번호·암호화 필드가 있으나 @JsonIgnore가 없습니다.
+      REST 응답에 이 필드가 직렬화되어 클라이언트에 노출될 수 있습니다.
+    metadata:
+      cwe: "CWE-200"
+      owasp: "A02:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern: |
+          class $CLASS {
+            ...
+            $TYPE $FIELD;
+            ...
+          }
+      - metavariable-regex:
+          metavariable: $FIELD
+          regex: (?i)(password|passwd|pwd|encryptedPwd|pwdHash|hashedPw)
+      - pattern-not: |
+          class $CLASS {
+            ...
+            @com.fasterxml.jackson.annotation.JsonIgnore
+            $TYPE $FIELD;
+            ...
+          }
+
+  # ───────────────────────── jsp-legacy ─────────────────────────
+
+  - id: sqisoft-properties-hardcoded-password
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      properties 파일에서 비밀번호·시크릿이 평문으로 설정되어 있습니다.
+      ${ENV_VAR} 참조 방식으로 교체하고 실제 값은 환경변수 또는 시크릿 저장소로 분리하세요.
+    metadata:
+      cwe: "CWE-798"
+      owasp: "A02:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    paths:
+      include:
+        - "*.properties"
+    # password=실제값 패턴 (${...} 참조 형태 제외)
+    pattern-regex: '(?i)(password|passwd|pwd|secret|apiKey|api_key|secretKey|initPassword|InitPassword)\s*=\s*(?!\$\{)[^\s#]{4,}'
+
+  - id: sqisoft-jsp-comment-credential
+    languages: [generic]
+    severity: WARNING
+    message: >-
+      JSP/Java 주석에 계정 정보·비밀번호가 포함되어 있을 수 있습니다.
+      주석도 소스 코드의 일부이므로 자격증명을 포함하지 마세요.
+    metadata:
+      cwe: "CWE-200"
+      owasp: "A02:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    paths:
+      include:
+        - "*.jsp"
+        - "*.java"
+    pattern-regex: '(?i)(<!--.*?(password|passwd|pwd|계정|아이디|비밀번호|id/pw).*?-->|//.*?(password|passwd|pwd)\s*[:=]\s*\S+)'
+
+  - id: sqisoft-xml-hardcoded-password
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      XML 설정 파일에서 비밀번호가 평문으로 설정되어 있습니다.
+      ${...} EL 참조로 교체하세요.
+    metadata:
+      cwe: "CWE-798"
+      owasp: "A02:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    paths:
+      include:
+        - "*.xml"
+    # <property name="password" value="실제값"/> — ${...} 참조 제외
+    pattern-regex: '<property\s+name\s*=\s*"(?i)(password|passwd|pwd|secret)"\s+value\s*=\s*"(?!\$\{)[^"]{4,}"'

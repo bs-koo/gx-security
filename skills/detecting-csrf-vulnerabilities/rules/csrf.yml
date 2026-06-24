@@ -1,0 +1,87 @@
+# SQIsoft CSRF Semgrep ruleset
+# 사용: semgrep --config rules/csrf.yml <target>
+# 두 스택(spring-modern / jsp-legacy)을 함께 커버한다. 스캐너는 "넓게 후보를 잡고",
+# 최종 판정은 SKILL.md 2단계의 AI 검증이 한다(특히 stateless 예외).
+
+rules:
+  # ───────────────────────── spring-modern ─────────────────────────
+  - id: sqisoft-spring-csrf-disabled
+    languages: [java]
+    severity: WARNING
+    message: >-
+      Spring Security CSRF 보호가 비활성화되어 있습니다(csrf().disable()).
+      쿠키 기반 세션(JSESSIONID 등)을 사용한다면 모든 상태변경 요청이 위조 가능합니다.
+      순수 stateless JWT(헤더 인증)인 경우에만 의도된 예외일 수 있으므로 인증 방식을 확인하세요.
+    metadata:
+      cwe: "CWE-352"
+      owasp: "A01:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: $H.csrf().disable()
+          - pattern: $H.csrf(csrf -> csrf.disable())
+          - pattern: $H.csrf($C -> $C.disable())
+          - pattern: $H.csrf(org.springframework.security.config.Customizer.withDefaults())
+
+  - id: sqisoft-spring-cors-wildcard-with-credentials
+    languages: [java]
+    severity: WARNING
+    message: >-
+      CORS가 모든 오리진(*)을 허용합니다. 자격증명(쿠키)을 함께 허용하면 CSRF/정보노출 위험이
+      커집니다. 허용 오리진을 사업부 도메인으로 제한하세요.
+    metadata:
+      cwe: "CWE-942"
+      owasp: "A05:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: '@org.springframework.web.bind.annotation.CrossOrigin(origins = "*")'
+          - pattern: '@CrossOrigin(origins = "*")'
+          - pattern: '@CrossOrigin'
+
+  # ───────────────────────── jsp-legacy ─────────────────────────
+  # JSP는 generic 모드(토큰 hidden 필드 부재는 음성 패턴이라 룰로 단정 어려움).
+  # 여기서는 "명백한 GET 상태변경 링크"와 "doPost 토큰 미검증 의심"을 후보로 잡고,
+  # form별 토큰 누락은 SKILL.md 2단계에서 AI가 전수 확인한다.
+
+  - id: sqisoft-jsp-state-changing-get-link
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - "*.jsp"
+        - "*.html"
+    message: >-
+      상태를 변경하는 동작(delete/withdraw/update/remove)을 GET 링크로 노출하고 있을 수 있습니다.
+      CSRF 토큰과 무관하게 설계 결함입니다. POST + 토큰으로 전환하세요.
+    metadata:
+      cwe: "CWE-352"
+      owasp: "A01:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    pattern-regex: '<a[^>]+href="[^"]*(delete|withdraw|remove|update|approve|reject)[^"]*"'
+
+  - id: sqisoft-servlet-dopost-without-token-check
+    languages: [java]
+    severity: INFO
+    message: >-
+      Servlet doPost가 상태를 변경하는데 CSRF 토큰 검증 호출이 보이지 않습니다.
+      전역 CSRF 필터(CSRFGuard 등) 적용 여부를 확인하고, 없다면 토큰 검증을 추가하세요.
+    metadata:
+      cwe: "CWE-352"
+      owasp: "A01:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern: |
+          protected void doPost(HttpServletRequest $REQ, HttpServletResponse $RESP) { ... }
+      - pattern-not-inside: |
+          protected void doPost(HttpServletRequest $REQ, HttpServletResponse $RESP) {
+            ... $TOKEN.verify(...); ...
+          }
+      - metavariable-pattern:
+          metavariable: $REQ
+          patterns:
+            - pattern-not-regex: "^$"

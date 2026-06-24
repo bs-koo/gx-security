@@ -1,0 +1,175 @@
+# SQIsoft XSS Semgrep ruleset
+# 사용: semgrep --config rules/xss.yml <target>
+# 두 스택(spring-modern / jsp-legacy)을 함께 커버한다. 스캐너는 "넓게 후보를 잡고",
+# 최종 판정은 SKILL.md 2단계의 AI 검증이 한다(특히 fn:escapeXml / c:out 오탐 제거).
+
+rules:
+  # ───────────────────────── jsp-legacy ─────────────────────────
+
+  - id: sqisoft-jsp-scriptlet-direct-output
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - "*.jsp"
+    message: >-
+      JSP scriptlet에서 request.getParameter() / request.getAttribute() 값을
+      이스케이프 없이 직접 출력하고 있습니다. 반사형 XSS 위험.
+      fn:escapeXml() 또는 <c:out> 으로 감싸세요.
+    metadata:
+      cwe: "CWE-79"
+      owasp: "A03:2021"
+      stack: jsp-legacy
+      confidence: high
+    pattern-regex: '<%=\s*request\.(getParameter|getAttribute)\s*\('
+
+  - id: sqisoft-jsp-el-unescaped-param
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - "*.jsp"
+    message: >-
+      EL 표현식 ${param.x} 또는 ${requestScope.x}를 이스케이프 없이 출력하고 있습니다.
+      JSP EL은 HTML 자동이스케이프를 하지 않습니다. 반사형 XSS 위험.
+      ${fn:escapeXml(param.x)} 또는 <c:out value="${param.x}"/> 로 변경하세요.
+    metadata:
+      cwe: "CWE-79"
+      owasp: "A03:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    pattern-regex: '\$\{param\.[^}]+\}|\$\{requestScope\.[^}]+\}'
+
+  - id: sqisoft-jsp-c-out-escapexml-false
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - "*.jsp"
+    message: >-
+      <c:out escapeXml="false">로 HTML 이스케이프를 명시적으로 비활성화했습니다.
+      사용자 데이터가 출력되면 XSS 위험입니다. 리치 텍스트라면 AntiSamy/jsoup 정화 후 출력하세요.
+    metadata:
+      cwe: "CWE-79"
+      owasp: "A03:2021"
+      stack: jsp-legacy
+      confidence: high
+    pattern-regex: 'escapeXml\s*=\s*["'']false["'']'
+
+  - id: sqisoft-jsp-el-in-javascript
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - "*.jsp"
+    message: >-
+      JS 블록 내에서 EL 표현식으로 값을 직접 삽입하고 있습니다.
+      HTML 이스케이프는 JavaScript 컨텍스트에서 불충분합니다. DOM XSS 위험.
+      서버에서 JSON으로 전달하거나, JS 이스케이프(Apache Commons Text StringEscapeUtils.escapeEcmaScript)를 사용하세요.
+    metadata:
+      cwe: "CWE-79"
+      owasp: "A03:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    pattern-regex: 'var\s+\w+\s*=\s*["''][^"'']*\$\{[^}]+\}[^"'']*["'']|var\s+\w+\s*=\s*\$\{[^}]+\}'
+
+  # ───────────────────────── spring-modern ─────────────────────────
+
+  - id: sqisoft-spring-responsebody-html-concat
+    languages: [java]
+    severity: WARNING
+    message: >-
+      @ResponseBody 또는 @RestController 메서드에서 문자열 연결로 HTML을 구성하고 있습니다.
+      사용자 입력이 포함되면 반사형 XSS 위험입니다.
+      템플릿 엔진을 사용하거나 JSON으로 반환하고 프론트에서 textContent로 렌더링하세요.
+    metadata:
+      cwe: "CWE-79"
+      owasp: "A03:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: |
+              @org.springframework.web.bind.annotation.ResponseBody
+              $RET $METHOD(...) { ... return "<..." + $VAR + "..."; ... }
+          - pattern: |
+              @ResponseBody
+              $RET $METHOD(...) { ... return $X + $VAR + $Y; ... }
+
+  - id: sqisoft-thymeleaf-utext
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - "*.html"
+        - "*.htm"
+    message: >-
+      Thymeleaf th:utext는 HTML 이스케이프를 수행하지 않습니다.
+      사용자 데이터가 바인딩되면 XSS 위험입니다. th:text로 변경하거나
+      리치 텍스트라면 AntiSamy/jsoup 정화 후 사용하세요.
+    metadata:
+      cwe: "CWE-79"
+      owasp: "A03:2021"
+      stack: spring-modern
+      confidence: needs-context
+    pattern-regex: 'th:utext'
+
+  - id: sqisoft-js-innerhtml-assignment
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - "*.js"
+        - "*.ts"
+        - "*.jsx"
+        - "*.tsx"
+        - "*.vue"
+    message: >-
+      innerHTML에 동적 값을 할당하고 있습니다. API 응답이나 사용자 입력이
+      포함되면 DOM XSS 위험입니다. textContent 또는 DOMPurify.sanitize() 사용을 권장합니다.
+    metadata:
+      cwe: "CWE-79"
+      owasp: "A03:2021"
+      stack: spring-modern
+      confidence: needs-context
+    pattern-regex: '\.innerHTML\s*='
+
+  - id: sqisoft-react-dangerous-innerhtml
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - "*.jsx"
+        - "*.tsx"
+        - "*.js"
+        - "*.ts"
+    message: >-
+      dangerouslySetInnerHTML에 사용자 제어 데이터를 전달하고 있습니다. DOM XSS 위험.
+      DOMPurify.sanitize()로 정화 후 전달하거나 children 렌더링으로 변경하세요.
+    metadata:
+      cwe: "CWE-79"
+      owasp: "A03:2021"
+      stack: spring-modern
+      confidence: needs-context
+    pattern-regex: 'dangerouslySetInnerHTML'
+
+  - id: sqisoft-js-document-write
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - "*.js"
+        - "*.ts"
+        - "*.jsx"
+        - "*.tsx"
+        - "*.jsp"
+        - "*.html"
+    message: >-
+      document.write()는 사용자 입력이나 URL 파라미터를 받으면 DOM XSS 위험입니다.
+      DOM API(createElement, textContent)로 대체하세요.
+    metadata:
+      cwe: "CWE-79"
+      owasp: "A03:2021"
+      stack: spring-modern
+      confidence: needs-context
+    pattern-regex: 'document\.write\s*\('

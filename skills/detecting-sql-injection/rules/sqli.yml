@@ -1,0 +1,121 @@
+# SQIsoft SQL Injection Semgrep ruleset
+# 사용: semgrep --config rules/sqli.yml <target>
+# 두 스택(spring-modern / jsp-legacy)을 함께 커버한다. 스캐너는 "넓게 후보를 잡고",
+# 최종 판정은 SKILL.md 2단계의 AI 검증이 한다(특히 #{} vs ${} 구분, allowlist 존재 여부).
+
+rules:
+  # ───────────────────────── jsp-legacy ─────────────────────────
+
+  - id: sqisoft-jsp-statement-string-concat
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Statement.executeQuery/executeUpdate에 문자열 연결로 SQL을 조립하고 있습니다.
+      사용자 입력(getParameter 등)이 포함되면 SQL Injection이 확정됩니다.
+      PreparedStatement와 ? 플레이스홀더로 전환하세요.
+    metadata:
+      cwe: "CWE-89"
+      owasp: "A03:2021"
+      stack: jsp-legacy
+      confidence: high
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $STMT.executeQuery($SQL + $INPUT)
+          - pattern: |
+              $STMT.executeUpdate($SQL + $INPUT)
+          - pattern: |
+              $CONN.createStatement().executeQuery($SQL + $INPUT)
+
+  - id: sqisoft-jdbc-string-concat-query
+    languages: [java]
+    severity: ERROR
+    message: >-
+      JDBC Connection/Statement에서 문자열 연결로 SQL을 조립하고 있습니다.
+      PreparedStatement와 ? 플레이스홀더로 전환하세요.
+    metadata:
+      cwe: "CWE-89"
+      owasp: "A03:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern: |
+          String $SQL = $PREFIX + $INPUT + $SUFFIX;
+          ... $STMT.execute($SQL); ...
+      - pattern-not: |
+          String $SQL = "..." ;
+
+  - id: sqisoft-mybatis-xml-dollar-interpolation
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "*.xml"
+    message: >-
+      MyBatis Mapper XML에서 ${} 구문을 사용하고 있습니다.
+      ${}는 SQL 조각을 문자열로 치환하므로 사용자 입력이 들어오면 SQL Injection 위험입니다.
+      값 바인딩에는 #{} 로 교체하세요. ORDER BY·컬럼명 동적 삽입이 필요하면
+      서비스 레이어에서 허용 목록(allowlist) 검증 후 전달하세요.
+    metadata:
+      cwe: "CWE-89"
+      owasp: "A03:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    pattern-regex: '\$\{(?!pageContext|contextPath|sessionScope|requestScope\.LoginVo)[^}]+\}'
+
+  # ───────────────────────── spring-modern ─────────────────────────
+
+  - id: sqisoft-spring-jdbctemplate-string-concat
+    languages: [java]
+    severity: ERROR
+    message: >-
+      JdbcTemplate.query/queryForObject/update에 문자열 연결로 SQL을 조립하고 있습니다.
+      사용자 입력이 포함되면 SQL Injection 위험입니다.
+      ? 플레이스홀더와 파라미터 배열을 사용하세요.
+    metadata:
+      cwe: "CWE-89"
+      owasp: "A03:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: $JDBC.query($SQL + $INPUT, ...)
+          - pattern: $JDBC.queryForObject($SQL + $INPUT, ...)
+          - pattern: $JDBC.update($SQL + $INPUT, ...)
+          - pattern: $JDBC.queryForList($SQL + $INPUT, ...)
+
+  - id: sqisoft-spring-jpa-createquery-string-concat
+    languages: [java]
+    severity: WARNING
+    message: >-
+      EntityManager.createQuery/createNativeQuery에 문자열 연결로 JPQL/SQL을 조립하고 있습니다.
+      JPQL Injection 또는 SQL Injection 위험입니다.
+      setParameter("name", value) 파라미터 바인딩으로 전환하세요.
+    metadata:
+      cwe: "CWE-89"
+      owasp: "A03:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: $EM.createQuery($Q + $INPUT)
+          - pattern: $EM.createNativeQuery($Q + $INPUT)
+          - pattern: $EM.createQuery($Q + $INPUT, $CLASS)
+          - pattern: $EM.createNativeQuery($Q + $INPUT, $CLASS)
+
+  - id: sqisoft-mybatis-xml-dollar-spring
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "*.xml"
+    message: >-
+      MyBatis Mapper XML에서 ${} 구문을 사용하고 있습니다 (spring-modern 스택).
+      ${}는 PreparedStatement 바인딩이 아닌 문자열 치환입니다.
+      값 바인딩에는 #{} 로 교체하고, ORDER BY·컬럼명에는 서비스 레이어 허용 목록 검증을 적용하세요.
+    metadata:
+      cwe: "CWE-89"
+      owasp: "A03:2021"
+      stack: spring-modern
+      confidence: needs-context
+    pattern-regex: '\$\{(?!pageContext|contextPath)[^}]+\}'

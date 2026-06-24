@@ -1,0 +1,185 @@
+# SQIsoft 접근통제(IDOR/BFLA/강제브라우징) Semgrep ruleset
+# 사용: semgrep --config rules/access-control.yml <target>
+# 두 스택(spring-modern / jsp-legacy)을 함께 커버한다.
+# 스캐너는 "넓게 후보를 잡고", 최종 판정은 SKILL.md 2단계 AI 검증이 한다.
+
+rules:
+
+  # ───────────────────────── spring-modern ─────────────────────────
+
+  - id: sqisoft-spring-admin-controller-no-preauthorize
+    languages: [java]
+    severity: WARNING
+    message: >-
+      관리자 컨트롤러(/adm/** 매핑)에 @PreAuthorize 또는 @Secured 어노테이션이
+      클래스/메서드 레벨에 없습니다. WebSecurityConfig의 authenticated()만으로는
+      역할(Role) 구분이 되지 않아 일반 사용자가 관리자 API를 호출할 수 있습니다(BFLA).
+      hasMenuAuthority() 또는 hasAuthority('ROLE_ADMIN') 어노테이션을 추가하세요.
+    metadata:
+      cwe: "CWE-285"
+      owasp: "A01:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern: |
+          @RequestMapping($ADM_PATH)
+          class $CTRL { ... }
+      - metavariable-regex:
+          metavariable: $ADM_PATH
+          regex: '"/adm/.*"'
+      - pattern-not: |
+          @PreAuthorize(...)
+          @RequestMapping($ADM_PATH)
+          class $CTRL { ... }
+      - pattern-not: |
+          @Secured(...)
+          @RequestMapping($ADM_PATH)
+          class $CTRL { ... }
+
+  - id: sqisoft-spring-pathvariable-id-no-ownership-check
+    languages: [java]
+    severity: WARNING
+    message: >-
+      @PathVariable로 ID를 받는 엔드포인트에서 SecurityUser(세션 사용자)와의
+      소유권 비교가 보이지 않습니다. 타인의 리소스에 접근하는 IDOR 가능성이 있습니다.
+      @AuthenticationPrincipal로 인증 사용자를 받아 서비스 레이어에서 소유권을 검증하세요.
+    metadata:
+      cwe: "CWE-639"
+      owasp: "A01:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern: |
+          @GetMapping($PATH)
+          public $RET $METHOD(@PathVariable $TYPE $ID, ...) {
+              ...
+              $SERVICE.$FIND($ID, ...);
+              ...
+          }
+      - metavariable-regex:
+          metavariable: $ID
+          regex: '(?i)(id|seq|no|userId|memberId|certiNo|boardId)'
+      - pattern-not: |
+          @GetMapping($PATH)
+          public $RET $METHOD(@PathVariable $TYPE $ID,
+                              @AuthenticationPrincipal $U $USER, ...) {
+              ...
+          }
+
+  - id: sqisoft-spring-anyrequestpermitall-risk
+    languages: [java]
+    severity: INFO
+    message: >-
+      anyRequest().permitAll()로 매칭되지 않는 모든 경로를 허용합니다.
+      adminPaths/apiPaths에 포함되지 않는 내부 경로가 인증 없이 노출될 수 있습니다.
+      anyRequest().authenticated()로 전환하거나 공개 경로를 화이트리스트로 명시하세요.
+    metadata:
+      cwe: "CWE-284"
+      owasp: "A01:2021"
+      stack: spring-modern
+      confidence: needs-context
+    pattern: $H.anyRequest().permitAll()
+
+  - id: sqisoft-spring-cors-wildcard-credentials
+    languages: [java]
+    severity: WARNING
+    message: >-
+      CORS allowedOrigins("*")와 allowCredentials(true)가 함께 설정되어 있습니다.
+      자격증명이 포함된 크로스사이트 요청이 허용되어 CSRF·정보노출 위험이 가중됩니다.
+      허용 오리진을 사업부 도메인으로 제한하세요.
+    metadata:
+      cwe: "CWE-284"
+      owasp: "A01:2021"
+      stack: spring-modern
+      confidence: medium
+    patterns:
+      - pattern: |
+          $CONFIG.allowedOrigins("*");
+          ...
+          $CONFIG.allowCredentials(true);
+      - pattern: |
+          $CONFIG.allowCredentials(true);
+          ...
+          $CONFIG.allowedOrigins("*");
+
+  # ───────────────────────── jsp-legacy ─────────────────────────
+
+  - id: sqisoft-jsp-auth-interceptor-mode-off
+    languages: [xml]
+    severity: WARNING
+    paths:
+      include:
+        - "*.xml"
+        - "*.properties"
+    message: >-
+      AuthInterceptor의 mode가 off 또는 audit으로 설정되어 있습니다.
+      off는 인터셉터 완전 비활성, audit은 차단 없이 로그만 수집합니다.
+      비인증 사용자가 보호 URL에 접근 가능합니다. mode=enforce로 전환하세요.
+    metadata:
+      cwe: "CWE-284"
+      owasp: "A01:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    pattern-regex: 'authGate\.mode\s*=\s*(off|audit)'
+
+  - id: sqisoft-jsp-getparameter-id-direct-dao
+    languages: [java]
+    severity: WARNING
+    message: >-
+      req.getParameter()로 ID/seq를 받아 DAO를 직접 호출합니다.
+      세션 사용자와 소유권 비교 없이 DB를 조회하면 IDOR 가능성이 있습니다.
+      서비스 레이어에서 loginVo.getId()와 DB 조회 결과의 소유자를 비교하세요.
+    metadata:
+      cwe: "CWE-639"
+      owasp: "A01:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern: |
+          String $VAR = $REQ.getParameter($PARAM);
+          ...
+          $DAO.$SELECT($VAR);
+      - metavariable-regex:
+          metavariable: $PARAM
+          regex: '"(?i)(seq|id|certiNo|userId|boardSeq|fileSeq|no)"'
+      - metavariable-regex:
+          metavariable: $SELECT
+          regex: '(?i)select|find|get|detail|view'
+
+  - id: sqisoft-jsp-admin-check-null-bypass
+    languages: [java]
+    severity: WARNING
+    message: >-
+      AuthUtil.isAdmin(loginVo) 호출 전에 loginVo null 체크가 없습니다.
+      loginVo가 null이면 NullPointerException 또는 예외 처리에 따라 관리자 가드가
+      우회될 수 있습니다. loginVo == null 먼저 체크한 뒤 isAdmin을 호출하세요.
+    metadata:
+      cwe: "CWE-285"
+      owasp: "A01:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern: |
+          LoginVo $LOGIN = AuthUtil.getLoginVo($REQ);
+          if (!(AuthUtil.isAdmin($LOGIN) || ...)) { ... }
+      - pattern-not: |
+          LoginVo $LOGIN = AuthUtil.getLoginVo($REQ);
+          if ($LOGIN == null || !(AuthUtil.isAdmin($LOGIN) || ...)) { ... }
+
+  - id: sqisoft-jsp-state-changing-get-link
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - "*.jsp"
+        - "*.html"
+    message: >-
+      상태를 변경하는 동작(delete/withdraw/update/remove/approve/reject)을
+      GET 링크로 노출하고 있을 수 있습니다. 접근통제 토큰과 무관하게 설계 결함입니다.
+      POST 요청으로 전환하고 CSRF 보호를 적용하세요.
+    metadata:
+      cwe: "CWE-284"
+      owasp: "A01:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    pattern-regex: '<a[^>]+href="[^"]*(delete|withdraw|remove|update|approve|reject)[^"]*"'

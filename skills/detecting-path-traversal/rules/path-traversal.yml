@@ -1,0 +1,139 @@
+# SQIsoft 경로 탐색(Path Traversal) Semgrep ruleset (CWE-22)
+# 사용: semgrep --config rules/path-traversal.yml <target>
+# 두 스택(spring-modern / jsp-legacy)을 함께 커버한다.
+# 스캐너는 "넓게 후보를 잡고", 최종 판정은 SKILL.md 2단계의 AI 검증이 한다.
+# 특히 getCanonicalPath()+startsWith() 검증이 선행되는 안전 패턴은 오탐으로 처리한다.
+
+rules:
+  # ───────────────────────── spring-modern ─────────────────────────
+
+  - id: sqisoft-spring-requestparam-to-path
+    languages: [java]
+    severity: WARNING
+    message: >-
+      @RequestParam/@PathVariable 입력값을 Paths.get() 또는 new File()에 직접 사용하고 있습니다.
+      getCanonicalPath()로 기준 경로 이탈 여부를 검증하지 않으면 경로 탐색(CWE-22)이 가능합니다.
+      AI 검증: getCanonicalPath()+startsWith(base) 패턴이 있으면 오탐.
+    metadata:
+      cwe: "CWE-22"
+      owasp: "A01:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: Paths.get($BASE, $PARAM)
+          - pattern: new File($BASE, $PARAM)
+          - pattern: new File($BASE + $PARAM)
+          - pattern: Paths.get($BASE).resolve($PARAM)
+      - pattern-not-inside: |
+          ... getCanonicalPath() ...
+
+  - id: sqisoft-spring-filesystemresource-requestparam
+    languages: [java]
+    severity: WARNING
+    message: >-
+      FileSystemResource 또는 UrlResource를 @RequestParam 기반 경로로 생성하고 있습니다.
+      경로 정규화(getCanonicalPath) 없이 반환하면 임의 파일 다운로드(CWE-22)가 가능합니다.
+    metadata:
+      cwe: "CWE-22"
+      owasp: "A01:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: new FileSystemResource($PATH)
+          - pattern: new UrlResource($PATH)
+      - pattern-not-inside: |
+          ... getCanonicalPath() ...
+
+  - id: sqisoft-spring-normalize-without-startswith
+    languages: [java]
+    severity: INFO
+    message: >-
+      Path.normalize()만 사용하고 기준 경로와의 startsWith() 비교가 없습니다.
+      normalize()는 '..'을 해석하지만 기준 경로 이탈 여부는 확인하지 않습니다.
+      getCanonicalPath()+startsWith(base) 패턴으로 강화하세요.
+    metadata:
+      cwe: "CWE-22"
+      owasp: "A01:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern: $PATH.normalize()
+      - pattern-not-inside: |
+          ... $PATH.normalize() ...
+          ... startsWith(...) ...
+
+  - id: sqisoft-zipslip-no-canonical-check
+    languages: [java]
+    severity: WARNING
+    message: >-
+      ZipEntry.getName()을 기준 경로 검증 없이 파일 저장 경로에 사용하고 있습니다(ZipSlip, CWE-22).
+      엔트리명에 '../'이 포함되면 기준 디렉토리 밖에 파일이 생성됩니다.
+      new File(dest, entry.getName()).getCanonicalPath()가 dest 내인지 반드시 확인하세요.
+    metadata:
+      cwe: "CWE-22"
+      owasp: "A01:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern: new File($DEST, $ENTRY.getName())
+      - pattern-not-inside: |
+          ... getCanonicalPath() ...
+
+  # ───────────────────────── jsp-legacy ─────────────────────────
+
+  - id: sqisoft-jsp-filepath-param-blacklist-only
+    languages: [java]
+    severity: WARNING
+    message: >-
+      filePath 파라미터에 블랙리스트(indexOf("..")/contains) 방식만 적용하고 있습니다.
+      URL 인코딩(%2e%2e%2f) 또는 이중 인코딩으로 우회 가능합니다.
+      getCanonicalPath()+startsWith(allowedBase) 방식으로 교체하세요.
+    metadata:
+      cwe: "CWE-22"
+      owasp: "A01:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: $PARAM.indexOf("..") != -1
+          - pattern: $PARAM.contains("..")
+          - pattern: $PARAM.indexOf("../") != -1
+      - pattern-not-inside: |
+          ... getCanonicalPath() ...
+
+  - id: sqisoft-jsp-requestparam-new-file
+    languages: [java]
+    severity: WARNING
+    message: >-
+      request.getParameter()로 받은 값을 new File()에 직접 사용하고 있습니다.
+      경로 정규화(getCanonicalPath) 없이 파일에 접근하면 경로 탐색(CWE-22)이 가능합니다.
+      getCanonicalPath()+startsWith(allowedBase)로 검증하거나 ID 매핑 방식으로 전환하세요.
+    metadata:
+      cwe: "CWE-22"
+      owasp: "A01:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern: new File($REQ.getParameter($KEY))
+      - pattern-not-inside: |
+          ... getCanonicalPath() ...
+
+  - id: sqisoft-jsp-startswith-without-canonical
+    languages: [java]
+    severity: INFO
+    message: >-
+      startsWith()로 허용 경로를 검증하고 있지만 getCanonicalPath() 정규화 없이 비교합니다.
+      심볼릭 링크나 인코딩 우회 가능성이 있습니다.
+      비교 전 양쪽 모두 getCanonicalPath()를 적용하세요.
+    metadata:
+      cwe: "CWE-22"
+      owasp: "A01:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern: $PARAM.startsWith($BASE)
+      - pattern-not-inside: |
+          ... getCanonicalPath() ...
+          ... startsWith($BASE) ...

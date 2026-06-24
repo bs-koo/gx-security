@@ -1,0 +1,189 @@
+# SQIsoft SSRF / 오픈 리다이렉트 Semgrep ruleset
+# 사용: semgrep --config rules/ssrf-redirect.yml <target>
+# 두 스택(spring-modern / jsp-legacy)을 함께 커버한다.
+# 스캐너는 "넓게 후보를 잡고", 최종 판정은 SKILL.md 2단계의 AI 검증이 한다.
+# 특히 하드코딩 경로 리다이렉트는 오탐이 많으므로 AI 검증 필수.
+
+rules:
+  # ───────────────────────── SSRF — spring-modern ─────────────────────────
+
+  - id: sqisoft-ssrf-resttemplate-param
+    languages: [java]
+    severity: ERROR
+    message: >-
+      RestTemplate 호출에 사용자 입력(@RequestParam, getParameter)이 URL로 사용됩니다.
+      도메인·스킴 검증 없이 사용하면 SSRF 취약점입니다.
+      허용 호스트 화이트리스트를 검증한 후 요청하세요.
+    metadata:
+      cwe: "CWE-918"
+      owasp: "A10:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: $RT.getForEntity($URL, ...)
+          - pattern: $RT.getForObject($URL, ...)
+          - pattern: $RT.postForEntity($URL, ...)
+          - pattern: $RT.postForObject($URL, ...)
+          - pattern: $RT.exchange($URL, ...)
+      - pattern-inside: |
+          @$MAPPING(...)
+          $RET $METHOD(..., @RequestParam $TYPE $URL, ...) { ... }
+
+  - id: sqisoft-ssrf-webclient-param
+    languages: [java]
+    severity: ERROR
+    message: >-
+      WebClient 호출에 사용자 입력이 URI로 사용될 수 있습니다. SSRF 위험.
+      허용 호스트 화이트리스트를 검증하세요.
+    metadata:
+      cwe: "CWE-918"
+      owasp: "A10:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: $WC.get().uri($URL, ...)
+          - pattern: $WC.post().uri($URL, ...)
+          - pattern: WebClient.create($URL)
+      - pattern-inside: |
+          @$MAPPING(...)
+          $RET $METHOD(..., @RequestParam $TYPE $URL, ...) { ... }
+
+  # ───────────────────────── SSRF — jsp-legacy ─────────────────────────
+
+  - id: sqisoft-ssrf-url-openstream-param
+    languages: [java]
+    severity: ERROR
+    message: >-
+      URL.openStream()/openConnection()을 사용하는데 URL이 사용자 입력에서 유래할 수 있습니다.
+      SSRF 취약점입니다. URL 도메인을 화이트리스트로 검증하세요.
+    metadata:
+      cwe: "CWE-918"
+      owasp: "A10:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: |
+              URL $URL = new URL($STR);
+              ...
+              $URL.openStream()
+          - pattern: |
+              URL $URL = new URL($STR);
+              ...
+              $URL.openConnection()
+      - pattern-inside: |
+          $RET $METHOD(HttpServletRequest $REQ, ...) { ... }
+
+  - id: sqisoft-ssrf-httpurlconnection-param
+    languages: [java]
+    severity: ERROR
+    message: >-
+      HttpURLConnection을 통한 서버측 요청에 사용자 입력이 포함될 수 있습니다. SSRF 위험.
+    metadata:
+      cwe: "CWE-918"
+      owasp: "A10:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern: |
+          URL $U = new URL($PARAM);
+          HttpURLConnection $CONN = (HttpURLConnection) $U.openConnection();
+      - pattern-inside: |
+          $RET $METHOD(HttpServletRequest $REQ, ...) { ... }
+
+  # ───────────────────────── 오픈 리다이렉트 — 공통 ─────────────────────────
+
+  - id: sqisoft-open-redirect-sendredirect-param
+    languages: [java]
+    severity: ERROR
+    message: >-
+      response.sendRedirect()에 요청 파라미터가 직접 사용됩니다.
+      검증 없이 사용하면 오픈 리다이렉트 취약점입니다.
+      상대경로만 허용하거나 허용 도메인 화이트리스트를 적용하세요.
+    metadata:
+      cwe: "CWE-601"
+      owasp: "A01:2021"
+      stack: jsp-legacy
+      confidence: high
+    patterns:
+      - pattern: $RESP.sendRedirect($REQ.getParameter($PARAM))
+
+  - id: sqisoft-open-redirect-sendredirect-var
+    languages: [java]
+    severity: WARNING
+    message: >-
+      response.sendRedirect()에 변수가 사용됩니다. 이 변수가 사용자 입력에서 유래하는지 확인하세요.
+      사용자 입력이면 오픈 리다이렉트 취약점입니다.
+    metadata:
+      cwe: "CWE-601"
+      owasp: "A01:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern: $RESP.sendRedirect($URL)
+      - pattern-not: $RESP.sendRedirect($REQ.getContextPath() + $CONST)
+      - pattern-not: $RESP.sendRedirect($CONST)
+
+  - id: sqisoft-open-redirect-spring-return-param
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Spring MVC 컨트롤러에서 "redirect:" 뒤에 @RequestParam 변수가 바로 사용됩니다.
+      검증 없이 사용하면 오픈 리다이렉트 취약점입니다.
+    metadata:
+      cwe: "CWE-601"
+      owasp: "A01:2021"
+      stack: spring-modern
+      confidence: high
+    patterns:
+      - pattern: return "redirect:" + $PARAM
+      - pattern-inside: |
+          @$MAPPING(...)
+          $RET $METHOD(..., @RequestParam $TYPE $PARAM, ...) { ... }
+
+  - id: sqisoft-open-redirect-spring-return-var
+    languages: [java]
+    severity: WARNING
+    message: >-
+      Spring MVC 컨트롤러에서 동적으로 구성된 "redirect:" 문자열을 반환합니다.
+      리다이렉트 목적지가 사용자 입력에서 유래하는지 확인하세요.
+    metadata:
+      cwe: "CWE-601"
+      owasp: "A01:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern: |
+          String $VAR = ...;
+          ...
+          return "redirect:" + $VAR;
+      - pattern-not: |
+          String $VAR = $CONST;
+          return "redirect:" + $VAR;
+
+  # ───────────────────────── 보조 — returnUrl 파라미터 수신 ─────────────────────────
+
+  - id: sqisoft-return-url-param-unvalidated
+    languages: [java]
+    severity: WARNING
+    message: >-
+      returnUrl/next/redirectUrl 파라미터를 수신하고 있습니다.
+      이 값이 검증 없이 리다이렉트 목적지로 사용되면 오픈 리다이렉트 취약점입니다.
+      실제 리다이렉트 코드까지 데이터 흐름을 추적하세요.
+    metadata:
+      cwe: "CWE-601"
+      owasp: "A01:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: @RequestParam String $PARAM
+          - pattern: $REQ.getParameter($KEY)
+      - metavariable-regex:
+          metavariable: $PARAM
+          regex: (?i)(returnUrl|return_url|redirectUrl|redirect_url|nextUrl|next|callbackUrl|callback)
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i)"(returnUrl|return_url|redirectUrl|redirect_url|nextUrl|next|callbackUrl|callback)"

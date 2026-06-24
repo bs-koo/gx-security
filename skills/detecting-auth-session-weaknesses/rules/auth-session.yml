@@ -1,0 +1,249 @@
+# SQIsoft 인증·세션·JWT 취약점 Semgrep ruleset
+# 사용: semgrep --config rules/auth-session.yml <target>
+# 두 스택(spring-modern / jsp-legacy)을 함께 커버한다.
+# 스캐너는 "넓게 후보를 잡고", 최종 판정은 SKILL.md 2단계 AI 검증이 한다.
+
+rules:
+
+  # ───────────────────────── spring-modern ─────────────────────────
+
+  - id: sqisoft-spring-jwt-secret-hardcoded
+    languages: [java]
+    severity: ERROR
+    message: >-
+      JWT 시크릿 키가 코드에 하드코딩되어 있습니다. 소스코드 유출 시 모든 JWT 토큰을
+      위조할 수 있습니다. 환경변수(@Value("${JWT_SECRET_KEY}")) 또는 외부 시크릿
+      관리(Vault 등)로 주입하세요.
+    metadata:
+      cwe: "CWE-798"
+      owasp: "A07:2021"
+      stack: spring-modern
+      confidence: high
+    patterns:
+      - pattern-either:
+          - pattern: |
+              private String $FIELD = "...";
+          - pattern: |
+              private static final String $FIELD = "...";
+      - metavariable-regex:
+          metavariable: $FIELD
+          regex: '(?i)(secret|secretKey|jwtSecret|tokenSecret|signingKey)'
+      - pattern-not: |
+          @Value(...)
+          private String $FIELD;
+
+  - id: sqisoft-spring-jwt-parse-without-verify
+    languages: [java]
+    severity: ERROR
+    message: >-
+      JWT 토큰을 서명 검증 없이 파싱합니다. 공격자가 임의의 클레임을 담은 토큰을
+      생성해 인증을 우회할 수 있습니다. verifyWith(key)를 사용하는 parseSignedClaims()로
+      전환하세요. jjwt 0.12.x 기준.
+    metadata:
+      cwe: "CWE-287"
+      owasp: "A07:2021"
+      stack: spring-modern
+      confidence: high
+    patterns:
+      - pattern-either:
+          - pattern: $P.parseClaimsJwt($TOKEN)
+          - pattern: $P.parseClaimsJws($TOKEN)
+          - pattern: $P.parse($TOKEN)
+      - pattern-not-inside: |
+          Jwts.parser().verifyWith(...).build().$M($TOKEN)
+
+  - id: sqisoft-spring-cookie-no-secure
+    languages: [java]
+    severity: WARNING
+    message: >-
+      쿠키를 생성할 때 Secure 속성이 설정되지 않았습니다. HTTP 평문 채널에서도
+      쿠키가 전송되어 네트워크 도청으로 세션·토큰이 탈취될 수 있습니다.
+      cookie.setSecure(true) 또는 ResponseCookie.secure(true)를 추가하세요.
+    metadata:
+      cwe: "CWE-614"
+      owasp: "A07:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern: |
+          Cookie $C = new Cookie($NAME, $VAL);
+          ...
+          $RESP.addCookie($C);
+      - pattern-not: |
+          Cookie $C = new Cookie($NAME, $VAL);
+          ...
+          $C.setSecure(true);
+          ...
+          $RESP.addCookie($C);
+
+  - id: sqisoft-spring-cookie-no-httponly
+    languages: [java]
+    severity: WARNING
+    message: >-
+      쿠키에 HttpOnly 속성이 없습니다. XSS 공격으로 JavaScript가 쿠키에 접근해
+      세션·토큰을 탈취할 수 있습니다. cookie.setHttpOnly(true)를 추가하세요.
+    metadata:
+      cwe: "CWE-1004"
+      owasp: "A07:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern: |
+          Cookie $C = new Cookie($NAME, $VAL);
+          ...
+          $RESP.addCookie($C);
+      - pattern-not: |
+          Cookie $C = new Cookie($NAME, $VAL);
+          ...
+          $C.setHttpOnly(true);
+          ...
+          $RESP.addCookie($C);
+
+  - id: sqisoft-spring-bcrypt-not-used
+    languages: [java]
+    severity: WARNING
+    message: >-
+      비밀번호를 MD5/SHA 계열 해시로 저장하고 있습니다. 이 알고리즘은 빠른 연산으로
+      GPU 브루트포스에 취약합니다. BCryptPasswordEncoder(강도 10~12)를 사용하세요.
+    metadata:
+      cwe: "CWE-916"
+      owasp: "A07:2021"
+      stack: spring-modern
+      confidence: medium
+    patterns:
+      - pattern-either:
+          - pattern: MessageDigest.getInstance("MD5")
+          - pattern: MessageDigest.getInstance("SHA-1")
+          - pattern: MessageDigest.getInstance("SHA1")
+          - pattern: DigestUtils.md5Hex(...)
+          - pattern: DigestUtils.sha1Hex(...)
+
+  - id: sqisoft-spring-session-stateless-check
+    languages: [java]
+    severity: INFO
+    message: >-
+      세션 정책을 확인하세요. STATELESS이면 서버 세션 없이 JWT만 사용 — 세션 고정 위험 없음.
+      IF_REQUIRED 또는 미설정이면 세션 고정 취약점 점검 필요.
+    metadata:
+      cwe: "CWE-384"
+      owasp: "A07:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: $SM.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
+          - pattern: $SM.sessionCreationPolicy(SessionCreationPolicy.ALWAYS)
+
+  # ───────────────────────── jsp-legacy ─────────────────────────
+
+  - id: sqisoft-jsp-password-plaintext-config
+    languages: [xml]
+    severity: ERROR
+    paths:
+      include:
+        - "*.xml"
+    message: >-
+      비밀번호 저장 방식이 plaintext로 설정되어 있습니다. hashBase64=true여도
+      Base64는 인코딩이지 해시가 아닙니다 — DB 유출 시 즉시 원문 복원 가능.
+      hash="bcrypt"로 전환하고 기존 사용자는 다음 로그인 시 재해시하세요.
+    metadata:
+      cwe: "CWE-916"
+      owasp: "A07:2021"
+      stack: jsp-legacy
+      confidence: high
+    pattern-regex: 'hash\s*=\s*"plaintext"'
+
+  - id: sqisoft-jsp-sha256-weak-hash
+    languages: [java]
+    severity: WARNING
+    message: >-
+      SHA-256으로 비밀번호를 해시합니다. SHA-256은 빠른 연산이므로 GPU 브루트포스에
+      취약합니다. 사용자 ID를 salt로 쓰더라도 예측 가능한 salt입니다.
+      BCryptPasswordEncoder(강도 12 이상)로 전환하세요.
+    metadata:
+      cwe: "CWE-916"
+      owasp: "A07:2021"
+      stack: jsp-legacy
+      confidence: medium
+    patterns:
+      - pattern: MessageDigest.getInstance("SHA-256")
+
+  - id: sqisoft-jsp-session-no-invalidate-on-login
+    languages: [java]
+    severity: WARNING
+    message: >-
+      로그인 성공 후 세션 재생성(invalidate/changeSessionId) 없이 세션 속성만 설정합니다.
+      세션 고정 공격(Session Fixation)에 취약할 수 있습니다.
+      로그인 전 session.invalidate() 후 새 세션을 발급하세요.
+    metadata:
+      cwe: "CWE-384"
+      owasp: "A07:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern: |
+          $REQ.getSession().setAttribute($KEY, $LOGINVO);
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: '"(?i)(LoginVo|loginVO|login_vo|userInfo|loginUser|loginInfo)"'
+      - pattern-not-inside: |
+          $REQ.getSession().invalidate();
+          ...
+          $REQ.getSession().setAttribute($KEY, $LOGINVO);
+
+  - id: sqisoft-jsp-session-logout-null-only
+    languages: [java]
+    severity: WARNING
+    message: >-
+      로그아웃 시 세션 속성만 null로 설정하고 session.invalidate()를 호출하지 않습니다.
+      세션 ID가 유지되어 재사용될 수 있습니다. session.invalidate()로 세션을 완전 파기하세요.
+    metadata:
+      cwe: "CWE-613"
+      owasp: "A07:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern: $REQ.getSession().setAttribute($KEY, null)
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: '"(?i)(LoginVo|loginVO|login_vo|userInfo|loginUser|loginInfo)"'
+      - pattern-not-inside: |
+          $REQ.getSession().invalidate()
+
+  - id: sqisoft-jsp-cookie-no-config-in-webxml
+    languages: [xml]
+    severity: WARNING
+    paths:
+      include:
+        - "web.xml"
+    message: >-
+      web.xml의 session-config에 cookie-config(HttpOnly/Secure)가 없습니다.
+      JSESSIONID 쿠키가 XSS 탈취 및 HTTP 평문 전송 위험에 노출됩니다.
+      <cookie-config><http-only>true</http-only><secure>true</secure></cookie-config>를 추가하세요.
+    metadata:
+      cwe: "CWE-614"
+      owasp: "A07:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern: |
+          <session-config>...</session-config>
+      - pattern-not: |
+          <session-config>...<cookie-config>...</cookie-config>...</session-config>
+
+  - id: sqisoft-jsp-deprecated-password-hash
+    languages: [java]
+    severity: WARNING
+    message: >-
+      @Deprecated 처리된 salt 없는 SHA-256 해시 메서드를 사용하고 있습니다.
+      이 메서드는 동일 비밀번호가 동일 해시 → 레인보우 테이블에 즉시 노출됩니다.
+      encryptPassword(password, id) 이상 버전으로 전환하거나 BCrypt를 사용하세요.
+    metadata:
+      cwe: "CWE-916"
+      owasp: "A07:2021"
+      stack: jsp-legacy
+      confidence: medium
+    patterns:
+      - pattern: EgovFileScrty.encryptPassword($PASS)
+      - pattern-not: EgovFileScrty.encryptPassword($PASS, $ID)
+      - pattern-not: EgovFileScrty.encryptPassword($PASS, $SALT)

@@ -1,0 +1,143 @@
+# SQIsoft 파일 업로드 취약점 Semgrep ruleset (CWE-434)
+# 사용: semgrep --config rules/file-upload.yml <target>
+# 두 스택(spring-modern / jsp-legacy)을 함께 커버한다.
+# 스캐너는 "넓게 후보를 잡고", 최종 판정은 SKILL.md 2단계의 AI 검증이 한다.
+
+rules:
+  # ───────────────────────── spring-modern ─────────────────────────
+
+  - id: sqisoft-spring-transferto-without-validation
+    languages: [java]
+    severity: WARNING
+    message: >-
+      MultipartFile.transferTo() 호출 전에 확장자/매직바이트 검증 메서드가 보이지 않습니다.
+      validateFile(), FileValidator.validate() 등 화이트리스트 검증이 선행되는지 확인하세요.
+      없으면 .jsp 웹쉘 업로드 → RCE(CWE-434) 위험이 있습니다.
+    metadata:
+      cwe: "CWE-434"
+      owasp: "A04:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern: $FILE.transferTo($DEST)
+      - pattern-not-inside: |
+          ... validateFile(...); ...
+          $FILE.transferTo($DEST);
+      - pattern-not-inside: |
+          ... FileUtils.validateFile(...); ...
+          $FILE.transferTo($DEST);
+      - pattern-not-inside: |
+          ... FileValidator.validate(...); ...
+          $FILE.transferTo($DEST);
+
+  - id: sqisoft-spring-getrealpath-upload
+    languages: [java]
+    severity: WARNING
+    message: >-
+      getRealPath()로 얻은 경로(웹루트 내부)에 업로드 파일을 저장하고 있을 수 있습니다.
+      .jsp 파일이 업로드되면 URL로 직접 실행(RCE) 가능합니다.
+      업로드 경로를 웹루트 밖으로 이동하세요.
+    metadata:
+      cwe: "CWE-434"
+      owasp: "A05:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: $CTX.getRealPath(...)
+          - pattern: $REQ.getServletContext().getRealPath(...)
+          - pattern: $SESSION.getServletContext().getRealPath(...)
+
+  - id: sqisoft-spring-originalfilename-direct-use
+    languages: [java]
+    severity: INFO
+    message: >-
+      getOriginalFilename()의 반환값을 파일명 또는 경로에 직접 사용하고 있습니다.
+      Path Traversal(../) 및 원본명 노출(예측 가능한 경로) 위험이 있습니다.
+      UUID 등 서버 생성 파일명으로 대체하세요.
+    metadata:
+      cwe: "CWE-434"
+      owasp: "A04:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern: new File($BASE, $FILE.getOriginalFilename())
+      - pattern-not-inside: |
+          ... Paths.get($FILE.getOriginalFilename()).getFileName() ...
+
+  - id: sqisoft-spring-contenttype-only-check
+    languages: [java]
+    severity: INFO
+    message: >-
+      getContentType()만으로 파일 유형을 판단하고 있습니다.
+      Content-Type은 클라이언트가 임의로 설정 가능하므로 서버 측 확장자+매직바이트 검증과 병행해야 합니다.
+    metadata:
+      cwe: "CWE-434"
+      owasp: "A04:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern: |
+          String $CT = $FILE.getContentType();
+          ...
+          $FILE.transferTo($DEST);
+      - pattern-not-inside: |
+          ... ALLOWED_EXTENSIONS ... $FILE.transferTo($DEST);
+
+  # ───────────────────────── jsp-legacy ─────────────────────────
+
+  - id: sqisoft-jsp-transferto-without-filevalidator
+    languages: [java]
+    severity: WARNING
+    message: >-
+      MultipartFile.transferTo() 호출 전에 FileValidator.validate()가 없습니다.
+      Gseed_Web_Renew의 표준 업로드 흐름은 FileValidator.validate() → transferTo() 순서입니다.
+      새로 추가한 경로가 이를 우회하면 웹쉘 업로드(CWE-434) 위험이 있습니다.
+    metadata:
+      cwe: "CWE-434"
+      owasp: "A04:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern: $MF.transferTo(new File($PATH))
+      - pattern-not-inside: |
+          ... FileValidator.validate($MF); ...
+          $MF.transferTo(new File($PATH));
+      - pattern-not-inside: |
+          ... UploadFileSaveHandler.init(...); ...
+
+  - id: sqisoft-jsp-multipart-form-enctype
+    languages: [generic]
+    severity: INFO
+    paths:
+      include:
+        - "*.jsp"
+        - "*.html"
+    message: >-
+      파일 업로드 폼(enctype="multipart/form-data")이 감지됐습니다.
+      서버 측에서 FileValidator.validate() 또는 동등한 화이트리스트+매직바이트 검증을 수행하는지 확인하세요.
+    metadata:
+      cwe: "CWE-434"
+      owasp: "A04:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    pattern-regex: 'enctype\s*=\s*["\']multipart/form-data["\']'
+
+  - id: sqisoft-zipslip-zipentry-name
+    languages: [java]
+    severity: WARNING
+    message: >-
+      ZipEntry.getName()을 경로 검증 없이 파일 저장 경로에 사용하고 있습니다(ZipSlip, CWE-434).
+      압축 해제 경로가 기준 디렉토리를 벗어날 수 있습니다.
+      getCanonicalPath()로 기준 경로 내에 있는지 반드시 검증하세요.
+    metadata:
+      cwe: "CWE-434"
+      owasp: "A04:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern: |
+          ZipEntry $E = ...;
+          ... new File($BASE, $E.getName()) ...
+      - pattern-not-inside: |
+          ... getCanonicalPath() ...
