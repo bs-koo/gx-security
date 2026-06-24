@@ -41,6 +41,26 @@ LABELS = {
     "detecting-ssrf-and-open-redirect": "SSRF/Open Redirect",
 }
 
+# [L1] --only 사용자 친화 별칭 → 디렉토리명 키워드 매핑
+# 예: "sqli" → "sql-injection" 으로 정규화해 detecting-sql-injection 디렉토리를 매칭
+ALIAS_MAP = {
+    "sqli": "sql-injection",
+    "sql": "sql-injection",
+    "secrets": "sensitive-data",
+    "secret": "sensitive-data",
+    "auth": "auth-session",
+    "session": "auth-session",
+    "access": "broken-access",
+    "idor": "broken-access",
+    "upload": "file-upload",
+    "webshell": "file-upload",
+    "traversal": "path-traversal",
+    "lfi": "path-traversal",
+    "redirect": "ssrf-and-open-redirect",
+    "ssrf": "ssrf-and-open-redirect",
+    "openredirect": "ssrf-and-open-redirect",
+}
+
 
 def find_scanners():
     """각 스킬의 scripts/scan_*.py 경로를 찾는다."""
@@ -59,17 +79,34 @@ def find_scanners():
 
 
 def run_one(script, target):
+    """스캐너 스크립트 1개를 실행해 (data, error) 튜플로 반환.
+
+    [L2] 자식 프로세스가 returncode != 0 이고 stdout이 비어 있으면
+    stderr 앞부분을 error 필드에 담아 실패를 숨기지 않는다.
+    """
     try:
         out = subprocess.run(
             [sys.executable, script, target, "--json"],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=600,
         )
-        data = json.loads(out.stdout or "{}")
-        return data, None
+        # 정상 JSON이 있으면 그것을 우선 반환
+        if out.stdout and out.stdout.strip():
+            try:
+                data = json.loads(out.stdout)
+                # 자식이 실패했지만 JSON을 내보낸 경우 error 필드 추가
+                if out.returncode != 0:
+                    data.setdefault("error", f"rc={out.returncode}: {out.stderr[:200].strip()}")
+                return data, None
+            except json.JSONDecodeError:
+                pass
+        # stdout 없거나 JSON 파싱 실패 → stderr를 error로 반환
+        stderr_head = out.stderr[:300].strip() if out.stderr else ""
+        msg = f"rc={out.returncode}: {stderr_head}" if stderr_head else f"rc={out.returncode}: (출력 없음)"
+        return None, msg
     except subprocess.TimeoutExpired:
         return None, "timeout"
-    except (json.JSONDecodeError, OSError) as e:
+    except OSError as e:
         return None, str(e)[:120]
 
 
@@ -86,12 +123,15 @@ def main():
 
     scanners = find_scanners()
     if args.only:
-        keys = [k.strip().lower() for k in args.only.split(",") if k.strip()]
+        # [L1] 사용자 키워드를 별칭맵으로 정규화한 뒤 디렉토리명에 부분문자열 매칭
+        raw_keys = [k.strip().lower() for k in args.only.split(",") if k.strip()]
+        keys = [ALIAS_MAP.get(k, k) for k in raw_keys]
         scanners = [s for s in scanners if any(k in s[0].lower() for k in keys)]
 
     results = []
     stacks = set()
-    engine = None
+    # [M4] 여러 스킬이 서로 다른 engine을 보고할 수 있으므로 set으로 수집
+    engines: set = set()
     for skill, script in scanners:
         data, err = run_one(script, args.target)
         if err:
@@ -100,18 +140,28 @@ def main():
             continue
         for s in data.get("detected_stacks", []):
             stacks.add(s)
-        engine = engine or data.get("engine")
-        results.append({
+        # [M4] data에 error 필드가 있으면(자식 rc != 0) 결과에 포함
+        eng = data.get("engine")
+        if eng:
+            engines.add(eng)
+        row = {
             "skill": skill,
             "label": LABELS.get(skill, skill),
             "candidate_count": data.get("candidate_count", 0),
             "candidates": data.get("candidates", []),
-        })
+        }
+        if data.get("error"):
+            row["error"] = data["error"]
+        results.append(row)
+
+    # [M4] engines 집합을 정렬 목록으로 보고 (불일치 가시화)
+    engines_sorted = sorted(engines)
 
     summary = {
         "target": args.target,
         "detected_stacks": sorted(stacks),
-        "engine": engine,
+        "engines": engines_sorted,                          # [M4] 복수 엔진 목록
+        "engine": engines_sorted[0] if len(engines_sorted) == 1 else engines_sorted,
         "total_candidates": sum(r.get("candidate_count") or 0 for r in results),
         "by_skill": results,
         "note": "1차 후보입니다. 최종 판정/4요소 리포트는 Claude Code에서 각 스킬 2단계(AI 검증) 수행.",
@@ -121,15 +171,17 @@ def main():
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return
 
+    engine_label = ", ".join(engines_sorted) if engines_sorted else "?"
     print(f"대상: {args.target}")
-    print(f"감지 스택: {', '.join(summary['detected_stacks']) or '?'}   엔진: {engine}")
-    print(f"{'─'*48}")
-    print(f"{'취약점 클래스':<24}{'후보 수':>8}")
-    print(f"{'─'*48}")
+    print(f"감지 스택: {', '.join(summary['detected_stacks']) or '?'}   엔진: {engine_label}")
+    print(f"{'─'*56}")
+    print(f"{'취약점 클래스':<24}{'후보 수':>8}  {'비고'}")
+    print(f"{'─'*56}")
     for r in results:
         cnt = "ERR" if r.get("candidate_count") is None else r["candidate_count"]
-        print(f"{r['label']:<24}{str(cnt):>8}")
-    print(f"{'─'*48}")
+        note = f"  [오류] {r['error'][:40]}" if r.get("error") else ""
+        print(f"{r['label']:<24}{str(cnt):>8}{note}")
+    print(f"{'─'*56}")
     print(f"{'합계':<24}{summary['total_candidates']:>8}")
     print(f"\n※ 1차 후보(오탐 포함)입니다. 정확한 취약/오탐 판정과")
     print(f"  4요소 리포트는 Claude Code에서 각 스킬을 호출해 완성하세요.")

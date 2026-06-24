@@ -22,6 +22,8 @@ import sys
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    # [L3] stderr도 UTF-8로 고정 (scope_guard 등 다른 스크립트와 일관성)
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 except (AttributeError, ValueError):
     pass
 
@@ -36,12 +38,27 @@ DYNAMIC = {
 
 
 def run_static(source):
+    """scan_all.py를 호출해 정적 스캔 결과를 반환.
+
+    [L2] 자식 returncode != 0 이고 stdout이 비면 stderr를 error로 노출.
+    """
     cmd = [sys.executable, os.path.join(ROOT, "scan_all.py"), source, "--json"]
     try:
         out = subprocess.run(cmd, capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=900)
-        return json.loads(out.stdout or "{}"), None
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as e:
+        if out.stdout and out.stdout.strip():
+            try:
+                data = json.loads(out.stdout)
+                if out.returncode != 0:
+                    data.setdefault("error", f"rc={out.returncode}: {out.stderr[:200].strip()}")
+                return data, None
+            except json.JSONDecodeError:
+                pass
+        stderr_head = out.stderr[:300].strip() if out.stderr else ""
+        return None, f"rc={out.returncode}: {stderr_head or '(출력 없음)'}"
+    except subprocess.TimeoutExpired:
+        return None, "timeout"
+    except OSError as e:
         return None, str(e)[:150]
 
 
@@ -93,7 +110,12 @@ def main():
 
     # 2) 동적 (대상 URL 있을 때만)
     if args.target:
-        params = [p.strip() for p in args.params.split(",")] if args.params else None
+        # [H3] 빈/공백 토큰 제거: "id,,q, " → ["id", "q"]
+        # 모두 비면 None으로 처리해 빈 파라미터 공격 유발 방지
+        params = (
+            [p.strip() for p in args.params.split(",") if p.strip()] or None
+            if args.params else None
+        )
         report["phases"]["dynamic"] = run_dynamic(args.target, params, args.authorized)
     else:
         report["phases"]["dynamic"] = {"skipped": "대상 URL(--target) 미지정 — 정적만 수행"}
