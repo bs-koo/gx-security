@@ -47,5 +47,23 @@ class TestInject(unittest.TestCase):
         self.assertEqual(url, "http://h/d?f=x")
 
 
+class TestRunPathTraversal(unittest.TestCase):
+    @patch("tools.dyn_session.request")
+    def test_signature_in_body_vulnerable(self, mock_req):
+        mock_req.return_value = {"status": 200, "body": "root:x:0:0:root:/root",
+                                 "elapsed": 0.0, "headers": {}}
+        out = A.run_path_traversal("http://app.local", "/download?file=")
+        self.assertTrue(out["vulnerable"])
+        self.assertEqual(out["kind"], "path-traversal")
+        self.assertEqual(out["method"], "GET")
+
+    @patch("tools.dyn_session.request")
+    def test_no_signature_defended(self, mock_req):
+        mock_req.return_value = {"status": 404, "body": "not found",
+                                 "elapsed": 0.0, "headers": {}}
+        out = A.run_path_traversal("http://app.local", "/download?file=")
+        self.assertFalse(out["vulnerable"])
+
+
 if __name__ == "__main__":
     unittest.main()
