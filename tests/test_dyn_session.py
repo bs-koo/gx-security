@@ -115,5 +115,17 @@ class TestRequestHeaders(unittest.TestCase):
         self.assertEqual(out["headers"]["X-Test"], "1")
 
 
+class TestRequestMultipart(unittest.TestCase):
+    @patch("requests.request")
+    def test_request_passes_files(self, mock_req):
+        mock_req.return_value = MagicMock(status_code=200, text="ok", headers={})
+        out = dyn_session.request("POST", "http://h/upload", token="T",
+                                  files={"file": ("x.jsp", "MARK")})
+        self.assertEqual(out["status"], 200)
+        _, kwargs = mock_req.call_args
+        self.assertEqual(kwargs["files"], {"file": ("x.jsp", "MARK")})
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer T")
+
+
 if __name__ == "__main__":
     unittest.main()

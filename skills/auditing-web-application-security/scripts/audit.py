@@ -31,6 +31,12 @@ except (AttributeError, ValueError):
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 # 동적 공격 스크립트 (현재 구현된 exploiting-*)
+# param 기반 자동 발사 대상(--param 으로 주입점을 순회). sqli/xss만 이 형식에 맞는다.
+# 나머지 동적 스킬은 호출 형식이 달라 여기 넣으면 안 된다(넣으면 --param 미지원으로 깨짐):
+#   - broken-access-control → run_access_dynamic()으로 정적 후보를 받아 별도 연동(개선 D)
+#   - auth-session / ssrf-and-open-redirect / path-traversal-upload
+#       → 각자 전용 타깃(--probe·--redirect-target·--traversal-target 등)이 필요해
+#         gx-audit 자동 파이프라인이 표적을 유도할 수 없다. gx-pentest 단독 발사로 사용한다.
 DYNAMIC = {
     "sql-injection": os.path.join(ROOT, "skills", "exploiting-sql-injection", "scripts", "attack_sqli.py"),
     "xss": os.path.join(ROOT, "skills", "exploiting-xss-vulnerabilities", "scripts", "attack_xss.py"),
