@@ -7,6 +7,7 @@ tools/dyn_session.py — 동적 침투 스킬 공용 엔진.
 import sys
 import os
 import json
+import time
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -65,3 +66,33 @@ def login(base_url, login_path, cred, *, body_template=None,
     if not token:
         raise RuntimeError(f"토큰 추출 실패: 경로 '{token_json_path}' (응답 형식 확인)")
     return token
+
+
+def request(method, url, *, token=None, json_body=None, timeout=10):
+    """인증 헤더를 자동 부착해 요청. {status, body, elapsed} 반환."""
+    import requests
+    headers = {}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    t0 = time.monotonic()
+    resp = requests.request(
+        method.upper(), url, headers=headers, json=json_body,
+        timeout=timeout, allow_redirects=False)
+    return {"status": resp.status_code, "body": resp.text,
+            "elapsed": round(time.monotonic() - t0, 3)}
+
+
+def emit(result, as_json):
+    """표준 결과 출력. as_json이면 JSON, 아니면 사람용 요약."""
+    if as_json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+    print(f"\n{'=' * 60}")
+    print(f"  동적 점검 결과: {result.get('skill', 'dyn')}")
+    print(f"{'=' * 60}")
+    print(f"  대상: {result.get('target')}")
+    for f in result.get("findings", []):
+        verdict = "[취약 후보]" if f.get("vulnerable") else "[방어/정상]"
+        print(f"  {verdict} {f.get('kind')} {f.get('method')} {f.get('path')} "
+              f"→ HTTP {f.get('status')}")
+    print(f"{'=' * 60}\n")

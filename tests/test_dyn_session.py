@@ -51,5 +51,25 @@ class TestLogin(unittest.TestCase):
             dyn_session.login("http://localhost:7171", "/login", {"id": "a", "pw": "b"})
 
 
+class TestRequest(unittest.TestCase):
+    @patch("requests.request")
+    def test_request_adds_bearer(self, mock_req):
+        mock_req.return_value = MagicMock(status_code=200, text="ok")
+        out = dyn_session.request("GET", "http://localhost:7171/adm/v1/users", token="TKN")
+        self.assertEqual(out["status"], 200)
+        self.assertEqual(out["body"], "ok")
+        _, kwargs = mock_req.call_args
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer TKN")
+        self.assertFalse(kwargs["allow_redirects"])
+
+    @patch("requests.request")
+    def test_request_no_token_no_header(self, mock_req):
+        mock_req.return_value = MagicMock(status_code=403, text="")
+        out = dyn_session.request("GET", "http://localhost:7171/x")
+        self.assertEqual(out["status"], 403)
+        _, kwargs = mock_req.call_args
+        self.assertNotIn("Authorization", kwargs["headers"])
+
+
 if __name__ == "__main__":
     unittest.main()
