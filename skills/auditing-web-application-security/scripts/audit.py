@@ -147,6 +147,13 @@ def run_access_dynamic(target, static_result, creds, authorized):
         except json.JSONDecodeError:
             data = {"raw": (out.stdout or out.stderr or "").strip()[:200],
                     "blocked_or_no_json": True}
+        # 발사했더라도 모든 표적이 skipped(예: IDOR인데 token_b/resource_id 없음)면
+        # 동적으로 확정한 게 없으므로 'dynamic'으로 과대표기하지 않는다(정적 추정 유지).
+        fired = [f for f in (data.get("findings") or [])
+                 if isinstance(f, dict) and not f.get("skipped")]
+        if isinstance(data, dict) and data.get("findings") and not fired:
+            return {"confidence": "static-only", "result": data, "returncode": out.returncode,
+                    "note": "동적 발사했으나 모든 표적이 skipped(토큰/리소스 부족) — 정적 추정 유지"}
         return {"confidence": "dynamic", "result": data, "returncode": out.returncode}
     except (subprocess.TimeoutExpired, OSError) as e:
         return {"error": str(e)[:120]}

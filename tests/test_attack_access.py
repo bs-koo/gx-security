@@ -44,6 +44,15 @@ class TestBuildTargets(unittest.TestCase):
         self.assertEqual(targets[0]["path"], "/adm/v1/x")
         self.assertFalse(targets[0]["needs_review"])
 
+    def test_idor_without_placeholder_flags_review(self):
+        # placeholder 0개 IDOR 경로(/api/v1/me)는 치환 대상이 없어 오탐 위험 → 검토 격리(리뷰 반영)
+        scan = {"candidates": [
+            {"rule_id": "spring-pathvariable-id", "file": "Me.java", "line": 9,
+             "snippet": '@GetMapping("/api/v1/me")'}]}
+        targets = attack_access.build_targets(scan, "http://localhost:7171")
+        self.assertEqual(targets[0]["kind"], "idor")
+        self.assertTrue(targets[0]["needs_review"])
+
     def test_idor_multi_placeholder_needs_review(self):
         # 다중 placeholder는 단일 resource-id로 안전 치환 불가 → 검토 대상 (M5)
         scan = {"candidates": [
