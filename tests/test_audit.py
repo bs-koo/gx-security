@@ -32,6 +32,14 @@ class TestAccessDynamic(unittest.TestCase):
         out = audit.run_access_dynamic("http://localhost:7171", static, {"token_a": "X"}, False)
         self.assertIn("skipped", out)
 
+    def test_partial_static_error_short_circuits(self):
+        # N1: 정적 부분 실패(error 동반)면 동적 연계 보류
+        static = {"error": "rc=1: scan failed", "by_skill": [
+            {"skill": "detecting-broken-access-control", "candidates": [{"rule_id": "x"}]}]}
+        out = audit.run_access_dynamic("http://localhost:7171", static, {"token_a": "X"}, False)
+        self.assertIn("skipped", out)
+        self.assertIn("static_error", out)
+
 
 if __name__ == "__main__":
     unittest.main()

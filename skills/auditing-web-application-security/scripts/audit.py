@@ -109,6 +109,10 @@ def run_access_dynamic(target, static_result, creds, authorized):
     """
     if not os.path.exists(_ACCESS_SCRIPT):
         return {"skipped": "attack_access.py 없음"}
+    # N1: 정적 스캔이 부분 실패(error 동반)면 불완전한 후보로 동적 확정하지 않는다
+    if isinstance(static_result, dict) and static_result.get("error"):
+        return {"skipped": "정적 스캔 부분 실패 — 동적 연계 보류",
+                "static_error": str(static_result["error"])[:200]}
     candidates = _extract_access_candidates(static_result)
     if not candidates:
         return {"skipped": "정적 access-control 후보 없음"}
@@ -190,6 +194,12 @@ def main():
                  "user_b_id": args.user_b_id, "user_b_pw": args.user_b_pw,
                  "token_a": args.token_a, "token_b": args.token_b,
                  "resource_id": args.resource_id}
+        # N2: 한쪽만 지정된 계정(id 또는 pw) 경고 — audit 레이어가 조용히 drop하지 않도록
+        for _who in ("a", "b"):
+            _uid = getattr(args, f"user_{_who}_id")
+            _upw = getattr(args, f"user_{_who}_pw")
+            if bool(_uid) != bool(_upw) and not args.json:
+                print(f"[!] --user-{_who}-id/--user-{_who}-pw는 함께 지정해야 합니다 (한쪽만 전달 — 무시됨)")
         report["phases"]["access_dynamic"] = run_access_dynamic(
             args.target, report["phases"]["static"], creds, args.authorized)
     else:
@@ -246,6 +256,8 @@ def main():
         res = acc.get("result", {})
         fcount = len(res.get("findings", [])) if isinstance(res, dict) else 0
         print(f"[접근통제] 동적 확정 발사 완료 — findings {fcount}건")
+    elif acc.get("error"):
+        print(f"[접근통제] 오류: {acc['error']}")
     elif acc.get("skipped"):
         print(f"[접근통제] {acc['skipped']}")
 
