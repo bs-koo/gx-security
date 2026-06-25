@@ -80,5 +80,35 @@ class TestRunOpenRedirect(unittest.TestCase):
         self.assertFalse(out["vulnerable"])
 
 
+class _FakeListener:
+    def __init__(self, hit):
+        self._hit = hit
+
+    def url_for(self, nonce):
+        return f"http://127.0.0.1:9/c/{nonce}"
+
+    def received(self, nonce, timeout=5.0):
+        return self._hit
+
+
+class TestRunSsrf(unittest.TestCase):
+    @patch("tools.dyn_session.request")
+    def test_callback_received_vulnerable(self, mock_req):
+        mock_req.return_value = {"status": 200, "body": "", "elapsed": 0.0, "headers": {}}
+        out = attack_ssrf.run_ssrf("http://app.local", "/api/fetch?url=",
+                                   _FakeListener(hit=True))
+        self.assertTrue(out["callback"])
+        self.assertTrue(out["vulnerable"])
+        self.assertEqual(out["kind"], "ssrf")
+
+    @patch("tools.dyn_session.request")
+    def test_no_callback_defended(self, mock_req):
+        mock_req.return_value = {"status": 200, "body": "", "elapsed": 0.0, "headers": {}}
+        out = attack_ssrf.run_ssrf("http://app.local", "/api/fetch?url=",
+                                   _FakeListener(hit=False))
+        self.assertFalse(out["callback"])
+        self.assertFalse(out["vulnerable"])
+
+
 if __name__ == "__main__":
     unittest.main()
