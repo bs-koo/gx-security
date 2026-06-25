@@ -65,5 +65,42 @@ class TestRunPathTraversal(unittest.TestCase):
         self.assertFalse(out["vulnerable"])
 
 
+class TestMarkerUpload(unittest.TestCase):
+    def test_marker_is_inert_jsp(self):
+        fn, content, nonce = A.make_marker_upload()
+        self.assertTrue(fn.endswith(".jsp"))
+        self.assertIn(nonce, content)
+        self.assertNotIn("<%", content)  # 코드 없음
+
+
+class TestRunUpload(unittest.TestCase):
+    @patch("tools.dyn_session.request")
+    def test_accepted_vulnerable(self, mock_req):
+        mock_req.return_value = {"status": 200, "body": "ok", "elapsed": 0.0, "headers": {}}
+        out = A.run_upload("http://app.local", "/api/upload")
+        self.assertTrue(out["accepted"])
+        self.assertTrue(out["vulnerable"])
+        self.assertEqual(out["kind"], "file-upload")
+
+    @patch("tools.dyn_session.request")
+    def test_rejected_defended(self, mock_req):
+        mock_req.return_value = {"status": 400, "body": "bad ext", "elapsed": 0.0, "headers": {}}
+        out = A.run_upload("http://app.local", "/api/upload")
+        self.assertFalse(out["accepted"])
+        self.assertFalse(out["vulnerable"])
+
+    @patch("tools.dyn_session.request")
+    def test_retrievable_marks_webroot(self, mock_req):
+        fn, content = ("gxmarker_X.jsp", "GXMARKER-X")
+        mock_req.side_effect = [
+            {"status": 200, "body": "ok", "elapsed": 0.0, "headers": {}},          # upload
+            {"status": 200, "body": "GXMARKER-", "elapsed": 0.0, "headers": {}},   # retrieve
+        ]
+        with patch.object(A, "make_marker_upload", return_value=(fn, content, "")):
+            out = A.run_upload("http://app.local", "/api/upload",
+                               retrieve_base="http://app.local/files/")
+        self.assertTrue(out["retrievable"])
+
+
 if __name__ == "__main__":
     unittest.main()
