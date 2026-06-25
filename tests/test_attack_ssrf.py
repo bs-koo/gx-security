@@ -63,5 +63,22 @@ class TestGetHeader(unittest.TestCase):
         self.assertIsNone(attack_ssrf._get_header({}, "Location"))
 
 
+class TestRunOpenRedirect(unittest.TestCase):
+    @patch("tools.dyn_session.request")
+    def test_external_location_vulnerable(self, mock_req):
+        mock_req.return_value = {"status": 302, "body": "", "elapsed": 0.0,
+                                 "headers": {"Location": "https://evil.test"}}
+        out = attack_ssrf.run_open_redirect("http://app.local", "/go?u=", "app.local")
+        self.assertTrue(out["vulnerable"])
+        self.assertEqual(out["kind"], "open-redirect")
+
+    @patch("tools.dyn_session.request")
+    def test_relative_location_defended(self, mock_req):
+        mock_req.return_value = {"status": 302, "body": "", "elapsed": 0.0,
+                                 "headers": {"Location": "/siteMain.do"}}
+        out = attack_ssrf.run_open_redirect("http://app.local", "/go?u=", "app.local")
+        self.assertFalse(out["vulnerable"])
+
+
 if __name__ == "__main__":
     unittest.main()
