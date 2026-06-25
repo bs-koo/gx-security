@@ -22,7 +22,7 @@ rules:
           - pattern: $H.csrf().disable()
           - pattern: $H.csrf(csrf -> csrf.disable())
           - pattern: $H.csrf($C -> $C.disable())
-          - pattern: $H.csrf(org.springframework.security.config.Customizer.withDefaults())
+          # withDefaults()는 CSRF를 '활성화'하므로 비활성 룰에서 제외(보안 코드 오탐 방지)
 
   - id: sqisoft-spring-cors-wildcard-with-credentials
     languages: [java]

@@ -121,7 +121,7 @@ rules:
       owasp: "A04:2021"
       stack: jsp-legacy
       confidence: needs-context
-    pattern-regex: 'enctype\s*=\s*["\']multipart/form-data["\']'
+    pattern-regex: 'enctype\s*=\s*["'']multipart/form-data["'']'
 
   - id: sqisoft-zipslip-zipentry-name
     languages: [java]

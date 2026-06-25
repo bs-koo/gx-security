@@ -177,13 +177,14 @@ rules:
       owasp: "A01:2021"
       stack: spring-modern
       confidence: needs-context
-    patterns:
-      - pattern-either:
-          - pattern: @RequestParam String $PARAM
+    pattern-either:
+      - patterns:
+          - pattern: "@RequestParam String $PARAM"
+          - metavariable-regex:
+              metavariable: $PARAM
+              regex: (?i)(returnUrl|return_url|redirectUrl|redirect_url|nextUrl|next|callbackUrl|callback)
+      - patterns:
           - pattern: $REQ.getParameter($KEY)
-      - metavariable-regex:
-          metavariable: $PARAM
-          regex: (?i)(returnUrl|return_url|redirectUrl|redirect_url|nextUrl|next|callbackUrl|callback)
-      - metavariable-regex:
-          metavariable: $KEY
-          regex: (?i)"(returnUrl|return_url|redirectUrl|redirect_url|nextUrl|next|callbackUrl|callback)"
+          - metavariable-regex:
+              metavariable: $KEY
+              regex: (?i)"(returnUrl|return_url|redirectUrl|redirect_url|nextUrl|next|callbackUrl|callback)"
