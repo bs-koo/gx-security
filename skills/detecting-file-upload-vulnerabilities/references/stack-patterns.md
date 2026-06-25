@@ -51,6 +51,10 @@ file.transferTo(dest);
 
 ### 안전 패턴 (오탐 주의)
 
+> **추적 원칙**: `transferTo()` 직전에 검증이 안 보여도 `validateFile`·`UploadFileSaveHandler`
+> 같은 공용 핸들러에 캡슐화돼 있을 수 있다. 검증 함수 정의를 열어 화이트리스트+시그니처
+> 유무를 확인하기 전에는 취약으로 확정하지 않는다.
+
 ```java
 // sqisoft-sef-2026 FileUtils.validateFile() — 안전 (오탐)
 // 1) 확장자 화이트리스트: ALLOWED_EXTENSIONS.contains(ext)
