@@ -46,6 +46,14 @@ class TestInject(unittest.TestCase):
         url = A._inject("http://h/", "/d?f=", "x")
         self.assertEqual(url, "http://h/d?f=x")
 
+    def test_does_not_double_encode(self):
+        # 이미 인코딩된 변형(%2e%2e%2f)을 추가 인코딩하지 않아야 함(Critical 리뷰 반영)
+        url = A._inject("http://h", "/d?f=", "%2e%2e%2fetc%2fpasswd")
+        self.assertIn("%2e%2e%2f", url)
+        self.assertNotIn("%252e", url)
+        # 평문 ../ 도 그대로 전달
+        self.assertTrue(A._inject("http://h", "/d?f=", "../../etc/passwd").endswith("../../etc/passwd"))
+
 
 class TestRunPathTraversal(unittest.TestCase):
     @patch("tools.dyn_session.request")
