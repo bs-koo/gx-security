@@ -51,10 +51,22 @@ class TestRunJwtTamper(unittest.TestCase):
 
     @patch("tools.dyn_session.request")
     def test_403_all_is_defended(self, mock_req):
-        mock_req.return_value = {"status": 403, "body": "", "elapsed": 0.0, "headers": {}}
+        # before(정상토큰)=200 통과 후, 변조 4변형 모두 403 → 방어
+        mock_req.side_effect = [
+            {"status": 200, "body": "", "elapsed": 0.0, "headers": {}},  # before
+        ] + [{"status": 403, "body": "", "elapsed": 0.0, "headers": {}} for _ in range(4)]
         tok = _make_jwt({"alg": "HS256"}, {"sub": "u"})
         out = attack_auth.run_jwt_tamper("http://h", "/api/v1/users/me", tok)
         self.assertFalse(out["vulnerable"])
+
+    @patch("tools.dyn_session.request")
+    def test_skips_when_probe_inaccessible(self, mock_req):
+        # 정상 토큰으로도 probe가 401 → 변조 판정 보류(오탐 방지, 리뷰 반영)
+        mock_req.return_value = {"status": 401, "body": "", "elapsed": 0.0, "headers": {}}
+        tok = _make_jwt({"alg": "HS256"}, {"sub": "u"})
+        out = attack_auth.run_jwt_tamper("http://h", "/api/v1/users/me", tok)
+        self.assertIn("skipped", out)
+        self.assertNotIn("vulnerable", out)
 
 
 class TestTokenReuse(unittest.TestCase):
@@ -78,17 +90,37 @@ class TestTokenReuse(unittest.TestCase):
         out = attack_auth.run_token_reuse("http://h", "/api/v1/users/me", "T", "/api/v1/auth/logout")
         self.assertFalse(out["vulnerable"])
 
+    @patch("tools.dyn_session.request")
+    def test_skips_when_logout_fails(self, mock_req):
+        # 로그아웃이 404 → 재사용 2xx는 '미폐기'가 아니라 '로그아웃 실패' → 보류(오탐 방지)
+        mock_req.side_effect = [
+            {"status": 200, "body": "", "elapsed": 0.0, "headers": {}},  # before
+            {"status": 404, "body": "", "elapsed": 0.0, "headers": {}},  # logout 실패
+        ]
+        out = attack_auth.run_token_reuse("http://h", "/api/v1/users/me", "T", "/api/v1/auth/logout")
+        self.assertIn("skipped", out)
+        self.assertNotIn("vulnerable", out)
+
 
 class TestCookieFlags(unittest.TestCase):
     def test_missing_flags_vulnerable(self):
         out = attack_auth.check_cookie_flags("refresh-token=abc; Path=/")
         self.assertTrue(out["vulnerable"])
-        self.assertIn("Secure", out["missing"])
-        self.assertIn("HttpOnly", out["missing"])
+        self.assertIn("Secure", out["cookies"][0]["missing"])
+        self.assertIn("HttpOnly", out["cookies"][0]["missing"])
 
     def test_all_flags_safe(self):
         out = attack_auth.check_cookie_flags("refresh-token=abc; Secure; HttpOnly; SameSite=Strict")
         self.assertFalse(out["vulnerable"])
+
+    def test_multi_cookie_split_independently(self):
+        # 쉼표 결합된 두 쿠키 — 한쪽만 안전해도 다른 쪽 누락을 잡아야 함(리뷰 반영)
+        out = attack_auth.check_cookie_flags(
+            "A=1; Secure; HttpOnly; SameSite=Strict, B=2; Path=/")
+        self.assertEqual(len(out["cookies"]), 2)
+        self.assertTrue(out["vulnerable"])
+        b = next(c for c in out["cookies"] if c["cookie_name"] == "B")
+        self.assertIn("Secure", b["missing"])
 
     def test_no_cookie_skipped(self):
         self.assertIn("skipped", attack_auth.check_cookie_flags(""))
