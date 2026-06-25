@@ -44,16 +44,21 @@ class TestTamperJwt(unittest.TestCase):
 class TestRunJwtTamper(unittest.TestCase):
     @patch("tools.dyn_session.request")
     def test_2xx_variant_is_vulnerable(self, mock_req):
-        mock_req.return_value = {"status": 200, "body": "{}", "elapsed": 0.0, "headers": {}}
+        # before=200(정상토큰), anon=401(무토큰 → 인증 적용 확인), 변조 200 → 취약
+        mock_req.side_effect = [
+            {"status": 200, "body": "{}", "elapsed": 0.0, "headers": {}},  # before
+            {"status": 401, "body": "", "elapsed": 0.0, "headers": {}},    # anon
+        ] + [{"status": 200, "body": "{}", "elapsed": 0.0, "headers": {}} for _ in range(4)]
         tok = _make_jwt({"alg": "HS256"}, {"sub": "u", "roles": ["USER"]})
         out = attack_auth.run_jwt_tamper("http://h", "/api/v1/users/me", tok)
         self.assertTrue(out["vulnerable"])
 
     @patch("tools.dyn_session.request")
     def test_403_all_is_defended(self, mock_req):
-        # before(정상토큰)=200 통과 후, 변조 4변형 모두 403 → 방어
+        # before=200, anon=401(인증 적용), 변조 4변형 모두 403 → 방어
         mock_req.side_effect = [
             {"status": 200, "body": "", "elapsed": 0.0, "headers": {}},  # before
+            {"status": 401, "body": "", "elapsed": 0.0, "headers": {}},  # anon
         ] + [{"status": 403, "body": "", "elapsed": 0.0, "headers": {}} for _ in range(4)]
         tok = _make_jwt({"alg": "HS256"}, {"sub": "u"})
         out = attack_auth.run_jwt_tamper("http://h", "/api/v1/users/me", tok)
@@ -65,6 +70,18 @@ class TestRunJwtTamper(unittest.TestCase):
         mock_req.return_value = {"status": 401, "body": "", "elapsed": 0.0, "headers": {}}
         tok = _make_jwt({"alg": "HS256"}, {"sub": "u"})
         out = attack_auth.run_jwt_tamper("http://h", "/api/v1/users/me", tok)
+        self.assertIn("skipped", out)
+        self.assertNotIn("vulnerable", out)
+
+    @patch("tools.dyn_session.request")
+    def test_skips_when_probe_is_public(self, mock_req):
+        # before=200, anon=200(무토큰도 통과 → 인증 미적용) → 변조 판정 무의미(오탐 방지, 리뷰 반영)
+        mock_req.side_effect = [
+            {"status": 200, "body": "", "elapsed": 0.0, "headers": {}},  # before
+            {"status": 200, "body": "", "elapsed": 0.0, "headers": {}},  # anon
+        ]
+        tok = _make_jwt({"alg": "HS256"}, {"sub": "u"})
+        out = attack_auth.run_jwt_tamper("http://h", "/public/info", tok)
         self.assertIn("skipped", out)
         self.assertNotIn("vulnerable", out)
 
