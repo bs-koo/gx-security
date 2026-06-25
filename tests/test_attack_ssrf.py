@@ -73,6 +73,9 @@ class TestRunOpenRedirect(unittest.TestCase):
         out = attack_ssrf.run_open_redirect("http://app.local", "/go?u=", "app.local")
         self.assertTrue(out["vulnerable"])
         self.assertEqual(out["kind"], "open-redirect")
+        # emit 비-json 요약이 쓰는 키(method/path) 계약 고정
+        self.assertEqual(out["method"], "GET")
+        self.assertEqual(out["path"], "/go?u=")
 
     @patch("tools.dyn_session.request")
     def test_relative_location_defended(self, mock_req):
@@ -102,6 +105,8 @@ class TestRunSsrf(unittest.TestCase):
         self.assertTrue(out["callback"])
         self.assertTrue(out["vulnerable"])
         self.assertEqual(out["kind"], "ssrf")
+        self.assertEqual(out["method"], "GET")
+        self.assertEqual(out["path"], "/api/fetch?url=")
 
     @patch("tools.dyn_session.request")
     def test_no_callback_defended(self, mock_req):
