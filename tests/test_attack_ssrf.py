@@ -154,5 +154,36 @@ class TestRunScopeGate(unittest.TestCase):
         self.assertEqual(cm.exception.code, 1)
 
 
+class TestNetworkErrorHandling(unittest.TestCase):
+    @patch("tools.dyn_session.request", side_effect=ConnectionError("boom"))
+    def test_open_redirect_survives_request_error(self, _mock):
+        # 네트워크 오류가 나도 크래시하지 않고 finding을 남긴다(리뷰 반영)
+        out = attack_ssrf.run_open_redirect("http://app.local", "/go?u=", "app.local")
+        self.assertFalse(out["vulnerable"])
+        self.assertTrue(all("error" in f for f in out["findings"]))
+
+    @patch("tools.dyn_session.request", side_effect=TimeoutError("slow"))
+    def test_ssrf_callback_detected_despite_request_error(self, _mock):
+        # 요청이 타임아웃이어도 OOB 콜백 수신이면 취약 확정(블라인드 SSRF)
+        out = attack_ssrf.run_ssrf("http://app.local", "/api/fetch?url=",
+                                   _FakeListener(hit=True))
+        self.assertIsNone(out["status"])
+        self.assertTrue(out["vulnerable"])
+
+
+class TestClassifyDefensive(unittest.TestCase):
+    def test_malformed_candidates_do_not_crash(self):
+        data = {"candidates": ["not-a-dict", {"snippet": 12345}, {"snippet": "restTemplate.exchange(x)"}]}
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                         encoding="utf-8") as f:
+            json.dump(data, f)
+            path = f.name
+        try:
+            out = attack_ssrf._classify_candidates(path)
+        finally:
+            os.unlink(path)
+        self.assertEqual(len(out["ssrf"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
