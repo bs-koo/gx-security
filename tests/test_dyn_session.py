@@ -14,6 +14,10 @@ class TestHelpers(unittest.TestCase):
     def test_mask_token_none(self):
         self.assertEqual(dyn_session.mask_token(None), "<none>")
 
+    def test_mask_token_nonstring(self):
+        # JSON int 토큰이 와도 크래시하지 않는다 (M2 회귀)
+        self.assertEqual(dyn_session.mask_token(12345678901234), "1234…1234")
+
     def test_extract_by_path_nested(self):
         obj = {"data": {"accessToken": "TKN"}}
         self.assertEqual(dyn_session.extract_by_path(obj, "data.accessToken"), "TKN")
@@ -49,6 +53,17 @@ class TestLogin(unittest.TestCase):
         mock_post.return_value = MagicMock(status_code=200, json=lambda: {"data": {}})
         with self.assertRaises(RuntimeError):
             dyn_session.login("http://localhost:7171", "/login", {"id": "a", "pw": "b"})
+
+    @patch("requests.post")
+    def test_login_body_template_no_keyerror(self, mock_post):
+        # JSON 중괄호가 있는 body-template이 KeyError 없이 동작 (H1 회귀)
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: {"tok": "X"})
+        tok = dyn_session.login(
+            "http://h", "/login", {"id": "a", "pw": "b"},
+            body_template='{"u":"{id}","p":"{pw}"}', token_json_path="tok")
+        self.assertEqual(tok, "X")
+        _, kwargs = mock_post.call_args
+        self.assertEqual(kwargs["json"], {"u": "a", "p": "b"})
 
 
 class TestRequest(unittest.TestCase):

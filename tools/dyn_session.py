@@ -27,6 +27,7 @@ def mask_token(tok):
     """토큰을 로그/출력용으로 마스킹. 앞 4·뒤 4만 노출."""
     if not tok:
         return "<none>"
+    tok = str(tok)   # 비문자열(JSON int 등)이 와도 크래시하지 않게 방어
     if len(tok) <= 8:
         return "****"
     return tok[:4] + "…" + tok[-4:]
@@ -49,7 +50,12 @@ def login(base_url, login_path, cred, *, body_template=None,
     import requests
     url = base_url.rstrip("/") + login_path
     if body_template:
-        body = json.loads(body_template.format(id=cred["id"], pw=cred["pw"]))
+        # JSON 중괄호와 충돌하지 않도록 str.format 대신 {id}/{pw} 단순 치환
+        raw = body_template.replace("{id}", cred["id"]).replace("{pw}", cred["pw"])
+        try:
+            body = json.loads(raw)
+        except (ValueError, TypeError):
+            raise RuntimeError("로그인 body-template JSON 파싱 실패 — 형식을 확인하세요")
     else:
         body = {"lgnId": cred["id"], "password": cred["pw"]}  # sef-2026 프리셋
     try:
@@ -92,7 +98,14 @@ def emit(result, as_json):
     print(f"{'=' * 60}")
     print(f"  대상: {result.get('target')}")
     for f in result.get("findings", []):
-        verdict = "[취약 후보]" if f.get("vulnerable") else "[방어/정상]"
+        if f.get("skipped"):
+            verdict = f"[미발사: {f['skipped']}]"
+        elif f.get("error"):
+            verdict = f"[발사실패: {f['error']}]"
+        elif f.get("vulnerable"):
+            verdict = "[취약 후보]"
+        else:
+            verdict = "[방어/정상]"
         print(f"  {verdict} {f.get('kind')} {f.get('method')} {f.get('path')} "
               f"→ HTTP {f.get('status')}")
     print(f"{'=' * 60}\n")

@@ -35,6 +35,23 @@ class TestBuildTargets(unittest.TestCase):
         self.assertEqual(targets[0]["path"], "<UNKNOWN>")
         self.assertTrue(targets[0]["needs_review"])
 
+    def test_regex_handles_value_form(self):
+        # @RequestMapping(value = "...") 형태도 추출 (M4 회귀)
+        scan = {"candidates": [
+            {"rule_id": "spring-admin-no-preauthorize", "file": "A.java", "line": 1,
+             "snippet": '@RequestMapping(value = "/adm/v1/x")'}]}
+        targets = attack_access.build_targets(scan, "http://localhost:7171")
+        self.assertEqual(targets[0]["path"], "/adm/v1/x")
+        self.assertFalse(targets[0]["needs_review"])
+
+    def test_idor_multi_placeholder_needs_review(self):
+        # 다중 placeholder는 단일 resource-id로 안전 치환 불가 → 검토 대상 (M5)
+        scan = {"candidates": [
+            {"rule_id": "spring-pathvariable-id", "file": "B.java", "line": 1,
+             "snippet": '@GetMapping("/api/v1/users/{uid}/posts/{pid}")'}]}
+        targets = attack_access.build_targets(scan, "http://localhost:7171")
+        self.assertTrue(targets[0]["needs_review"])
+
 
 class TestBfla(unittest.TestCase):
     @patch("tools.dyn_session.request")
