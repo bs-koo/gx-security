@@ -116,6 +116,19 @@ class TestRunSsrf(unittest.TestCase):
         self.assertFalse(out["callback"])
         self.assertFalse(out["vulnerable"])
 
+    @patch.object(attack_ssrf, "_gen_nonce", return_value="NONCE123")
+    @patch("tools.dyn_session.request")
+    def test_reflected_only_not_vulnerable(self, mock_req, _nonce):
+        # 서버가 입력 URL을 에러 페이지에 에코하면 nonce가 본문에 반영되지만(reflected),
+        # 서버측 요청은 없었으므로 SSRF 확정이 아니다 — 콜백 없으면 not vulnerable(리뷰 반영)
+        mock_req.return_value = {"status": 400, "body": "invalid url: ...NONCE123",
+                                 "elapsed": 0.0, "headers": {}}
+        out = attack_ssrf.run_ssrf("http://app.local", "/api/fetch?url=",
+                                   _FakeListener(hit=False))
+        self.assertTrue(out["reflected"])
+        self.assertFalse(out["callback"])
+        self.assertFalse(out["vulnerable"])
+
 
 class TestClassifyCandidates(unittest.TestCase):
     def test_splits_redirect_and_ssrf(self):
