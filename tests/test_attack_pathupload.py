@@ -102,5 +102,45 @@ class TestRunUpload(unittest.TestCase):
         self.assertTrue(out["retrievable"])
 
 
+class TestClassifyCandidates(unittest.TestCase):
+    def test_splits_traversal_and_upload(self):
+        data = {"candidates": [
+            {"file": "DownloadController.java", "line": 40,
+             "snippet": 'new File(baseDir, request.getParameter("filePath"))'},
+            {"file": "UploadController.java", "line": 87,
+             "snippet": 'multipartFile.transferTo(dest)'},
+        ]}
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                         encoding="utf-8") as f:
+            json.dump(data, f)
+            path = f.name
+        try:
+            out = A._classify_candidates(path)
+        finally:
+            os.unlink(path)
+        self.assertEqual(len(out["traversal"]), 1)
+        self.assertEqual(len(out["upload"]), 1)
+        self.assertEqual(out["traversal"][0]["param"], "filePath")
+
+
+class TestRunGates(unittest.TestCase):
+    @patch("tools.dyn_session.assert_in_scope")
+    def test_scope_block_exits_1(self, mock_scope):
+        mock_scope.side_effect = A.dyn_session.ScopeError("운영 차단")
+        args = A._build_parser().parse_args(
+            ["http://prod.example.com", "--traversal-target", "/d?f="])
+        with self.assertRaises(SystemExit) as cm:
+            A.run(args)
+        self.assertEqual(cm.exception.code, 1)
+
+    @patch("tools.dyn_session.assert_in_scope", return_value="loopback")
+    @patch.object(attack_pathupload, "run_upload")
+    def test_upload_skipped_without_destructive(self, mock_up, _scope):
+        args = A._build_parser().parse_args(
+            ["http://localhost:7171", "--upload-target", "/api/upload", "--json"])
+        A.run(args)
+        mock_up.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
