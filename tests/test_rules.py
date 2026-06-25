@@ -42,6 +42,7 @@ class TestRuleFileStructure(unittest.TestCase):
                 self.assertIsInstance(doc["rules"], list, "'rules'가 리스트가 아님")
                 self.assertTrue(doc["rules"], "'rules'가 비어 있음")
                 for r in doc["rules"]:
+                    self.assertIsInstance(r, dict, f"룰이 매핑(dict)이 아님: {r!r}")
                     rid = r.get("id")
                     self.assertIsInstance(rid, str, f"id 누락/비문자열: {r!r}")
                     self.assertIsInstance(r.get("message"), str, f"{rid}: message 누락")
@@ -63,7 +64,9 @@ class TestRuleIdUniqueness(unittest.TestCase):
         for path in _RULE_FILES:
             with self.subTest(file=os.path.relpath(path, _ROOT)):
                 doc = _load(path)
-                ids = [r.get("id") for r in doc.get("rules", [])]
+                if not isinstance(doc, dict):
+                    continue   # 구조 검증은 test_each_parses가 담당
+                ids = [r.get("id") for r in doc.get("rules", []) if isinstance(r, dict)]
                 dups = sorted({i for i in ids if ids.count(i) > 1})
                 self.assertEqual(dups, [], f"파일 내 중복 id: {dups}")
 
@@ -73,7 +76,12 @@ class TestRuleIdUniqueness(unittest.TestCase):
         collisions = []
         for path in _RULE_FILES:
             rel = os.path.relpath(path, _ROOT)
-            for r in _load(path).get("rules", []):
+            doc = _load(path)
+            if not isinstance(doc, dict):
+                continue
+            for r in doc.get("rules", []):
+                if not isinstance(r, dict):
+                    continue
                 rid = r.get("id")
                 if rid in seen:
                     collisions.append(f"{rid}: {seen[rid]} ↔ {rel}")
