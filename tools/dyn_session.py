@@ -81,8 +81,9 @@ def login(base_url, login_path, cred, **kwargs):
     return login_response(base_url, login_path, cred, **kwargs)["token"]
 
 
-def request(method, url, *, token=None, json_body=None, timeout=10):
-    """인증 헤더를 자동 부착해 요청. {status, body, elapsed} 반환."""
+def request(method, url, *, token=None, json_body=None, files=None, data=None, timeout=10):
+    """인증 헤더를 자동 부착해 요청. {status, body, elapsed, headers} 반환.
+    files/data 주면 multipart 업로드(json_body와 병용하지 않는다)."""
     import requests
     headers = {}
     if token:
@@ -90,7 +91,7 @@ def request(method, url, *, token=None, json_body=None, timeout=10):
     t0 = time.monotonic()
     resp = requests.request(
         method.upper(), url, headers=headers, json=json_body,
-        timeout=timeout, allow_redirects=False)
+        files=files, data=data, timeout=timeout, allow_redirects=False)
     return {"status": resp.status_code, "body": resp.text,
             "elapsed": round(time.monotonic() - t0, 3),
             "headers": dict(resp.headers)}
