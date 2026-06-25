@@ -89,12 +89,81 @@ def run_dynamic(target, params, authorized):
     return results
 
 
+_ACCESS_SCRIPT = os.path.join(
+    ROOT, "skills", "exploiting-broken-access-control", "scripts", "attack_access.py")
+
+
+def _extract_access_candidates(static_result):
+    """정적 통합 결과(by_skill)에서 접근통제(BFLA/IDOR) 후보만 추출."""
+    for s in (static_result or {}).get("by_skill", []):
+        if "broken-access-control" in s.get("skill", ""):
+            return s.get("candidates", [])
+    return []
+
+
+def run_access_dynamic(target, static_result, creds, authorized):
+    """정적 access-control 후보를 attack_access로 동적 확정한다(개선 D).
+
+    계정/토큰 미제공 시 발사하지 않고 'static-only'(정적 추정·동적 미확정)로 표기한다(개선 E).
+    IDOR/BFLA는 본질적으로 동적 확정이 필요하므로, 동적을 못 돌리면 High로 단정하지 않는다.
+    """
+    if not os.path.exists(_ACCESS_SCRIPT):
+        return {"skipped": "attack_access.py 없음"}
+    candidates = _extract_access_candidates(static_result)
+    if not candidates:
+        return {"skipped": "정적 access-control 후보 없음"}
+    has_creds = creds.get("token_a") or (creds.get("user_a_id") and creds.get("user_a_pw"))
+    if not has_creds:
+        return {
+            "confidence": "static-only",
+            "candidate_count": len(candidates),
+            "note": ("access-control 후보가 있으나 테스트 계정 미제공 → 동적 미확정(정적 추정). "
+                     "--user-a-id/pw(+--user-b-id/pw·--resource-id) 또는 --token-a 제공 시 동적 확정."),
+        }
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+    try:
+        json.dump({"candidates": candidates}, tmp, ensure_ascii=False)
+        tmp.close()
+        cmd = [sys.executable, _ACCESS_SCRIPT, target, "--scan", tmp.name, "--json"]
+        for flag, key in [("--token-a", "token_a"), ("--token-b", "token_b"),
+                          ("--resource-id", "resource_id")]:
+            if creds.get(key):
+                cmd += [flag, creds[key]]
+        if creds.get("user_a_id") and creds.get("user_a_pw"):
+            cmd += ["--user-a-id", creds["user_a_id"], "--user-a-pw", creds["user_a_pw"]]
+        if creds.get("user_b_id") and creds.get("user_b_pw"):
+            cmd += ["--user-b-id", creds["user_b_id"], "--user-b-pw", creds["user_b_pw"]]
+        if authorized:
+            cmd += ["--authorized"]
+        out = subprocess.run(cmd, capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=600)
+        try:
+            data = json.loads(out.stdout or "{}")
+        except json.JSONDecodeError:
+            data = {"raw": (out.stdout or out.stderr or "").strip()[:200],
+                    "blocked_or_no_json": True}
+        return {"confidence": "dynamic", "result": data, "returncode": out.returncode}
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return {"error": str(e)[:120]}
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+
 def main():
     ap = argparse.ArgumentParser(description="SQIsoft 보안 통합 점검 오케스트레이터")
     ap.add_argument("source", help="검사 대상 소스 디렉토리")
     ap.add_argument("--target", help="실행 중인 대상 URL(스테이징/로컬). 주면 동적 공격 수행")
     ap.add_argument("--params", help="동적 공격 대상 파라미터(쉼표구분, 예: id,q,search)")
     ap.add_argument("--authorized", action="store_true", help="공인 대상 명시 승인(소유자 책임)")
+    # 접근통제(BFLA/IDOR) 동적 연계용 테스트 계정/토큰 (개선 D)
+    ap.add_argument("--user-a-id"); ap.add_argument("--user-a-pw")
+    ap.add_argument("--user-b-id"); ap.add_argument("--user-b-pw")
+    ap.add_argument("--token-a"); ap.add_argument("--token-b")
+    ap.add_argument("--resource-id", help="IDOR: A가 소유한 리소스 ID")
     ap.add_argument("--json", action="store_true", help="통합 JSON 출력")
     args = ap.parse_args()
 
@@ -117,8 +186,15 @@ def main():
             if args.params else None
         )
         report["phases"]["dynamic"] = run_dynamic(args.target, params, args.authorized)
+        creds = {"user_a_id": args.user_a_id, "user_a_pw": args.user_a_pw,
+                 "user_b_id": args.user_b_id, "user_b_pw": args.user_b_pw,
+                 "token_a": args.token_a, "token_b": args.token_b,
+                 "resource_id": args.resource_id}
+        report["phases"]["access_dynamic"] = run_access_dynamic(
+            args.target, report["phases"]["static"], creds, args.authorized)
     else:
         report["phases"]["dynamic"] = {"skipped": "대상 URL(--target) 미지정 — 정적만 수행"}
+        report["phases"]["access_dynamic"] = {"skipped": "대상 URL 미지정"}
 
     report["next"] = ("Claude Code에서 auditing-web-application-security 스킬로 "
                       "오탐 제거·컨텍스트 검증·4요소 통합 리포트를 완성하세요.")
@@ -161,6 +237,17 @@ def main():
                 print(f"  - {d['vuln']}({d.get('param')}) : {mark}")
     else:
         print(f"[동적] {dyn.get('skipped','')}")
+
+    acc = report["phases"].get("access_dynamic", {})
+    if acc.get("confidence") == "static-only":
+        print(f"[접근통제] 정적 추정(동적 미확정) — 후보 {acc.get('candidate_count')}건. "
+              f"테스트 계정 제공 시 동적 확정")
+    elif acc.get("confidence") == "dynamic":
+        res = acc.get("result", {})
+        fcount = len(res.get("findings", [])) if isinstance(res, dict) else 0
+        print(f"[접근통제] 동적 확정 발사 완료 — findings {fcount}건")
+    elif acc.get("skipped"):
+        print(f"[접근통제] {acc['skipped']}")
 
     print(f"\n※ {report['next']}")
 

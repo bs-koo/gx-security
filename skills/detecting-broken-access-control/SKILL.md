@@ -132,6 +132,9 @@ python skills/detecting-broken-access-control/scripts/scan_access.py "$TARGET" -
 ## 요약
 - 확정 취약: N건 (High n / Medium n / Low n)
 - 의도된 예외: M건   | 오탐 제외: K건
+- **신뢰도**: 동적 확정 n건 / 정적 추정(미확정) m건
+  - `동적 확정(dynamic)` = `exploiting-broken-access-control`로 실제 발사해 악용 입증
+  - `정적 추정(static-only)` = 정적 분석만 — IDOR/BFLA는 동적 확정 전까지 High로 단정하지 않는다
 
 ## 확정 취약점
 
