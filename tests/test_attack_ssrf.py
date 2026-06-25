@@ -1,5 +1,7 @@
 import importlib.util
+import json
 import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -108,6 +110,43 @@ class TestRunSsrf(unittest.TestCase):
                                    _FakeListener(hit=False))
         self.assertFalse(out["callback"])
         self.assertFalse(out["vulnerable"])
+
+
+class TestClassifyCandidates(unittest.TestCase):
+    def test_splits_redirect_and_ssrf(self):
+        data = {"candidates": [
+            {"file": "LoginController.java", "line": 88,
+             "snippet": 'response.sendRedirect(request.getParameter("returnUrl"))'},
+            {"file": "FetchController.java", "line": 55,
+             "snippet": 'restTemplate.getForObject(request.getParameter("url"), String.class)'},
+        ]}
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                         encoding="utf-8") as f:
+            json.dump(data, f)
+            path = f.name
+        try:
+            out = attack_ssrf._classify_candidates(path)
+        finally:
+            os.unlink(path)
+        self.assertEqual(len(out["redirect"]), 1)
+        self.assertEqual(len(out["ssrf"]), 1)
+        self.assertEqual(out["redirect"][0]["param"], "returnUrl")
+        self.assertEqual(out["ssrf"][0]["param"], "url")
+
+    def test_bad_file_returns_empty(self):
+        out = attack_ssrf._classify_candidates("/nonexistent/scan.json")
+        self.assertEqual(out, {"redirect": [], "ssrf": []})
+
+
+class TestRunScopeGate(unittest.TestCase):
+    @patch("tools.dyn_session.assert_in_scope")
+    def test_run_blocks_on_scope_error(self, mock_scope):
+        mock_scope.side_effect = attack_ssrf.dyn_session.ScopeError("운영 차단")
+        parser = attack_ssrf._build_parser()
+        args = parser.parse_args(["http://prod.example.com", "--redirect-target", "/x="])
+        with self.assertRaises(SystemExit) as cm:
+            attack_ssrf.run(args)
+        self.assertEqual(cm.exception.code, 1)
 
 
 if __name__ == "__main__":
