@@ -9,6 +9,10 @@ reports/
 # 도구 상태
 .omc/
 
+# 윤문(humanizer) 작업 산출물 — 중간물, 형상관리 제외
+.humanize/
+*.stackdump
+
 # 동적 공격 증거(스크린샷·캡처) 기본 제외
 evidence/
 *.har
