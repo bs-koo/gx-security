@@ -75,6 +75,19 @@ public ResponseEntity<?> getMyProfile(
 }
 ```
 
+**안전 패턴 2 — rich domain 캡슐화 (sef-2026 BoardComment 실사례):**
+
+```java
+// 서비스: if 검증이 없지만 도메인 메서드에 위임 — 정상
+comment.update(request.getCmntCn(), userId);   // BoardCommentServiceImpl
+// 도메인(BoardComment): 검증이 여기 캡슐화됨
+public void update(String content, String userId) {
+    validateOwner(userId);   // rgtrId != userId 이면 FORBIDDEN
+}
+// → 서비스에 if가 없는 게 오히려 정상이다. 호출 체인을 도메인까지
+//    추적해야 IDOR 오탐(서비스만 보고 '검증 없음'으로 단정)을 피한다.
+```
+
 ---
 
 ### 취약 패턴 3 — anyRequest().permitAll() 사각지대
@@ -221,7 +234,11 @@ if (loginVo == null || !(AuthUtil.isAdmin(loginVo) || AuthUtil.isEnt(loginVo))) 
 1. **세션에서 userId를 추출해 서비스에 전달** — 클라이언트가 조작 불가
 2. **공개 리소스 조회** — 게시판 목록, 공지사항, 자료실 파일 등 로그인 없이 공개된 데이터
 3. **@AuthenticationPrincipal 기반 본인 조회** — `/me` 패턴으로 PathVariable 없이 조회
-4. **서비스 레이어에서 소유권 검증** — 컨트롤러에서 확인 안 해도 서비스에서 `userId` 비교하면 안전
+4. **서비스 또는 도메인 계층에서 소유권 검증** — 컨트롤러·서비스에 `if` 검증이 안 보여도,
+   서비스가 `entity.update(content, userId)` / `entity.delete(userId)` 같은 **도메인 메서드**를
+   호출하면 검증(`validateOwner` 등)이 그 안에 캡슐화돼 있을 수 있다.
+   **호출 체인을 도메인까지 따라가기 전에는 IDOR로 확정하지 않는다.**
+   (sef-2026 `BoardComment.update()` → `validateOwner()` 실사례)
 5. **화이트리스트 기반 공개 경로** — `JWT_AUTH_WHITELIST` / `AuthInterceptor.WHITELIST` 의도적 공개
 
 오탐으로 판정하면 리포트의 "오탐 제외"에 사유 한 줄로 남긴다.

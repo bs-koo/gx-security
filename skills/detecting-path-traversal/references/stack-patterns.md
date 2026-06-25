@@ -47,6 +47,10 @@ while ((entry = zis.getNextEntry()) != null) {
 
 ### 안전 패턴 (오탐 주의)
 
+> **추적 원칙**: 호출부에 `getCanonicalPath()`+`startsWith()` 검증이 안 보여도
+> `FileValidator`·공용 유틸·도메인 메서드에 캡슐화돼 있을 수 있다. 한 줄 스니펫이 아니라
+> 검증 함수 정의까지 열어 확인하기 전에는 취약으로 확정하지 않는다.
+
 ```java
 // sqisoft-sef-2026 BoardFileServiceImpl.downloadBoardFile() — 안전 (오탐)
 // DB에서 strgFilePath를 조회 후 getCanonicalPath()로 기준 경로 검증

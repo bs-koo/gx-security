@@ -55,6 +55,10 @@ ResultSet rs = stmt.executeQuery(sql);   // ⚠️ Critical SQLi
 
 ### 안전 패턴 (이건 취약 아님 — 오탐 주의)
 
+> **추적 원칙**: `${}`가 보여도 입력 출처를 역추적한다. 서비스 레이어 allowlist(ORDER BY 컬럼 등)나
+> 쿼리 빌더 래퍼를 거치면 안전일 수 있다. 한 줄 스니펫이 아니라 호출 체인(Controller→Service→Mapper)을
+> 따라가 확정한다.
+
 ```xml
 <!-- MyBatis #{} — PreparedStatement 바인딩, 완전히 안전 -->
 <select id="searchBoards" parameterType="BoardVo" resultType="BoardVo">
