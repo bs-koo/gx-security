@@ -87,6 +87,14 @@ python skills/detecting-broken-access-control/scripts/scan_access.py "$TARGET" -
      조회 결과의 소유자 ID와 비교하는지 확인.
    - `sef-2026` 기준: `UserController`는 `user.getUserId()`를 서비스에 전달하나, 다른 도메인 컨트롤러에서
      동일 패턴을 사용하는지 각각 확인 필요.
+   - **추적 깊이(필수)**: 검증은 Controller → Service → **Domain** 순으로 따라간다. 서비스가
+     `entity.update(userId)` / `entity.delete(userId)`를 호출하면 그 도메인 메서드 내부(`validateOwner` 등)를
+     **반드시 열어** 확인한다. 서비스 계층에서 검증이 안 보인다고 IDOR로 확정하지 않는다.
+     (sef-2026은 rich domain — `BoardComment.validateOwner` 실사례)
+   - **반례 우선**: Swagger 명세에 "본인만"이라는데 서비스에 검증이 없으면, "명세-구현 불일치"가 아니라
+     **검증이 다른 계층(도메인)에 있다는 신호**로 먼저 의심한다.
+   - **동적 미확정**: IDOR/BFLA는 사용자 2명 PoC로 동적 확정해야 한다(→ `exploiting-broken-access-control`).
+     동적 발사를 못 했으면 High 확정이 아니라 **"정적 추정(미확정)"** 으로 표기한다.
 2. `/adm/v1/**` 경로 컨트롤러에 `@PreAuthorize("hasMenuAuthority(...)")` 또는 클래스 레벨 어노테이션이 있는지.
    - `WebSecurityConfig`에서 `adminPaths(/adm/v1/**)` 는 `.authenticated()`만 요구 — **역할 구분 없음**.
    - 관리자 컨트롤러(`BoardAdminController`, `UserAdminController` 등)에 메서드 레벨 `@PreAuthorize` 없이
