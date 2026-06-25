@@ -72,6 +72,21 @@ class TestIdor(unittest.TestCase):
         self.assertEqual(out["evidence"]["http_status"], 403)
 
 
+class TestResolveToken(unittest.TestCase):
+    def test_inject_token_takes_precedence(self):
+        from unittest.mock import MagicMock
+        self.assertEqual(
+            attack_access._resolve_token("TOK", None, None,
+                                         "http://localhost:7171", MagicMock()),
+            "TOK")
+
+    def test_id_without_pw_raises(self):
+        from unittest.mock import MagicMock
+        with self.assertRaises(RuntimeError):
+            attack_access._resolve_token(None, "userid", None,
+                                         "http://localhost:7171", MagicMock())
+
+
 class TestRunScopeGate(unittest.TestCase):
     @patch("tools.dyn_session.assert_in_scope")
     def test_run_blocks_on_scope_error(self, mock_scope):
