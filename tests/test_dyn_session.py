@@ -49,6 +49,13 @@ class TestLogin(unittest.TestCase):
             dyn_session.login("http://localhost:7171", "/login", {"id": "a", "pw": "b"})
 
     @patch("requests.post")
+    def test_login_rejects_3xx(self, mock_post):
+        # 3xx 리다이렉트(세션 로그인 페이지 등)는 2xx 아님 → 조기 거부(리뷰 반영)
+        mock_post.return_value = MagicMock(status_code=302, json=lambda: {})
+        with self.assertRaises(RuntimeError):
+            dyn_session.login("http://localhost:7171", "/login", {"id": "a", "pw": "b"})
+
+    @patch("requests.post")
     def test_login_token_path_miss_raises(self, mock_post):
         mock_post.return_value = MagicMock(status_code=200, json=lambda: {"data": {}})
         with self.assertRaises(RuntimeError):

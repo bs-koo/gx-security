@@ -62,8 +62,9 @@ def login(base_url, login_path, cred, *, body_template=None,
         resp = requests.post(url, json=body, timeout=timeout, allow_redirects=False)
     except Exception as e:
         raise RuntimeError(f"로그인 요청 실패: {url} — {type(e).__name__}")
-    if resp.status_code >= 400:
-        raise RuntimeError(f"로그인 거부({resp.status_code}): {url} — 자격/요청형식 확인")
+    if not (200 <= resp.status_code < 300):
+        raise RuntimeError(f"로그인 실패(HTTP {resp.status_code}): {url} — "
+                           f"2xx 아님(3xx 리다이렉트·4xx 거부 포함). 자격/요청형식 확인")
     try:
         data = resp.json()
     except ValueError:
