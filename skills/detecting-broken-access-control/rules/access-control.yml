@@ -166,7 +166,7 @@ rules:
           LoginVo $LOGIN = AuthUtil.getLoginVo($REQ);
           if ($LOGIN == null || !(AuthUtil.isAdmin($LOGIN) || ...)) { ... }
 
-  - id: sqisoft-jsp-state-changing-get-link
+  - id: sqisoft-jsp-state-changing-get-link-access
     languages: [generic]
     severity: WARNING
     paths:
