@@ -101,13 +101,26 @@ class TestRunUpload(unittest.TestCase):
     def test_retrievable_marks_webroot(self, mock_req):
         fn, content = ("gxmarker_X.jsp", "GXMARKER-X")
         mock_req.side_effect = [
-            {"status": 200, "body": "ok", "elapsed": 0.0, "headers": {}},          # upload
-            {"status": 200, "body": "GXMARKER-", "elapsed": 0.0, "headers": {}},   # retrieve
+            {"status": 200, "body": "ok", "elapsed": 0.0, "headers": {}},              # upload
+            {"status": 200, "body": "...GXMARKER-X...", "elapsed": 0.0, "headers": {}},  # 회수 본문에 전체 마커
         ]
         with patch.object(A, "make_marker_upload", return_value=(fn, content, "")):
             out = A.run_upload("http://app.local", "/api/upload",
                                retrieve_base="http://app.local/files/")
         self.assertTrue(out["retrievable"])
+
+    @patch("tools.dyn_session.request")
+    def test_partial_marker_not_retrievable(self, mock_req):
+        # 회수 본문에 nonce 없는 접두('GXMARKER')만 있으면 웹루트 저장으로 오인하지 않는다(리뷰 반영)
+        fn, content = ("gxmarker_X.jsp", "GXMARKER-X")
+        mock_req.side_effect = [
+            {"status": 200, "body": "ok", "elapsed": 0.0, "headers": {}},            # upload
+            {"status": 200, "body": "GXMARKER docs page", "elapsed": 0.0, "headers": {}},  # 접두만
+        ]
+        with patch.object(A, "make_marker_upload", return_value=(fn, content, "")):
+            out = A.run_upload("http://app.local", "/api/upload",
+                               retrieve_base="http://app.local/files/")
+        self.assertFalse(out["retrievable"])
 
 
 class TestClassifyCandidates(unittest.TestCase):
