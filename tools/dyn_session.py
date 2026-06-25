@@ -44,9 +44,9 @@ def extract_by_path(obj, path):
     return cur
 
 
-def login(base_url, login_path, cred, *, body_template=None,
-          token_json_path="data.accessToken", timeout=10):
-    """테스트 계정으로 로그인해 토큰 문자열을 반환. 실패 시 RuntimeError."""
+def login_response(base_url, login_path, cred, *, body_template=None,
+                   token_json_path="data.accessToken", timeout=10):
+    """로그인해 토큰 + Set-Cookie + status를 반환. login()의 확장판."""
     import requests
     url = base_url.rstrip("/") + login_path
     if body_template:
@@ -72,7 +72,13 @@ def login(base_url, login_path, cred, *, body_template=None,
     token = extract_by_path(data, token_json_path)
     if not token:
         raise RuntimeError(f"토큰 추출 실패: 경로 '{token_json_path}' (응답 형식 확인)")
-    return token
+    return {"token": token, "set_cookie": resp.headers.get("Set-Cookie", ""),
+            "status": resp.status_code}
+
+
+def login(base_url, login_path, cred, **kwargs):
+    """테스트 계정으로 로그인해 토큰 문자열을 반환(login_response 위임)."""
+    return login_response(base_url, login_path, cred, **kwargs)["token"]
 
 
 def request(method, url, *, token=None, json_body=None, timeout=10):
@@ -86,7 +92,8 @@ def request(method, url, *, token=None, json_body=None, timeout=10):
         method.upper(), url, headers=headers, json=json_body,
         timeout=timeout, allow_redirects=False)
     return {"status": resp.status_code, "body": resp.text,
-            "elapsed": round(time.monotonic() - t0, 3)}
+            "elapsed": round(time.monotonic() - t0, 3),
+            "headers": dict(resp.headers)}
 
 
 def emit(result, as_json):

@@ -93,5 +93,27 @@ class TestRequest(unittest.TestCase):
         self.assertNotIn("Authorization", kwargs["headers"])
 
 
+class TestLoginResponse(unittest.TestCase):
+    @patch("requests.post")
+    def test_login_response_returns_cookie(self, mock_post):
+        mock_post.return_value = MagicMock(
+            status_code=200, json=lambda: {"data": {"accessToken": "TKN"}},
+            headers={"Set-Cookie": "refresh-token=abc; HttpOnly; Secure"})
+        out = dyn_session.login_response(
+            "http://h", "/api/v1/auth/login", {"id": "a", "pw": "b"})
+        self.assertEqual(out["token"], "TKN")
+        self.assertIn("HttpOnly", out["set_cookie"])
+        self.assertEqual(out["status"], 200)
+
+
+class TestRequestHeaders(unittest.TestCase):
+    @patch("requests.request")
+    def test_request_returns_headers(self, mock_req):
+        mock_req.return_value = MagicMock(
+            status_code=200, text="ok", headers={"X-Test": "1"})
+        out = dyn_session.request("GET", "http://h/x", token="T")
+        self.assertEqual(out["headers"]["X-Test"], "1")
+
+
 if __name__ == "__main__":
     unittest.main()
