@@ -73,6 +73,15 @@ class TestLogin(unittest.TestCase):
         _, kwargs = mock_post.call_args
         self.assertEqual(kwargs["json"], {"u": "a", "p": "b"})
 
+    @patch("requests.post")
+    def test_login_stringifies_int_token(self, mock_post):
+        # 서버가 정수 토큰(JSON number)을 주면 str로 통일 — "Bearer "+token 결합 크래시 방어 (PR 리뷰)
+        mock_post.return_value = MagicMock(
+            status_code=200, json=lambda: {"data": {"accessToken": 12345}})
+        tok = dyn_session.login(
+            "http://localhost:7171", "/api/v1/auth/login", {"id": "a", "pw": "b"})
+        self.assertEqual(tok, "12345")
+
 
 class TestLoginResponseContract(unittest.TestCase):
     """blocker 재발 방지 — attack_auth.py:200이 의존하는 login_response 계약을 CI에서 즉시 노출.
@@ -89,6 +98,16 @@ class TestLoginResponseContract(unittest.TestCase):
         for name in ("base_url", "login_path", "cred", "body_template",
                      "token_json_path", "timeout"):
             self.assertIn(name, params)
+
+    @patch("requests.post")
+    def test_login_response_stringifies_int_token(self, mock_post):
+        # 서버가 정수 토큰을 줘도 token은 str로 통일(다운스트림 split/결합 크래시 방어, PR 리뷰)
+        mock_post.return_value = MagicMock(
+            status_code=200, headers={},
+            json=lambda: {"data": {"accessToken": 12345}})
+        out = dyn_session.login_response(
+            "http://localhost:7171", "/api/v1/auth/login", {"id": "a", "pw": "b"})
+        self.assertEqual(out["token"], "12345")
 
 
 class TestRequest(unittest.TestCase):

@@ -40,6 +40,16 @@ class TestTamperJwt(unittest.TestCase):
     def test_malformed_returns_empty(self):
         self.assertEqual(attack_auth.tamper_jwt("not-a-jwt"), {})
 
+    def test_non_dict_header_returns_empty(self):
+        # 유효 base64url이지만 header가 JSON 배열([1,2]) → dict() 변환 크래시 대신 {} (PR 리뷰 방어)
+        tok = _make_jwt([1, 2], {"sub": "u"})
+        self.assertEqual(attack_auth.tamper_jwt(tok), {})
+
+    def test_non_dict_payload_returns_empty(self):
+        # 유효 base64url이지만 payload가 JSON 정수(123) → dict() 변환 크래시 대신 {} (PR 리뷰 방어)
+        tok = _make_jwt({"alg": "HS256"}, 123)
+        self.assertEqual(attack_auth.tamper_jwt(tok), {})
+
 
 class TestRunJwtTamper(unittest.TestCase):
     @patch("tools.dyn_session.request")

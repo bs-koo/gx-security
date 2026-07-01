@@ -189,6 +189,16 @@ class TestRenderDynamicLine(unittest.TestCase):
         self.assertIn("오류", line)
         self.assertIn("timeout", line)
 
+    def test_result_none_no_crash(self):
+        # 자식이 result=None(JSON null 등) 반환해도 예외 없이 문자열 반환(비-dict result 방어, PR 리뷰)
+        line = audit.render_dynamic_line({"vuln": "x", "result": None})
+        self.assertIsInstance(line, str)
+
+    def test_result_list_no_crash(self):
+        # 자식이 result=[1,2](JSON list) 반환해도 예외 없이 문자열 반환(비-dict result 방어, PR 리뷰)
+        line = audit.render_dynamic_line({"vuln": "x", "result": [1, 2]})
+        self.assertIsInstance(line, str)
+
 
 if __name__ == "__main__":
     unittest.main()

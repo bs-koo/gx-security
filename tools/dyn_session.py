@@ -72,6 +72,7 @@ def login(base_url, login_path, cred, *, body_template=None,
     token = extract_by_path(data, token_json_path)
     if not token:
         raise RuntimeError(f"토큰 추출 실패: 경로 '{token_json_path}' (응답 형식 확인)")
+    token = str(token)  # 토큰이 문자열 아닌 값(정수 등)이면 다운스트림 "Bearer "+token 결합 크래시 방어 (login_response와 동일 정책, PR 리뷰 반영)
     return token
 
 
