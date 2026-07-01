@@ -98,6 +98,9 @@ def run_dynamic(target, params, authorized):
 _ACCESS_SCRIPT = os.path.join(
     ROOT, "skills", "exploiting-broken-access-control", "scripts", "attack_access.py")
 
+_AUTH_SCRIPT = os.path.join(
+    ROOT, "skills", "exploiting-auth-session", "scripts", "attack_auth.py")
+
 
 def _extract_access_candidates(static_result):
     """정적 통합 결과(by_skill)에서 접근통제(BFLA/IDOR) 후보만 추출."""
@@ -170,6 +173,65 @@ def run_access_dynamic(target, static_result, creds, authorized):
             pass
 
 
+def run_auth_dynamic(target, creds, probe, authorized):
+    """정적 추정된 인증/세션/JWT를 attack_auth로 동적 확정한다(FR-2/3).
+
+    계정/토큰 미제공 시 발사하지 않고 'static-only'(정적 추정·동적 미확정)로 표기한다(AC-2).
+    발사하더라도 모든 검사가 skip(probe 미지정+쿠키 없음 등)이면 과대표기하지 않고
+    static-only로 유지한다(run_access_dynamic L158-162 방어 패턴 준용).
+    """
+    if not os.path.exists(_AUTH_SCRIPT):
+        return {"skipped": "attack_auth.py 없음"}
+    has_creds = creds.get("token_a") or (creds.get("user_a_id") and creds.get("user_a_pw"))
+    if not has_creds:
+        return {
+            "confidence": "static-only",
+            "note": ("로그인 계정/토큰 미제공 → 인증 동적 미확정(정적 추정). "
+                     "--user-a-id/pw 또는 --token-a 제공 시 발사"),
+        }
+    cmd = [sys.executable, _AUTH_SCRIPT, target, "--json"]
+    if probe:
+        cmd += ["--probe", probe]
+    if creds.get("token_a"):
+        cmd += ["--token-a", creds["token_a"]]
+    elif creds.get("user_a_id") and creds.get("user_a_pw"):
+        cmd += ["--user-a-id", creds["user_a_id"], "--user-a-pw", creds["user_a_pw"]]
+    if authorized:
+        cmd += ["--authorized"]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=600)
+        try:
+            data = json.loads(out.stdout or "{}")
+        except json.JSONDecodeError:
+            data = {"raw": (out.stdout or out.stderr or "").strip()[:200],
+                    "blocked_or_no_json": True}
+        if data.get("error") == "scope_blocked":
+            return {"blocked": "scope_guard", "detail": data.get("detail"), "returncode": 1}
+        if data.get("error") == "login_failed" or out.returncode == 2:
+            return {"confidence": "login-failed", "detail": data.get("detail"),
+                    "returncode": 2}
+        # rc 게이트(크래시 은폐 방지, ZT CRITICAL): 발사(계정 있음) 후 stdout이 빈 채
+        # (data=={}) 비정상 종료(rc≠0)면 자식이 uncaught 예외로 죽은 것 — static-only로
+        # 오분류하지 말고 error로 정직 표기한다. fired 판정보다 반드시 먼저 평가한다.
+        if data == {} and out.returncode not in (0, None):
+            return {"error": f"인증 발사 중 오류(rc={out.returncode}) — 자식 프로세스 비정상 종료",
+                    "returncode": out.returncode}
+        findings = data.get("findings", [])
+        fired = [f for f in findings if isinstance(f, dict) and not f.get("skipped")]
+        if not fired:
+            return {"confidence": "static-only", "result": data,
+                    "note": ("발사 시도했으나 모든 검사 skip(probe 미지정+쿠키 없음 등) "
+                             "→ 정적 추정")}
+        if not probe:
+            return {"confidence": "partial", "result": data,
+                    "note": ("쿠키 속성만 발사, JWT 변조·재사용은 정적 추정(probe 미지정). "
+                             "--probe 지정 시 전체 발사")}
+        return {"confidence": "dynamic", "result": data, "returncode": out.returncode}
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return {"error": str(e)[:120]}
+
+
 def render_dynamic_line(d):
     """동적 공격 결과 항목 1건을 사람이 읽는 한 줄 문자열로 렌더링한다.
 
@@ -203,6 +265,8 @@ def main():
     ap.add_argument("--user-b-id"); ap.add_argument("--user-b-pw")
     ap.add_argument("--token-a"); ap.add_argument("--token-b")
     ap.add_argument("--resource-id", help="IDOR: A가 소유한 리소스 ID")
+    ap.add_argument("--probe", help="인증 동적: 보호 엔드포인트 직접 지정(예: /api/v1/users/me). "
+                                    "미지정 시 JWT·재사용 정적 추정")
     ap.add_argument("--json", action="store_true", help="통합 JSON 출력")
     args = ap.parse_args()
 
@@ -237,9 +301,15 @@ def main():
                 print(f"[!] --user-{_who}-id/--user-{_who}-pw는 함께 지정해야 합니다 (한쪽만 전달 — 무시됨)")
         report["phases"]["access_dynamic"] = run_access_dynamic(
             args.target, report["phases"]["static"], creds, args.authorized)
+        report["phases"]["auth_dynamic"] = run_auth_dynamic(
+            args.target,
+            {"user_a_id": args.user_a_id, "user_a_pw": args.user_a_pw,
+             "token_a": args.token_a},
+            args.probe, args.authorized)
     else:
         report["phases"]["dynamic"] = {"skipped": "대상 URL(--target) 미지정 — 정적만 수행"}
         report["phases"]["access_dynamic"] = {"skipped": "대상 URL 미지정"}
+        report["phases"]["auth_dynamic"] = {"skipped": "대상 URL 미지정"}
 
     report["next"] = ("Claude Code에서 auditing-web-application-security 스킬로 "
                       "오탐 제거·컨텍스트 검증·4요소 통합 리포트를 완성하세요.")
@@ -291,6 +361,40 @@ def main():
         print(f"[접근통제] 오류: {acc['error']}")
     elif acc.get("skipped"):
         print(f"[접근통제] {acc['skipped']}")
+
+    au = report["phases"].get("auth_dynamic", {})
+    if au.get("blocked") == "scope_guard":  # rc로 안 뭉개지게 최상단(AC-5)
+        print(f"[인증] 차단됨(scope_guard) — {au.get('detail') or 'scope 범위 밖'}")
+    elif au.get("confidence") == "login-failed":  # '미발견'과 구분(AC-4)
+        print(f"[인증] 동적 미확정(로그인 실패) — {au.get('detail')}")
+    elif au.get("confidence") == "static-only":  # 과대표기 방지(AC-2)
+        print(f"[인증] 정적 추정(동적 미확정) — {au.get('note')}")
+    elif au.get("confidence") in ("partial", "dynamic"):
+        label = "부분 발사(쿠키만)" if au["confidence"] == "partial" else "동적 확정 발사"
+        print(f"[인증] {label}")
+        for f in au.get("result", {}).get("findings", []):  # finding별 취약/방어(FR-4)
+            # 우선순위 skipped > error > vulnerable. error finding(발사 예외 격리)을
+            # '방어'로 오표기하면 크래시 은폐의 finding판(P0 조용한 실패)이 되므로 정직 표기한다.
+            if f.get("skipped"):
+                print(f"    - [{f.get('kind')}] 미발사({f.get('skipped')})")
+            elif f.get("error"):
+                print(f"    - [{f.get('kind')}] ⚠ 오류: {f.get('error')}")
+            else:
+                print(f"    - [{f.get('kind')}] {'🔴 취약' if f.get('vulnerable') else '방어'}")
+                # jwt-tamper 4변형(alg_none/sig_strip/payload_role/exp_past) variant별 세분 노출(FR-4)
+                if f.get("kind") == "jwt-tamper" and isinstance(f.get("findings"), list):
+                    for v in f["findings"]:
+                        if not isinstance(v, dict):
+                            continue
+                        if v.get("error"):  # variant 발사 예외도 '방어'로 은폐 금지
+                            print(f"        · {v.get('variant')}: ⚠ 오류: {v.get('error')}")
+                            continue
+                        mark = "🔴 취약" if v.get("vulnerable") else "방어"
+                        print(f"        · {v.get('variant')}(HTTP {v.get('status')}): {mark}")
+    elif au.get("error"):
+        print(f"[인증] 오류: {au['error']}")
+    elif au.get("skipped"):
+        print(f"[인증] {au['skipped']}")
 
     print(f"\n※ {report['next']}")
 

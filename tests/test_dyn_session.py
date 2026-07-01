@@ -1,4 +1,5 @@
 # tests/test_dyn_session.py
+import inspect
 import unittest
 from tools import dyn_session
 from unittest.mock import patch, MagicMock
@@ -71,6 +72,23 @@ class TestLogin(unittest.TestCase):
         self.assertEqual(tok, "X")
         _, kwargs = mock_post.call_args
         self.assertEqual(kwargs["json"], {"u": "a", "p": "b"})
+
+
+class TestLoginResponseContract(unittest.TestCase):
+    """blocker 재발 방지 — attack_auth.py:200이 의존하는 login_response 계약을 CI에서 즉시 노출.
+
+    부재/시그니처 어긋남 시 계정 발사 경로에서 AttributeError/TypeError로 터지므로
+    존재와 파라미터명을 유닛으로 고정한다(design-critic blocker 어서션).
+    """
+
+    def test_login_response_exists(self):
+        self.assertTrue(hasattr(dyn_session, "login_response"))
+
+    def test_login_response_signature(self):
+        params = inspect.signature(dyn_session.login_response).parameters
+        for name in ("base_url", "login_path", "cred", "body_template",
+                     "token_json_path", "timeout"):
+            self.assertIn(name, params)
 
 
 class TestRequest(unittest.TestCase):

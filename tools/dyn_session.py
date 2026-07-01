@@ -75,6 +75,43 @@ def login(base_url, login_path, cred, *, body_template=None,
     return token
 
 
+def login_response(base_url, login_path, cred, *, body_template=None,
+                   token_json_path="data.accessToken", timeout=10):
+    """로그인 후 토큰과 응답 Set-Cookie를 함께 반환.
+
+    반환: {"token": <str>, "set_cookie": <str>} — attack_auth.py:200-203 계약.
+    실패(2xx 아님/토큰 추출 실패) 시 RuntimeError (login()과 동일 정책).
+    login()을 위임하지 않고 로직을 복제한다(login 시그니처 불변 유지, 회귀 방지).
+    """
+    import requests
+    url = base_url.rstrip("/") + login_path
+    if body_template:
+        # JSON 중괄호와 충돌하지 않도록 str.format 대신 {id}/{pw} 단순 치환
+        raw = body_template.replace("{id}", cred["id"]).replace("{pw}", cred["pw"])
+        try:
+            body = json.loads(raw)
+        except (ValueError, TypeError):
+            raise RuntimeError("로그인 body-template JSON 파싱 실패 — 형식을 확인하세요")
+    else:
+        body = {"lgnId": cred["id"], "password": cred["pw"]}  # sef-2026 프리셋
+    try:
+        resp = requests.post(url, json=body, timeout=timeout, allow_redirects=False)
+    except Exception as e:
+        raise RuntimeError(f"로그인 요청 실패: {url} — {type(e).__name__}")
+    if not (200 <= resp.status_code < 300):
+        raise RuntimeError(f"로그인 실패(HTTP {resp.status_code}): {url} — "
+                           f"2xx 아님(3xx 리다이렉트·4xx 거부 포함). 자격/요청형식 확인")
+    try:
+        data = resp.json()
+    except ValueError:
+        raise RuntimeError(f"로그인 응답이 JSON 아님: {url}")
+    token = extract_by_path(data, token_json_path)
+    if not token:
+        raise RuntimeError(f"토큰 추출 실패: 경로 '{token_json_path}' (응답 형식 확인)")
+    set_cookie = resp.headers.get("Set-Cookie", "")
+    return {"token": token, "set_cookie": set_cookie}
+
+
 def request(method, url, *, token=None, json_body=None, timeout=10):
     """인증 헤더를 자동 부착해 요청. {status, body, elapsed} 반환."""
     import requests
