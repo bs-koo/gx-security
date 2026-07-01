@@ -129,6 +129,17 @@ class TestRequest(unittest.TestCase):
         _, kwargs = mock_req.call_args
         self.assertNotIn("Authorization", kwargs["headers"])
 
+    @patch("requests.request")
+    def test_request_returns_response_headers(self, mock_req):
+        # CRITICAL 재발 방지(P3): request()는 응답 헤더를 "headers" 키로 반환해야 한다.
+        # attack_ssrf.run_open_redirect가 r["headers"]로 Location을 참조하므로, headers
+        # 키가 없으면 매 변형 KeyError → 오픈리다이렉트 판정 100% 비작동(Location 외부 미실행).
+        mock_req.return_value = MagicMock(
+            status_code=302, text="", headers={"Location": "http://x"})
+        out = dyn_session.request("GET", "http://localhost:7171/go?u=evil")
+        self.assertIn("headers", out)
+        self.assertEqual(out["headers"], {"Location": "http://x"})
+
 
 if __name__ == "__main__":
     unittest.main()

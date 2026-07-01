@@ -107,6 +107,21 @@ python skills/auditing-web-application-security/scripts/audit.py "D:\SQ\sqisoft-
 - **한계**: `audit.py` 경유 인증 동적은 `--probe`로 보호 엔드포인트를 **직접 지정**해야 한다(`--scan` 자동 추출은 `attack_auth.py` 단독 실행 전용). 또한 **sef-2026 로그인 프리셋**(`/api/v1/auth/login`, 토큰 경로 `data.accessToken`)을 전제로 한다. 비표준 로그인 API는 `skills/exploiting-auth-session/scripts/attack_auth.py`를 단독 실행하고 `--login-path`·`--body-template`·`--token-path`로 로그인 형식을 지정한다.
 - **병렬 실행 주의(로그아웃)**: 토큰 재사용 검사는 대상 계정을 로그아웃시켜 세션을 무효화한다. 서버가 전체 세션 로그아웃(모든 기기 무효화)·refresh 회전 방식이면 같은 계정을 쓰는 다른 세션이 끊긴다. **동일 테스트 계정을 여러 프로세스(병렬 audit 등)가 동시에 사용하지 않는다.**
 
+### SSRF/오픈 리다이렉트 동적 점검
+서버측 요청 위조(SSRF)와 미검증 리다이렉트를 실제로 확정하려면, 통합 오케스트레이터에 **주입 표적**과 **테스트 계정**을 함께 넘긴다.
+```bash
+python skills/auditing-web-application-security/scripts/audit.py "D:\SQ\sqisoft-sef-2026" \
+    --target http://localhost:8080 \
+    --redirect-target "/go?u=" \
+    --ssrf-target "/api/fetch?url=" \
+    --user-a-id <id> --user-a-pw <pw> --json
+```
+- **발사 조건(표적+계정 모두 필요)**: `--redirect-target`(오픈 리다이렉트 주입점)·`--ssrf-target`(SSRF 주입점) 같은 **표적**과 계정(`--user-a-id/pw` 또는 `--token-a`)이 **모두** 있어야 실제 발사(`dynamic`)한다. 표적이나 계정이 하나라도 없으면 발사 없이 `static-only`(정적 추정)에 머문다(표적을 우선 판정). 종류를 하나만 지정하면(예: `--redirect-target`만) 지정한 종류만 발사하고 나머지는 "표적 미지정"으로 표기한다.
+- **판정 방식**: `Location` 응답 헤더가 외부 호스트로 향하면 오픈 리다이렉트 취약, OOB canary URL을 주입해 콜백을 수신하면 블라인드 SSRF까지 확정한다. 모두 비파괴 GET 주입이다.
+- **canary 자동 기동·종료**: SSRF 콜백용 리스너는 발사마다 **자동으로 뜨고 닫히며 127.0.0.1 루프백에만 바인딩**된다(외부 미노출). audit 경유 실행에서는 canary 호스트/포트 옵션을 노출하지 않고 기본 루프백을 그대로 쓴다.
+- **원격 대상은 콜백 미수신(한계)**: canary가 127.0.0.1이므로 **대상이 audit 실행기와 동일 호스트(로컬)일 때만 콜백을 수신**한다. 원격 스테이징의 블라인드 SSRF를 확정하려면 `skills/exploiting-ssrf-and-open-redirect/scripts/attack_ssrf.py`를 단독 실행하고 `--canary-host`로 대상이 도달할 수 있는 광고 호스트를 지정한다(오픈 리다이렉트는 인밴드 Location 판정이라 이 제약과 무관하다).
+- **원격 콜백 미수신 ≠ 안전(부작용 주의)**: 원격 대상에서 콜백을 못 받았다고 곧 '안전'을 뜻하지는 않는다. 주입된 `127.0.0.1` URL은 **대상 서버 자신의 loopback**을 가리키므로, 대상이 자기 로컬 전용 서비스(actuator·관리 콘솔·디버그 포트 등)로 실제 아웃바운드 요청을 시도했으나 그 결과가 audit 실행기로 돌아오지 않았을 뿐일 수 있다(대상 IDS/방화벽 로그에 SSRF 시그니처로 남을 수 있음). 도구는 대상 서버 자체가 만드는 아웃바운드 요청의 부작용까지는 통제하지 못한다.
+
 ---
 
 ## 5. 명령 레퍼런스

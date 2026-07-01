@@ -43,6 +43,42 @@ class TestAccessDynamic(unittest.TestCase):
         self.assertIn("skipped", out)
         self.assertIn("static_error", out)
 
+    def test_access_scope_blocked(self):
+        # §4 잠복결함 회귀: 계정+후보가 있어 발사 경로로 진입하되, 자식이 scope_guard
+        # 차단(error=scope_blocked, findings 없음, rc=1)으로 종료하면 이를 'dynamic'으로
+        # 오표기하지 말고 blocked=="scope_guard"로 정직 표기해야 한다(사용자2 수정). mock 재현.
+        static = {"by_skill": [
+            {"skill": "detecting-broken-access-control",
+             "candidates": [{"rule_id": "x"}]}]}
+
+        class _Proc:
+            stdout = '{"error":"scope_blocked","detail":"운영 차단"}'
+            stderr = ""
+            returncode = 1
+        with patch.object(audit.subprocess, "run", return_value=_Proc()):
+            out = audit.run_access_dynamic(
+                "http://127.0.0.1:1", static, {"token_a": "X"}, True)
+        self.assertEqual(out.get("blocked"), "scope_guard")
+        self.assertNotEqual(out.get("confidence"), "dynamic")  # dynamic 오표기 방지(핵심)
+
+    def test_access_empty_findings_not_dynamic(self):
+        # HIGH 회귀: 발사 경로(계정+후보)에서 자식이 findings 빈 배열(rc0)을 반환하면
+        # fired가 하나도 없으므로 static-only로 유지해야 한다(dynamic 과대표기 금지).
+        # 빈 findings(falsy)를 'dynamic'으로 오표기하던 §4 fired 판정 미통일 결함 재발 방지.
+        static = {"by_skill": [
+            {"skill": "detecting-broken-access-control",
+             "candidates": [{"rule_id": "x"}]}]}
+
+        class _Proc:
+            stdout = '{"findings":[]}'
+            stderr = ""
+            returncode = 0
+        with patch.object(audit.subprocess, "run", return_value=_Proc()):
+            out = audit.run_access_dynamic(
+                "http://127.0.0.1:1", static, {"token_a": "X"}, True)
+        self.assertEqual(out["confidence"], "static-only")
+        self.assertNotEqual(out.get("confidence"), "dynamic")  # 과대표기 방지(핵심)
+
 
 class TestAuthDynamic(unittest.TestCase):
     """FR-5/AC-2·4·10 — run_auth_dynamic의 조기반환·과대표기 방지 경로만 유닛 검증.
@@ -198,6 +234,123 @@ class TestRenderDynamicLine(unittest.TestCase):
         # 자식이 result=[1,2](JSON list) 반환해도 예외 없이 문자열 반환(비-dict result 방어, PR 리뷰)
         line = audit.render_dynamic_line({"vuln": "x", "result": [1, 2]})
         self.assertIsInstance(line, str)
+
+
+class TestSsrfDynamic(unittest.TestCase):
+    """§5/AC-2·4·11 — run_ssrf_dynamic의 게이트·조기반환·과대표기 방지 경로 유닛 검증.
+
+    TestAuthDynamic 구조 준용: 표적/계정 게이트는 네트워크 미접속으로 즉시 종료되고,
+    발사 경로(login-failed)는 127.0.0.1:1 접속 거부로 빠르게 끝난다. scope_blocked·
+    rc게이트는 subprocess.run을 mock해 재현한다. creds dict 키는 audit.py 실제 코드
+    (user_a_id/user_a_pw/token_a)와 일치.
+    """
+
+    def test_no_target_static_only(self):
+        # 표적 미지정(계정은 있음) → 발사하지 않고 static-only '표적 미지정'(AC-2). 네트워크 미접속.
+        out = audit.run_ssrf_dynamic(
+            "http://localhost:7171", {"token_a": "t"}, None, None, True)
+        self.assertEqual(out["confidence"], "static-only")
+        self.assertIn("표적 미지정", out["note"])
+
+    def test_no_creds_static_only(self):
+        # 표적은 있으나 계정/토큰 미지정 → static-only(AC-11). note에 '계정' 사유.
+        out = audit.run_ssrf_dynamic(
+            "http://localhost:7171", {}, "/go?u=", None, True)
+        self.assertEqual(out["confidence"], "static-only")
+        self.assertIn("계정", out["note"])
+
+    def test_no_target_no_creds_target_first(self):
+        # 표적·계정 둘 다 없음 → '표적 우선' 판정으로 '표적 미지정' 사유가 나와야 한다(PRD1).
+        out = audit.run_ssrf_dynamic(
+            "http://localhost:7171", {}, None, None, True)
+        self.assertEqual(out["confidence"], "static-only")
+        self.assertIn("표적 미지정", out["note"])  # 계정 아닌 표적 사유 우선
+
+    def test_login_failed_distinguished(self):
+        # 표적+계정 제공 → 발사하나 127.0.0.1:1 로그인 접속 거부 → login-failed로 종료.
+        # '취약점 미발견(static-only)'과 구분된다.
+        out = audit.run_ssrf_dynamic(
+            "http://127.0.0.1:1", {"user_a_id": "x", "user_a_pw": "y"},
+            "/go?u=", None, True)
+        self.assertEqual(out["confidence"], "login-failed")
+
+    def test_scope_blocked(self):
+        # scope_guard 차단(error=scope_blocked, rc=1)은 rc게이트로 뭉개지 말고
+        # 최상단에서 blocked=="scope_guard"로 표기해야 한다(AC-4). mock 재현.
+        class _Proc:
+            stdout = '{"error":"scope_blocked","detail":"운영 차단"}'
+            stderr = ""
+            returncode = 1
+        with patch.object(audit.subprocess, "run", return_value=_Proc()):
+            out = audit.run_ssrf_dynamic(
+                "http://127.0.0.1:1", {"token_a": "a.b.c"}, "/go?u=", None, True)
+        self.assertEqual(out.get("blocked"), "scope_guard")
+        self.assertEqual(out.get("detail"), "운영 차단")
+
+    def test_rc_gate_error_not_static_only(self):
+        # 크래시 은폐 방지: 계정+표적으로 발사했으나 자식이 stdout 빈 채 rc=1로 비정상
+        # 종료하면 static-only로 오분류 말고 error로 정직 표기(P0 조용한 실패 금지). mock 재현.
+        class _Proc:
+            stdout, stderr, returncode = "", "", 1
+        with patch.object(audit.subprocess, "run", return_value=_Proc()):
+            out = audit.run_ssrf_dynamic(
+                "http://127.0.0.1:1", {"token_a": "a.b.c"}, "/go?u=", None, True)
+        self.assertIn("error", out)
+        self.assertNotEqual(out.get("confidence"), "static-only")
+        self.assertEqual(out.get("returncode"), 1)
+
+    def test_missing_script_skipped(self):
+        # _SSRF_SCRIPT 부재 재현 → 발사 전 조기반환으로 "skipped" 표기
+        with patch.object(audit.os.path, "exists", return_value=False):
+            out = audit.run_ssrf_dynamic(
+                "http://127.0.0.1:1", {"token_a": "a.b.c"}, "/go?u=", None, True)
+        self.assertIn("skipped", out)
+
+    def test_no_canary_options_in_cmd(self):
+        # AC-9 회귀: 발사 경로(계정+표적)에서 audit이 attack_ssrf로 넘기는 cmd에
+        # --canary-host/--canary-port가 절대 없어야 한다. audit이 canary 옵션을 노출하면
+        # attack_ssrf 기본값(127.0.0.1/0)이 덮여 원격 콜백 차단(AC-9/PRD3)이 깨지므로,
+        # 향후 실수로 canary 옵션을 subprocess cmd에 실어보내지 않게 고정한다.
+        class _Proc:
+            stdout = '{"findings":[]}'
+            stderr = ""
+            returncode = 0
+        with patch.object(audit.subprocess, "run", return_value=_Proc()) as mock_run:
+            audit.run_ssrf_dynamic(
+                "http://127.0.0.1:1", {"token_a": "a.b.c"},
+                "/go?u=", "/api/fetch?url=", True)
+        mock_run.assert_called_once()  # 발사 경로 진입 확인(게이트 통과)
+        cmd = mock_run.call_args[0][0]
+        self.assertNotIn("--canary-host", cmd)
+        self.assertNotIn("--canary-port", cmd)
+
+
+class TestSsrfUnreached(unittest.TestCase):
+    """§3 MUST 회귀 — _ssrf_unreached가 '프로브 미도달'을 '방어'로 오표기하지 않는다.
+
+    미도달(ssrf status None·미취약 / open-redirect 전변형 오류·status None)은 True(미확정),
+    정상 응답이 하나라도 있으면 False(진짜 방어/취약 정상 판정)를 반환해야 한다(design-critic).
+    """
+
+    def test_unreached_ssrf_not_defense(self):
+        # 요청이 대상에 닿지 못함(status None) + 미취약 → '방어' 아닌 '미도달'(True)
+        self.assertTrue(audit._ssrf_unreached(
+            {"kind": "ssrf", "status": None, "vulnerable": False}))
+        # 정상 응답(status 200) 받고 미취약 → 진짜 방어(False)
+        self.assertFalse(audit._ssrf_unreached(
+            {"kind": "ssrf", "status": 200, "vulnerable": False}))
+
+    def test_unreached_open_redirect_all_error(self):
+        # 전 변형이 오류/status None → 미도달(True)
+        self.assertTrue(audit._ssrf_unreached({
+            "kind": "open-redirect",
+            "findings": [{"variant": "a", "error": "conn"},
+                         {"variant": "b", "status": None}]}))
+        # 한 변형이라도 정상 응답(status 302) → 미도달 아님(False)
+        self.assertFalse(audit._ssrf_unreached({
+            "kind": "open-redirect",
+            "findings": [{"variant": "a", "error": "conn"},
+                         {"variant": "b", "status": 302}]}))
 
 
 if __name__ == "__main__":
