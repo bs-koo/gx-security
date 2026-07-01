@@ -102,17 +102,18 @@ def run_semgrep(target):
 _MYBATIS_DOLLAR = re.compile(r'\$\{(?!#)[^}]+\}')
 
 # JDBC Statement + SQL 문자열 연결 의심
-# (?:"[^"]*"|\S+) — 공백 포함 문자열 리터럴("SELECT ... " + x) 또는 변수(sql + x) 연결 매치
+# [^;]+ — 문장 종결자(;) 전까지: 다중 인자·공백 포함 문자열 리터럴("SELECT " + x)·
+#   변수(sql + x)·복잡한 인자(f("a","b") + x) 연결까지 매치 (PR 리뷰 반영, 미탐 감소)
 _STMT_CONCAT = re.compile(
-    r'(executeQuery|executeUpdate|execute)\s*\(\s*(?:"[^"]*"|\S+)\s*\+', re.I)
+    r'(executeQuery|executeUpdate|execute)\s*\(\s*[^;]+\s*\+', re.I)
 
 # JdbcTemplate 문자열 연결 의심
 _JDBC_TMPL_CONCAT = re.compile(
-    r'\.(query|queryForObject|queryForList|update)\s*\(\s*(?:"[^"]*"|\S+)\s*\+', re.I)
+    r'\.(query|queryForObject|queryForList|update)\s*\(\s*[^;]+\s*\+', re.I)
 
 # JPA createQuery 문자열 연결 의심
 _JPA_CREATE_CONCAT = re.compile(
-    r'\.(createQuery|createNativeQuery)\s*\(\s*(?:"[^"]*"|\S+)\s*\+', re.I)
+    r'\.(createQuery|createNativeQuery)\s*\(\s*[^;]+\s*\+', re.I)
 
 FALLBACK_PATTERNS = [
     # (rule_id, stack, 파일확장자들, 정규식)
