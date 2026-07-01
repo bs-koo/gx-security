@@ -178,7 +178,9 @@ def render_dynamic_line(d):
     scope 차단/차단 raw가 '발사 실패 rc'로 뭉개지지 않는다.
     """
     prefix = f"  - {d['vuln']}({d.get('param')}) : "
-    res = d.get("result", {})
+    res = d.get("result")
+    if not isinstance(res, dict):  # 자식이 dict 아닌 JSON(list 등) 반환 시 방어 (PR 리뷰 반영)
+        res = {}
     if d.get("error"):
         return f"{prefix}⚠ 오류: {d['error']}"
     if d.get("param_missing"):
