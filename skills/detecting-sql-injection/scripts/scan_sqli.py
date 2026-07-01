@@ -32,6 +32,10 @@ except (AttributeError, ValueError):
 HERE = os.path.dirname(os.path.abspath(__file__))
 RULES = os.path.join(os.path.dirname(HERE), "rules", "sqli.yml")
 
+# 초대형 단일 라인(minified 등)에 폴백 정규식을 적용하면 O(n²) 백트래킹으로
+# 사실상 멈출 수 있다(ReDoS). 이 길이를 넘는 라인은 매칭을 조용히 스킵한다.
+_MAX_LINE_LEN = 5000
+
 # ── 스택 감지 신호 ────────────────────────────────────────────────
 def detect_stacks(target):
     """리포에 섞일 수 있으므로 발견된 스택들의 집합을 반환."""
@@ -98,16 +102,17 @@ def run_semgrep(target):
 _MYBATIS_DOLLAR = re.compile(r'\$\{(?!#)[^}]+\}')
 
 # JDBC Statement + SQL 문자열 연결 의심
+# (?:"[^"]*"|\S+) — 공백 포함 문자열 리터럴("SELECT ... " + x) 또는 변수(sql + x) 연결 매치
 _STMT_CONCAT = re.compile(
-    r'(executeQuery|executeUpdate|execute)\s*\(\s*\S+\s*\+', re.I)
+    r'(executeQuery|executeUpdate|execute)\s*\(\s*(?:"[^"]*"|\S+)\s*\+', re.I)
 
 # JdbcTemplate 문자열 연결 의심
 _JDBC_TMPL_CONCAT = re.compile(
-    r'\.(query|queryForObject|queryForList|update)\s*\(\s*\S+\s*\+', re.I)
+    r'\.(query|queryForObject|queryForList|update)\s*\(\s*(?:"[^"]*"|\S+)\s*\+', re.I)
 
 # JPA createQuery 문자열 연결 의심
 _JPA_CREATE_CONCAT = re.compile(
-    r'\.(createQuery|createNativeQuery)\s*\(\s*\S+\s*\+', re.I)
+    r'\.(createQuery|createNativeQuery)\s*\(\s*(?:"[^"]*"|\S+)\s*\+', re.I)
 
 FALLBACK_PATTERNS = [
     # (rule_id, stack, 파일확장자들, 정규식)
@@ -172,6 +177,10 @@ def run_fallback(target):
             try:
                 with open(path, encoding="utf-8", errors="replace") as fh:
                     for i, line in enumerate(fh, 1):
+                        # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해
+                        # 매칭을 조용히 스킵한다(성능 가드).
+                        if len(line) > _MAX_LINE_LEN:
+                            continue
                         for rule_id, stack, _exts, rx in rules:
                             if rx.search(line):
                                 findings.append({

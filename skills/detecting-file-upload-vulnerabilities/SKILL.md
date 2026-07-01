@@ -22,7 +22,7 @@ tags:
 cwe: [CWE-434]
 owasp: [A04:2021-Insecure-Design, A05:2021-Security-Misconfiguration]
 stacks: [spring-modern, jsp-legacy]
-version: "0.1"
+version: "0.2.1"
 author: sqisoft-security
 license: Proprietary
 ---

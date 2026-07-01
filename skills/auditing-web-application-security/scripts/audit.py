@@ -82,8 +82,14 @@ def run_dynamic(target, params, authorized):
                 except json.JSONDecodeError:
                     data = {"raw": (out.stdout or out.stderr or "").strip()[:200],
                             "blocked_or_no_json": True}
-                results.append({"vuln": vuln, "param": param, "result": data,
-                                "returncode": out.returncode})
+                d = {"vuln": vuln, "param": param, "result": data,
+                     "returncode": out.returncode}
+                if param is None:
+                    d["param_missing"] = True
+                    d["reason"] = (
+                        f"파라미터 미지정 — attack 스크립트가 --param 누락으로 "
+                        f"미발사(rc={out.returncode}). --params id,q 등 지정 필요")
+                results.append(d)
             except (subprocess.TimeoutExpired, OSError) as e:
                 results.append({"vuln": vuln, "param": param, "error": str(e)[:120]})
     return results
@@ -164,6 +170,28 @@ def run_access_dynamic(target, static_result, creds, authorized):
             pass
 
 
+def render_dynamic_line(d):
+    """동적 공격 결과 항목 1건을 사람이 읽는 한 줄 문자열로 렌더링한다.
+
+    분기 순서(위→아래, 먼저 매치되는 것 채택)가 §9-C 안전 불변식이다:
+    scope_blocked(3)·blocked_or_no_json(4)이 rc≠0(5)보다 먼저 평가돼야
+    scope 차단/차단 raw가 '발사 실패 rc'로 뭉개지지 않는다.
+    """
+    prefix = f"  - {d['vuln']}({d.get('param')}) : "
+    res = d.get("result", {})
+    if d.get("error"):
+        return f"{prefix}⚠ 오류: {d['error']}"
+    if d.get("param_missing"):
+        return f"{prefix}⏭ 미발사 (파라미터 미지정) — {d.get('reason')}"
+    if res.get("error") == "scope_blocked":
+        return f"{prefix}⏭ 차단됨 (scope_guard) — {res.get('detail') or 'scope 범위 밖'}"
+    if res.get("blocked_or_no_json"):
+        return f"{prefix}{res.get('raw','')[:80]}"
+    if d.get("returncode") not in (0, None):
+        return f"{prefix}⚠ 발사 실패 rc={d.get('returncode')}"
+    return f"{prefix}{'🔴 악용 확정' if res.get('exploited') else '— 미확인'}"
+
+
 def main():
     ap = argparse.ArgumentParser(description="SQIsoft 보안 통합 점검 오케스트레이터")
     ap.add_argument("source", help="검사 대상 소스 디렉토리")
@@ -235,6 +263,11 @@ def main():
             print(f"{r['label']:<24}{str(cnt):>6}")
         print("─" * 32)
         print(f"{'합계':<24}{st.get('total_candidates', 0):>6}\n")
+        if isinstance(st, dict) and st.get("warnings"):
+            print("[!] 정적 폴백 경고")
+            for w in st["warnings"]:
+                print(f"  - {w}")
+            print()
     else:
         print(f"[정적] 실패: {st}\n")
 
@@ -242,16 +275,7 @@ def main():
     if isinstance(dyn, list):
         print("[동적] 실제 공격 발사 결과")
         for d in dyn:
-            if "error" in d:
-                print(f"  - {d['vuln']}({d.get('param')}) : 오류 {d['error']}")
-                continue
-            res = d.get("result", {})
-            if res.get("blocked_or_no_json"):
-                print(f"  - {d['vuln']}({d.get('param')}) : {res.get('raw','')[:80]}")
-            else:
-                exploited = res.get("exploited")
-                mark = "🔴 악용 확정" if exploited else "— 미확인"
-                print(f"  - {d['vuln']}({d.get('param')}) : {mark}")
+            print(render_dynamic_line(d))
     else:
         print(f"[동적] {dyn.get('skipped','')}")
 

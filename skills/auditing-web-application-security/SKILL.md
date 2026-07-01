@@ -10,7 +10,7 @@ domain: cybersecurity
 subdomain: web-application-security
 tags: [audit, owasp, sast, dast, orchestrator, sqisoft, full-scan]
 stacks: [spring-modern, jsp-legacy]
-version: "0.1"
+version: "0.2.1"
 author: sqisoft-security
 license: Proprietary
 ---
@@ -59,7 +59,8 @@ python skills/auditing-web-application-security/scripts/audit.py "<소스경로>
 ### 3단계 — 동적 결과 종합 (악용 확정)
 대상 URL이 있었다면 `phases.dynamic`의 결과로 **실제 악용 여부**를 확정한다.
 미확정 후보 중 중요한 것은 해당 `exploiting-<X>` 스킬로 추가 발사(파라미터 지정)한다.
-- XSS/CSRF/오픈리다이렉트는 Playwright MCP로 브라우저 실제 실행까지 확인.
+- **접근통제(IDOR/BFLA)**는 정적 후보(`by_skill`)를 받아 연계하며, **테스트 계정(권한 교차용) 유무**로 판정 수준이 갈린다 — `run_access_dynamic`이 계정이 없으면 정적 후보만 남기는 `static-only`, 계정이 있으면 실제 권한 교차 호출로 확정하는 `dynamic`으로 구분한다.
+- XSS는 저장·DOM형이면 Playwright MCP로 브라우저 실제 실행까지 확인한다.
 
 ### 4단계 — 통합 리포트 작성·저장
 모든 취약점 클래스를 **하나의 리포트**로 통합한다. `reports/audit-<프로젝트>.md`에 저장.
@@ -70,6 +71,9 @@ python skills/auditing-web-application-security/scripts/audit.py "<소스경로>
 # 보안 통합 점검 리포트 — <프로젝트>
 - 소스: <경로> | 감지 스택: <spring-modern|jsp-legacy|mixed> | 대상 URL: <URL 또는 정적만>
 - 정적 엔진: <semgrep|grep-fallback> | 점검일: <YYYY-MM-DD>
+
+> ⚠ **정적 엔진이 `grep-fallback`이면** 아래 경고를 리포트 본문에 반드시 포함한다:
+> recall(탐지율)이 낮아 미탐 위험이 큼 · `pip install semgrep` 설치 권장 · **후보 0건이 안전을 의미하지 않음**.
 
 ## 대시보드 (심각도 × 취약점 클래스)
 | 취약점 | 후보 | 확정 | 동적 악용 | 최고 심각도 |
@@ -101,5 +105,5 @@ python skills/auditing-web-application-security/scripts/audit.py "<소스경로>
 
 ## 구성 (오케스트레이션 대상)
 - 정적: `scan_all.py` → 9개 `detecting-*` 스캐너
-- 동적: `exploiting-*` (sql-injection, xss …) + `tools/scope_guard.py` 안전게이트
+- 동적: `exploiting-*` (sql-injection, xss, broken-access-control) + `tools/scope_guard.py` 안전게이트
 - 산출물: `reports/audit-<프로젝트>.md`
