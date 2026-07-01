@@ -153,6 +153,8 @@ def run_access_dynamic(target, static_result, creds, authorized):
                              encoding="utf-8", errors="replace", timeout=600)
         try:
             data = json.loads(out.stdout or "{}")
+            if not isinstance(data, dict):  # dict 아닌 JSON(list 등) 반환 시 data.get() 크래시 방어 (PR 리뷰 반영)
+                data = {"raw": str(data)[:200], "blocked_or_no_json": True}
         except json.JSONDecodeError:
             data = {"raw": (out.stdout or out.stderr or "").strip()[:200],
                     "blocked_or_no_json": True}
@@ -203,6 +205,8 @@ def run_auth_dynamic(target, creds, probe, authorized):
                              encoding="utf-8", errors="replace", timeout=600)
         try:
             data = json.loads(out.stdout or "{}")
+            if not isinstance(data, dict):  # dict 아닌 JSON(list 등) 반환 시 data.get() 크래시 방어 (PR 리뷰 반영)
+                data = {"raw": str(data)[:200], "blocked_or_no_json": True}
         except json.JSONDecodeError:
             data = {"raw": (out.stdout or out.stderr or "").strip()[:200],
                     "blocked_or_no_json": True}
