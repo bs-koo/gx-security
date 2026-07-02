@@ -122,6 +122,22 @@ python skills/auditing-web-application-security/scripts/audit.py "D:\SQ\sqisoft-
 - **원격 대상은 콜백 미수신(한계)**: canary가 127.0.0.1이므로 **대상이 audit 실행기와 동일 호스트(로컬)일 때만 콜백을 수신**한다. 원격 스테이징의 블라인드 SSRF를 확정하려면 `skills/exploiting-ssrf-and-open-redirect/scripts/attack_ssrf.py`를 단독 실행하고 `--canary-host`로 대상이 도달할 수 있는 광고 호스트를 지정한다(오픈 리다이렉트는 인밴드 Location 판정이라 이 제약과 무관하다).
 - **원격 콜백 미수신 ≠ 안전(부작용 주의)**: 원격 대상에서 콜백을 못 받았다고 곧 '안전'을 뜻하지는 않는다. 주입된 `127.0.0.1` URL은 **대상 서버 자신의 loopback**을 가리키므로, 대상이 자기 로컬 전용 서비스(actuator·관리 콘솔·디버그 포트 등)로 실제 아웃바운드 요청을 시도했으나 그 결과가 audit 실행기로 돌아오지 않았을 뿐일 수 있다(대상 IDS/방화벽 로그에 SSRF 시그니처로 남을 수 있음). 도구는 대상 서버 자체가 만드는 아웃바운드 요청의 부작용까지는 통제하지 못한다.
 
+### 경로조작·파일 업로드 동적 점검
+경로조작(임의 파일 읽기)과 위험 확장자 업로드(웹쉘 발판)를 실제로 확정하려면, 통합 오케스트레이터에 **주입 표적**과 **테스트 계정**을 함께 넘긴다. 업로드는 서버에 파일을 기록하는 **파괴적** 동작이라 `--allow-destructive`를 추가로 명시해야 발사된다.
+```bash
+python skills/auditing-web-application-security/scripts/audit.py "D:\SQ\sqisoft-sef-2026" \
+    --target http://localhost:8080 \
+    --traversal-target "/download?filePath=" \
+    --upload-target "/api/v1/files" --allow-destructive \
+    --retrieve-base "http://localhost:8080/files" \
+    --user-a-id <id> --user-a-pw <pw> --json
+```
+- **발사 조건(표적+계정 모두 필요)**: `--traversal-target`(경로조작 주입점)·`--upload-target`(업로드 엔드포인트) 같은 **표적**과 계정(`--user-a-id/pw` 또는 `--token-a`)이 **모두** 있어야 발사(`dynamic`)한다. 표적이나 계정이 하나라도 없으면 발사 없이 `static-only`(정적 추정)에 머문다(표적을 우선 판정). 종류를 하나만 지정하면 지정한 종류만 발사하고 나머지는 "표적 미지정 — 미검사"로 표기한다.
+- **업로드 이중 게이트(파괴적 옵트인)**: 파일 업로드는 대상 서버에 마커 파일을 실제로 기록하므로, `--upload-target`이 있어도 `--allow-destructive`가 없으면 **미발사**한다. 이 게이트는 audit 레이어와 `attack_pathupload.py` 자체에 **독립적으로 이중** 존재하며, `--allow-destructive`가 없으면 audit이 `--upload-target` 자체를 자식에 넘기지 않는다. 경로조작은 읽기전용 GET이라 이 게이트와 무관하다.
+- **판정 방식**: 경로조작은 응답 본문에 파일 내용 시그니처(`root:.*:0:0:`·`<web-app`·`[fonts]`)가 나오면 취약이다. 미검출이라도 응답이 2xx일 때만 방어로 보고, **non-2xx(404/403/5xx)·무응답은 방어가 아니라 "미확정(미도달/차단 추정)"**으로 표기해 엔드포인트 오지정을 방어로 오인하지 않는다. 업로드는 위험 확장자(.jsp) 마커가 2xx 수용되면 취약(Medium), `--retrieve-base`로 회수까지 성공하면 웹루트 저장으로 가중(High)한다.
+- **leftover 정리(수동 삭제)**: `--allow-destructive`로 업로드가 실제 **수용(accepted)**되면 대상 서버에 마커 `.jsp` 파일이 남는다. audit 요약에 `[정리 필요] 업로드된 마커 파일: … — 서버에서 수동 삭제 권장` 안내가 노출되므로, 점검 후 해당 파일을 직접 삭제한다. 자동 삭제(`--cleanup-target`)는 제공하지 않는다(거부돼 파일이 남지 않은 경우엔 안내하지 않는다).
+- **한계**: `audit.py` 경유 실행은 **sef-2026 로그인 프리셋**(`/api/v1/auth/login`, 토큰 경로 `data.accessToken`)을 전제로 한다. 비표준 로그인 API나 세밀한 옵션은 `skills/exploiting-path-traversal-upload/scripts/attack_pathupload.py`를 단독 실행한다.
+
 ---
 
 ## 5. 명령 레퍼런스

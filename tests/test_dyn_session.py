@@ -130,6 +130,28 @@ class TestRequest(unittest.TestCase):
         self.assertNotIn("Authorization", kwargs["headers"])
 
     @patch("requests.request")
+    def test_request_passes_files_and_data(self, mock_req):
+        # FR-0/AC-1: files=/data=가 실제 HTTP 요청 호출에 그대로 전달돼야 한다(업로드 검사
+        # 크래시 방지). 미전달이면 requests가 바디에 싣지 못해 파일업로드 발사가 100% 죽는다.
+        mock_req.return_value = MagicMock(status_code=200, text="ok", headers={})
+        files = {"file": ("gxmarker.jsp", "GXMARKER-x")}
+        out = dyn_session.request("POST", "http://localhost:7171/api/upload",
+                                  files=files, data={"k": "v"})
+        self.assertEqual(out["status"], 200)
+        _, kwargs = mock_req.call_args
+        self.assertEqual(kwargs["files"], files)
+        self.assertEqual(kwargs["data"], {"k": "v"})
+
+    @patch("requests.request")
+    def test_request_defaults_files_data_none(self, mock_req):
+        # 하위호환(AC-2): 미전달 시 files/data는 None으로 전달돼 기존 5종 호출 바이트 불변.
+        mock_req.return_value = MagicMock(status_code=200, text="ok", headers={})
+        dyn_session.request("GET", "http://localhost:7171/x", token="TKN")
+        _, kwargs = mock_req.call_args
+        self.assertIsNone(kwargs["files"])
+        self.assertIsNone(kwargs["data"])
+
+    @patch("requests.request")
     def test_request_returns_response_headers(self, mock_req):
         # CRITICAL 재발 방지(P3): request()는 응답 헤더를 "headers" 키로 반환해야 한다.
         # attack_ssrf.run_open_redirect가 r["headers"]로 Location을 참조하므로, headers
