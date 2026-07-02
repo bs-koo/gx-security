@@ -336,7 +336,8 @@ class TestSsrfUnreached(unittest.TestCase):
         # 요청이 대상에 닿지 못함(status None) + 미취약 → '방어' 아닌 '미도달'(True)
         self.assertTrue(audit._ssrf_unreached(
             {"kind": "ssrf", "status": None, "vulnerable": False}))
-        # 정상 응답(status 200) 받고 미취약 → 진짜 방어(False)
+        # 정상 응답(status 200) → '프로브 도달'이므로 _ssrf_unreached=False.
+        # (SSRF 최종판정은 _ssrf_finding_line이 콜백으로 결정 — status 200+콜백미수신은 '미확정'이지 '방어' 아님. 코드리뷰 #12)
         self.assertFalse(audit._ssrf_unreached(
             {"kind": "ssrf", "status": 200, "vulnerable": False}))
 
@@ -589,6 +590,46 @@ class TestPathuploadRender(unittest.TestCase):
         # res가 dict 아님(None/list)이어도 예외 없이 list 반환(비-dict 방어)
         self.assertIsInstance(audit.render_pathupload(None), list)
         self.assertIsInstance(audit.render_pathupload([1, 2]), list)
+
+
+class TestSsrfFindingLine(unittest.TestCase):
+    """코드리뷰 #12 회귀 — SSRF 콜백 미수신을 '방어'로 오표기하지 않는다.
+
+    SSRF는 OOB 콜백 수신만이 취약 확정. status 2xx라도 콜백 미수신이면 '미확정'(원격/비동기면 취약 가능)이며
+    절대 '방어'로 찍지 않는다. open-redirect는 인밴드 Location 판정이라 방어/취약을 정상 표기한다.
+    """
+
+    def test_ssrf_callback_received_is_vulnerable(self):
+        line = audit._ssrf_finding_line({"kind": "ssrf", "status": 200, "vulnerable": True})
+        self.assertIn("🔴 취약", line)
+
+    def test_ssrf_status200_no_callback_is_unconfirmed_not_defended(self):
+        # 핵심 회귀: 원격 대상은 status 200이라도 loopback canary 콜백 불가 → '미확정'이지 '방어' 아님
+        line = audit._ssrf_finding_line({"kind": "ssrf", "status": 200, "vulnerable": False})
+        self.assertIn("미확정", line)
+        self.assertNotIn("방어", line)
+
+    def test_ssrf_status_none_no_callback_is_unconfirmed(self):
+        line = audit._ssrf_finding_line({"kind": "ssrf", "status": None, "vulnerable": False})
+        self.assertIn("미확정", line)
+        self.assertNotIn("방어", line)
+
+    def test_open_redirect_reached_not_vulnerable_is_defended(self):
+        # 오픈리다이렉트는 인밴드 판정 — 정상 응답(302)+미취약이면 '방어'로 확정 가능(SSRF와 대비)
+        line = audit._ssrf_finding_line({
+            "kind": "open-redirect", "vulnerable": False,
+            "findings": [{"variant": "a", "status": 302}]})
+        self.assertIn("방어", line)
+
+    def test_open_redirect_all_unreached_is_unconfirmed(self):
+        line = audit._ssrf_finding_line({
+            "kind": "open-redirect", "vulnerable": False,
+            "findings": [{"variant": "a", "error": "conn"}]})
+        self.assertIn("미확정", line)
+
+    def test_error_and_skipped_priority(self):
+        self.assertIn("오류", audit._ssrf_finding_line({"kind": "ssrf", "error": "boom"}))
+        self.assertIn("미발사", audit._ssrf_finding_line({"kind": "ssrf", "skipped": "표적 없음"}))
 
 
 if __name__ == "__main__":
