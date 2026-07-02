@@ -40,7 +40,8 @@ def detect_stacks(target):
     for root, dirs, files in os.walk(target):
         # 잡음 디렉토리 제외
         dirs[:] = [d for d in dirs if d not in
-                   (".git", "node_modules", "build", "target", "dist", ".gradle")]
+                   (".git", "node_modules", "build", "target", "dist", ".gradle",
+                    ".dev", ".omc", ".humanize", ".idea", ".vscode")]
         for f in files:
             if f in ("build.gradle.kts", "settings.gradle.kts", "build.gradle"):
                 stacks.add("spring-modern")
@@ -59,7 +60,8 @@ def detect_stacks(target):
 def run_semgrep(target):
     cmd = ["semgrep", "--config", RULES, "--json", "--quiet", target]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+                             encoding="utf-8", errors="replace")
     except (subprocess.TimeoutExpired, OSError) as e:
         return None, f"semgrep 실행 실패: {e}"
     if out.returncode not in (0, 1):  # 1 = findings 있음
@@ -127,7 +129,8 @@ def run_fallback(target):
     findings = []
     for root, dirs, files in os.walk(target):
         dirs[:] = [d for d in dirs if d not in
-                   (".git", "node_modules", "build", "target", "dist", ".gradle")]
+                   (".git", "node_modules", "build", "target", "dist", ".gradle",
+                    ".dev", ".omc", ".humanize", ".idea", ".vscode")]
         for f in files:
             ext = os.path.splitext(f)[1].lower()
             rules = [r for r in FALLBACK_PATTERNS if ext in r[2]]
@@ -157,7 +160,8 @@ def check_admin_controllers_without_preauthorize(target):
     findings = []
     for root, dirs, files in os.walk(target):
         dirs[:] = [d for d in dirs if d not in
-                   (".git", "node_modules", "build", "target", "dist", ".gradle")]
+                   (".git", "node_modules", "build", "target", "dist", ".gradle",
+                    ".dev", ".omc", ".humanize", ".idea", ".vscode")]
         for f in files:
             if not f.endswith(".java"):
                 continue

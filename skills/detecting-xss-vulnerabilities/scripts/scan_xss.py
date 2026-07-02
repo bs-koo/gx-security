@@ -39,7 +39,8 @@ def detect_stacks(target):
     for root, dirs, files in os.walk(target):
         # 잡음 디렉토리 제외
         dirs[:] = [d for d in dirs if d not in
-                   (".git", "node_modules", "build", "target", "dist", ".gradle")]
+                   (".git", "node_modules", "build", "target", "dist", ".gradle",
+                    ".dev", ".omc", ".humanize", ".idea", ".vscode")]
         base = os.path.basename(root)
         for f in files:
             if f in ("build.gradle.kts", "settings.gradle.kts", "build.gradle"):
@@ -59,7 +60,8 @@ def detect_stacks(target):
 def run_semgrep(target):
     cmd = ["semgrep", "--config", RULES, "--json", "--quiet", target]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+                             encoding="utf-8", errors="replace")
     except (subprocess.TimeoutExpired, OSError) as e:
         return None, f"semgrep 실행 실패: {e}"
     if out.returncode not in (0, 1):  # 1 = findings 있음
@@ -123,6 +125,7 @@ FALLBACK_PATTERNS = [
 # 서드파티 라이브러리 경로 — 오탐 방지를 위해 스캔 제외
 _EXCLUDE_DIRS = {
     ".git", "node_modules", "build", "target", "dist", ".gradle",
+    ".dev", ".omc", ".humanize", ".idea", ".vscode",
     "fullcalendar", "jquery", "bootstrap", "datatables", "tinymce",
     "ckeditor", "codemirror", "ace", "lib", "vendor", "assets",
     "pubRes",  # Gseed_Web_Renew 정적 리소스(서드파티 JS 포함)

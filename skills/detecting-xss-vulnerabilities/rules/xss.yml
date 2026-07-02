@@ -173,3 +173,20 @@ rules:
       stack: spring-modern
       confidence: needs-context
     pattern-regex: 'document\.write\s*\('
+
+  - id: sqisoft-spring-servlet-reflected-xss-writer
+    languages: [java]
+    severity: WARNING
+    message: >-
+      사용자 입력(request.getParameter 등)을 이스케이프 없이 응답 스트림에 직접 출력합니다(반사형 XSS).
+      출력 컨텍스트에 맞는 이스케이프(OWASP Java Encoder 등)를 적용하세요.
+    metadata:
+      cwe: "CWE-79"
+      owasp: "A03:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: $RESP.getWriter().print($REQ.getParameter(...))
+          - pattern: $RESP.getWriter().println($REQ.getParameter(...))
+          - pattern: $RESP.getWriter().write($REQ.getParameter(...))
