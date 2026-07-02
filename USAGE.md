@@ -92,6 +92,21 @@ python skills/exploiting-sql-injection/scripts/attack_sqli.py "http://localhost:
 python scan_all.py "D:\SQ\sqisoft-sef-2026" --only csrf,sqli,xss
 ```
 
+### 인증·세션·JWT 동적 점검
+JWT 변조·토큰 재사용·쿠키 속성을 실제로 확정하려면, 통합 오케스트레이터에 테스트 계정과 보호 엔드포인트(`--probe`)를 함께 넘긴다.
+```bash
+python skills/auditing-web-application-security/scripts/audit.py "D:\SQ\sqisoft-sef-2026" \
+    --target http://localhost:8080 \
+    --user-a-id <id> --user-a-pw <pw> \
+    --probe /api/v1/users/me --json
+```
+- **판정 3단계** (계정/probe 조합에 따라 갈린다):
+  - **`dynamic`(전체 발사)** — 로그인 계정(`--user-a-id/pw`)과 `--probe`가 모두 있을 때. JWT 변조·토큰 재사용·쿠키 속성을 실제 발사한다.
+  - **`partial`(쿠키만)** — **로그인 계정(`--user-a-id/pw`)만 있고 `--probe`가 없을 때**. 로그인 응답의 Set-Cookie로 쿠키 속성만 발사하고, JWT·재사용은 정적 추정에 머문다.
+  - **`static-only`(정적 추정)** — 계정이 전무하거나, **`--token-a`로 토큰만 넘길 때**. `--token-a`는 로그인 단계를 생략해 Set-Cookie가 없으므로 쿠키 검사도 건너뛴다 → `--probe`가 없으면 발사 0건으로 `static-only`다(`--probe`가 함께 있으면 JWT·재사용은 발사되어 `dynamic`). 즉 "계정만 있으면 무조건 partial"이 아니라, **partial은 실제 로그인(`--user-a-id/pw`)일 때만** 성립한다.
+- **한계**: `audit.py` 경유 인증 동적은 `--probe`로 보호 엔드포인트를 **직접 지정**해야 한다(`--scan` 자동 추출은 `attack_auth.py` 단독 실행 전용). 또한 **sef-2026 로그인 프리셋**(`/api/v1/auth/login`, 토큰 경로 `data.accessToken`)을 전제로 한다. 비표준 로그인 API는 `skills/exploiting-auth-session/scripts/attack_auth.py`를 단독 실행하고 `--login-path`·`--body-template`·`--token-path`로 로그인 형식을 지정한다.
+- **병렬 실행 주의(로그아웃)**: 토큰 재사용 검사는 대상 계정을 로그아웃시켜 세션을 무효화한다. 서버가 전체 세션 로그아웃(모든 기기 무효화)·refresh 회전 방식이면 같은 계정을 쓰는 다른 세션이 끊긴다. **동일 테스트 계정을 여러 프로세스(병렬 audit 등)가 동시에 사용하지 않는다.**
+
 ---
 
 ## 5. 명령 레퍼런스

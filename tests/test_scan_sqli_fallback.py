@@ -50,6 +50,27 @@ class TestFallbackRegexConcat(unittest.TestCase):
         self.assertIsNotNone(scan_sqli._JPA_CREATE_CONCAT.search(line))
 
 
+class TestFallbackRegexMultiArgConcat(unittest.TestCase):
+    """PR 리뷰 회귀 — 다중 인자·인자 내부 공백을 낀 concat도 매치되어야 미탐이 재발하지 않는다.
+
+    build("a", "b") + userInput 처럼 호출 인자 안에 쉼표/공백이 있고 인자 결과에
+    사용자 입력을 이어붙이는 형태를 정규식 3종이 놓치면(과거 미탐) SQLi 후보가
+    누락된다. [^;]+ 로 다중 인자를 포괄함을 어서션으로 고정한다.
+    """
+
+    def test_stmt_concat_multi_arg_call(self):
+        line = 'stmt.executeQuery(build("a", "b") + userInput);'
+        self.assertIsNotNone(scan_sqli._STMT_CONCAT.search(line))
+
+    def test_jdbc_tmpl_concat_multi_arg_call(self):
+        line = 'jdbcTemplate.query(build("a", "b") + userInput, rowMapper);'
+        self.assertIsNotNone(scan_sqli._JDBC_TMPL_CONCAT.search(line))
+
+    def test_jpa_create_concat_multi_arg_call(self):
+        line = 'em.createNativeQuery(build("a", "b") + userInput);'
+        self.assertIsNotNone(scan_sqli._JPA_CREATE_CONCAT.search(line))
+
+
 class TestFallbackFixtureIntegration(unittest.TestCase):
     """AC-15 — tempfile fixture에 concat 라인 포함 Vuln.java 작성 후
     run_fallback 호출 → 반환 후보에 SQLi concat rule이 존재함을 assert."""
