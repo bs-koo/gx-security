@@ -101,6 +101,9 @@ _ACCESS_SCRIPT = os.path.join(
 _AUTH_SCRIPT = os.path.join(
     ROOT, "skills", "exploiting-auth-session", "scripts", "attack_auth.py")
 
+_SSRF_SCRIPT = os.path.join(
+    ROOT, "skills", "exploiting-ssrf-and-open-redirect", "scripts", "attack_ssrf.py")
+
 
 def _extract_access_candidates(static_result):
     """정적 통합 결과(by_skill)에서 접근통제(BFLA/IDOR) 후보만 추출."""
@@ -158,13 +161,30 @@ def run_access_dynamic(target, static_result, creds, authorized):
         except json.JSONDecodeError:
             data = {"raw": (out.stdout or out.stderr or "").strip()[:200],
                     "blocked_or_no_json": True}
+        # scope 차단/로그인 실패/발사 오류를 fired 판정보다 먼저 평가한다(auth·ssrf 분기 순서 일치).
+        # scope_blocked(error만·findings 없음)를 'dynamic'으로 오표기하던 잠복결함 수정(사용자2).
+        if data.get("error") == "scope_blocked":
+            return {"blocked": "scope_guard", "detail": data.get("detail"), "returncode": 1}
+        # 로그인 실패는 자식이 {"error":"login_failed"} JSON 출력 후 exit(2)하므로 error 키로 판정.
+        # (argparse 인자오류 등 stdout 없는 rc=2는 아래 rc 게이트가 error로 정직 표기 — 코드리뷰 #11)
+        if data.get("error") == "login_failed":
+            return {"confidence": "login-failed", "detail": data.get("detail"),
+                    "returncode": 2}
+        # rc 게이트: 발사(계정 있음) 후 stdout이 빈 채(data=={}) 비정상 종료(rc≠0)면
+        # 자식이 uncaught 예외로 죽은 것 — static-only로 오분류 말고 error로 정직 표기한다.
+        if data == {} and out.returncode not in (0, None):
+            return {"error": f"접근통제 발사 중 오류(rc={out.returncode}) — 자식 프로세스 비정상 종료",
+                    "returncode": out.returncode}
         # 발사했더라도 모든 표적이 skipped(예: IDOR인데 token_b/resource_id 없음)면
         # 동적으로 확정한 게 없으므로 'dynamic'으로 과대표기하지 않는다(정적 추정 유지).
         fired = [f for f in (data.get("findings") or [])
                  if isinstance(f, dict) and not f.get("skipped")]
-        if isinstance(data, dict) and data.get("findings") and not fired:
+        # fired(비-skipped finding)가 하나도 없으면 동적으로 확정한 게 없다.
+        # run_auth/ssrf_dynamic과 동일하게 `if not fired`로 통일한다. 빈 findings(rc0)나
+        # 전부 skipped 모두 static-only로 유지해 'dynamic 발사 완료 findings 0건' 과대표기를 막는다.
+        if not fired:
             return {"confidence": "static-only", "result": data, "returncode": out.returncode,
-                    "note": "동적 발사했으나 모든 표적이 skipped(토큰/리소스 부족) — 정적 추정 유지"}
+                    "note": "동적 발사했으나 확정된 finding 없음(모든 표적 skip 또는 findings 0건) — 정적 추정 유지"}
         return {"confidence": "dynamic", "result": data, "returncode": out.returncode}
     except (subprocess.TimeoutExpired, OSError) as e:
         return {"error": str(e)[:120]}
@@ -238,6 +258,124 @@ def run_auth_dynamic(target, creds, probe, authorized):
         return {"error": str(e)[:120]}
 
 
+def run_ssrf_dynamic(target, creds, redirect_target, ssrf_target, authorized):
+    """정적 추정된 SSRF/오픈리다이렉트를 attack_ssrf로 동적 확정한다(FR-2/3).
+
+    표적(--redirect-target/--ssrf-target)과 계정/토큰이 '모두' 있어야 발사한다(PRD1).
+    표적 우선 판정: 표적이 없으면 계정 유무와 무관하게 '표적 미지정' static-only(AC-2).
+    canary 옵션(--canary-host/port/timeout)은 audit에 미노출 — attack_ssrf 기본값
+    (127.0.0.1/0/5.0)을 유지해 원격 콜백을 차단한다(AC-9/PRD3).
+    """
+    if not os.path.exists(_SSRF_SCRIPT):
+        return {"skipped": "attack_ssrf.py 없음"}
+    has_target = bool(redirect_target or ssrf_target)
+    has_creds = creds.get("token_a") or (creds.get("user_a_id") and creds.get("user_a_pw"))
+    # 표적 우선(PRD1): 표적이 없으면 계정 유무와 무관하게 '표적 미지정'으로 표기한다.
+    if not has_target:
+        return {
+            "confidence": "static-only",
+            "note": ("SSRF/오픈리다이렉트 표적 미지정(--redirect-target/--ssrf-target) → "
+                     "정적 추정. 주입점 지정 시 동적 확정."),
+        }
+    if not has_creds:
+        return {
+            "confidence": "static-only",
+            "note": ("표적은 있으나 계정/토큰 미지정 → 정적 추정. "
+                     "--user-a-id/pw 또는 --token-a 제공 시 발사."),
+        }
+    cmd = [sys.executable, _SSRF_SCRIPT, target, "--json"]
+    if redirect_target:
+        cmd += ["--redirect-target", redirect_target]
+    if ssrf_target:
+        cmd += ["--ssrf-target", ssrf_target]
+    if creds.get("token_a"):
+        cmd += ["--token-a", creds["token_a"]]
+    elif creds.get("user_a_id") and creds.get("user_a_pw"):
+        cmd += ["--user-a-id", creds["user_a_id"], "--user-a-pw", creds["user_a_pw"]]
+    if authorized:
+        cmd += ["--authorized"]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=600)
+        try:
+            data = json.loads(out.stdout or "{}")
+            if not isinstance(data, dict):  # dict 아닌 JSON(list 등) 반환 시 data.get() 크래시 방어
+                data = {"raw": str(data)[:200], "blocked_or_no_json": True}
+        except json.JSONDecodeError:
+            data = {"raw": (out.stdout or out.stderr or "").strip()[:200],
+                    "blocked_or_no_json": True}
+        # 판정 우선순위(auth 계약 동일): scope_blocked > login_failed/rc2 > rc게이트 > fired없음
+        if data.get("error") == "scope_blocked":
+            return {"blocked": "scope_guard", "detail": data.get("detail"), "returncode": 1}
+        # 로그인 실패는 자식이 {"error":"login_failed"} JSON 출력 후 exit(2)하므로 error 키로 판정.
+        # (argparse 인자오류 등 stdout 없는 rc=2는 아래 rc 게이트가 error로 정직 표기 — 코드리뷰 #11)
+        if data.get("error") == "login_failed":
+            return {"confidence": "login-failed", "detail": data.get("detail"),
+                    "returncode": 2}
+        # rc 게이트: 발사(계정 있음) 후 stdout이 빈 채(data=={}) 비정상 종료(rc≠0)면
+        # 자식이 uncaught 예외로 죽은 것 — static-only로 오분류 말고 error로 정직 표기한다.
+        if data == {} and out.returncode not in (0, None):
+            return {"error": f"SSRF 발사 중 오류(rc={out.returncode}) — 자식 프로세스 비정상 종료",
+                    "returncode": out.returncode}
+        findings = data.get("findings", [])
+        fired = [f for f in findings if isinstance(f, dict) and not f.get("skipped")]
+        if not fired:
+            return {"confidence": "static-only", "result": data,
+                    "note": "발사 시도했으나 모든 표적이 skip — 정적 추정"}
+        # targets: 렌더의 종류별 표적 미지정 표기용(CONSIDER 부분표적)
+        return {"confidence": "dynamic", "result": data, "returncode": out.returncode,
+                "targets": {"redirect": bool(redirect_target), "ssrf": bool(ssrf_target)}}
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return {"error": str(e)[:120]}
+
+
+def _ssrf_unreached(f):
+    """SSRF/오픈리다이렉트 finding이 '프로브 미도달'(전변형 오류/status None)인지 판정한다.
+
+    미도달을 '방어'로 오표기하지 않기 위한 MUST 헬퍼(design-critic).
+    vulnerable=True는 항상 취약 우선이므로 미도달로 보지 않는다.
+    """
+    if not isinstance(f, dict):
+        return False
+    kind = f.get("kind")
+    if kind == "open-redirect":
+        if f.get("vulnerable"):  # 취약이면 미도달 아님(취약 우선 불변식 명시, 방어심층)
+            return False
+        variants = f.get("findings", [])
+        if not isinstance(variants, list) or not variants:
+            return False
+        # 하위 변형이 비어있지 않고 전부 오류/status None이면 전변형 미도달
+        return all(isinstance(v, dict) and (v.get("error") or v.get("status") is None)
+                   for v in variants)
+    if kind == "ssrf":
+        return f.get("status") is None and not f.get("vulnerable")
+    return False
+
+
+def _ssrf_finding_line(f):
+    """SSRF/오픈리다이렉트 finding 1건을 요약 한 줄 문자열로 렌더한다(테스트 가능 헬퍼).
+
+    우선순위: skipped > error > (ssrf 콜백판정) > 미도달 > vulnerable/방어.
+    SSRF는 OOB 콜백 수신만이 취약 확정이다 — 콜백 미수신은 '방어'가 아니라 '미확정'으로 렌더한다.
+    원격/비동기 대상은 loopback canary에 콜백할 수 없어 status 2xx여도 취약을 확정하지 못하며,
+    이를 '방어'로 찍으면 원격 스테이징 SSRF를 안전으로 오도한다(코드리뷰 #12).
+    """
+    if not isinstance(f, dict):
+        return None
+    kind = f.get("kind")
+    if f.get("skipped"):
+        return f"    - [{kind}] 미발사({f.get('skipped')})"
+    if f.get("error"):
+        return f"    - [{kind}] ⚠ 오류: {f.get('error')}"
+    if kind == "ssrf":
+        if f.get("vulnerable"):
+            return f"    - [{kind}] 🔴 취약(OOB 콜백 수신)"
+        return f"    - [{kind}] ⚠ 미확정 — 콜백 미수신(원격/비동기 대상이면 취약 가능·안전 단정 금지)"
+    if _ssrf_unreached(f):
+        return f"    - [{kind}] ⚠ 미확정 — 프로브 미도달(대상 무응답/전변형 오류)"
+    return f"    - [{kind}] {'🔴 취약' if f.get('vulnerable') else '방어'}"
+
+
 def render_dynamic_line(d):
     """동적 공격 결과 항목 1건을 사람이 읽는 한 줄 문자열로 렌더링한다.
 
@@ -275,6 +413,11 @@ def main():
     ap.add_argument("--resource-id", help="IDOR: A가 소유한 리소스 ID")
     ap.add_argument("--probe", help="인증 동적: 보호 엔드포인트 직접 지정(예: /api/v1/users/me). "
                                     "미지정 시 JWT·재사용 정적 추정")
+    # SSRF/오픈리다이렉트 동적 연계용 주입점 (계정/토큰 플래그 재사용)
+    ap.add_argument("--redirect-target", help="오픈리다이렉트 주입점(예: /login?returnUrl=). "
+                                              "지정+계정(--user-a-id/pw 또는 --token-a) 시 동적 확정")
+    ap.add_argument("--ssrf-target", help="SSRF 주입점(예: /api/fetch?url=). "
+                                          "동적 확정에는 계정(--user-a-id/pw 또는 --token-a)도 필요")
     ap.add_argument("--json", action="store_true", help="통합 JSON 출력")
     args = ap.parse_args()
 
@@ -314,10 +457,16 @@ def main():
             {"user_a_id": args.user_a_id, "user_a_pw": args.user_a_pw,
              "token_a": args.token_a},
             args.probe, args.authorized)
+        report["phases"]["ssrf_dynamic"] = run_ssrf_dynamic(
+            args.target,
+            {"user_a_id": args.user_a_id, "user_a_pw": args.user_a_pw,
+             "token_a": args.token_a},
+            args.redirect_target, args.ssrf_target, args.authorized)
     else:
         report["phases"]["dynamic"] = {"skipped": "대상 URL(--target) 미지정 — 정적만 수행"}
         report["phases"]["access_dynamic"] = {"skipped": "대상 URL 미지정"}
         report["phases"]["auth_dynamic"] = {"skipped": "대상 URL 미지정"}
+        report["phases"]["ssrf_dynamic"] = {"skipped": "대상 URL 미지정"}
 
     report["next"] = ("Claude Code에서 auditing-web-application-security 스킬로 "
                       "오탐 제거·컨텍스트 검증·4요소 통합 리포트를 완성하세요.")
@@ -358,7 +507,11 @@ def main():
         print(f"[동적] {dyn.get('skipped','')}")
 
     acc = report["phases"].get("access_dynamic", {})
-    if acc.get("confidence") == "static-only":
+    if acc.get("blocked") == "scope_guard":  # rc로 안 뭉개지게 최상단(AC-4)
+        print(f"[접근통제] 차단됨(scope_guard) — {acc.get('detail') or 'scope 범위 밖'}")
+    elif acc.get("confidence") == "login-failed":  # '미발견'과 구분
+        print(f"[접근통제] 동적 미확정(로그인 실패) — {acc.get('detail')}")
+    elif acc.get("confidence") == "static-only":
         print(f"[접근통제] 정적 추정(동적 미확정) — 후보 {acc.get('candidate_count')}건. "
               f"테스트 계정 제공 시 동적 확정")
     elif acc.get("confidence") == "dynamic":
@@ -403,6 +556,37 @@ def main():
         print(f"[인증] 오류: {au['error']}")
     elif au.get("skipped"):
         print(f"[인증] {au['skipped']}")
+
+    ss = report["phases"].get("ssrf_dynamic", {})
+    if ss.get("blocked") == "scope_guard":  # rc로 안 뭉개지게 최상단(AC-4)
+        print(f"[SSRF/오픈리다이렉트] 차단됨(scope_guard) — {ss.get('detail') or 'scope 범위 밖'}")
+    elif ss.get("confidence") == "login-failed":  # '미발견'과 구분
+        print(f"[SSRF/오픈리다이렉트] 동적 미확정(로그인 실패) — {ss.get('detail')}")
+    elif ss.get("confidence") == "static-only":  # 과대표기 방지(AC-2/11)
+        print(f"[SSRF/오픈리다이렉트] 정적 추정(동적 미확정) — {ss.get('note')}")
+    elif ss.get("confidence") == "dynamic":
+        print(f"[SSRF/오픈리다이렉트] 동적 확정 발사")
+        res = ss.get("result", {})
+        if not isinstance(res, dict):  # 자식이 dict 아닌 JSON 반환 시 방어
+            res = {}
+        tg = ss.get("targets", {})
+        kinds_seen = set()
+        for f in res.get("findings", []):
+            # 우선순위 skipped > error > (ssrf 콜백판정) > 미도달 > vulnerable/방어.
+            # 렌더 판정은 _ssrf_finding_line 헬퍼로 위임(유닛 테스트 가능·조용한 실패 금지).
+            if not isinstance(f, dict):
+                continue
+            kinds_seen.add(f.get("kind"))
+            print(_ssrf_finding_line(f))
+        # 종류별 표적 미지정 개별 표기(CONSIDER 부분표적)
+        if tg.get("redirect") is False and "open-redirect" not in kinds_seen:
+            print("    - [open-redirect] 표적 미지정(--redirect-target)")
+        if tg.get("ssrf") is False and "ssrf" not in kinds_seen:
+            print("    - [ssrf] 표적 미지정(--ssrf-target)")
+    elif ss.get("error"):
+        print(f"[SSRF/오픈리다이렉트] 오류: {ss['error']}")
+    elif ss.get("skipped"):
+        print(f"[SSRF/오픈리다이렉트] {ss['skipped']}")
 
     print(f"\n※ {report['next']}")
 

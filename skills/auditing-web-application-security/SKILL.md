@@ -61,6 +61,7 @@ python skills/auditing-web-application-security/scripts/audit.py "<소스경로>
 미확정 후보 중 중요한 것은 해당 `exploiting-<X>` 스킬로 추가 발사(파라미터 지정)한다.
 - **접근통제(IDOR/BFLA)**는 정적 후보(`by_skill`)를 받아 연계하며, **테스트 계정(권한 교차용) 유무**로 판정 수준이 갈린다 — `run_access_dynamic`이 계정이 없으면 정적 후보만 남기는 `static-only`, 계정이 있으면 실제 권한 교차 호출로 확정하는 `dynamic`으로 구분한다.
 - **인증·세션·JWT**도 마찬가지로 `run_auth_dynamic`이 **계정과 보호 엔드포인트(`--probe`) 유무**로 판정 수준이 갈린다 — probe와 로그인 계정이 모두 있으면 JWT 변조·토큰 재사용·쿠키 속성을 실제 발사하는 `dynamic`, **로그인 계정(`--user-a-id/pw`)만 있고 probe가 없으면** 로그인 응답 쿠키 속성만 발사하는 `partial`(JWT·재사용은 정적 추정), 계정이 전무하면 발사하지 않는 `static-only`로 구분한다. **`--token-a`(토큰 직접 주입)는 로그인을 생략해 Set-Cookie가 없으므로 쿠키 검사도 건너뛴다** — probe가 없으면 발사 0건인 `static-only`이고(probe가 있으면 JWT·재사용은 발사되어 `dynamic`), 따라서 `partial`은 실제 로그인(`--user-a-id/pw`)일 때만 성립한다.
+- **SSRF/오픈 리다이렉트**도 `run_ssrf_dynamic`이 **표적과 계정 유무**로 판정 수준이 갈린다 — 표적(`--redirect-target`/`--ssrf-target`)과 계정(`--token-a` 또는 `--user-a-id/pw`)이 **모두** 있으면 리다이렉트 파라미터·SSRF 주입점에 실제 발사하는 `dynamic`, 표적이나 계정이 하나라도 없으면 발사하지 않는 `static-only`로 구분한다(표적을 우선 판정한다). 확정은 `Location`이 외부 호스트면 오픈 리다이렉트, OOB canary 콜백 수신이면 블라인드 SSRF까지 잡는다(비파괴 GET).
 - XSS는 저장·DOM형이면 Playwright MCP로 브라우저 실제 실행까지 확인한다.
 
 ### 4단계 — 통합 리포트 작성·저장
@@ -106,5 +107,5 @@ python skills/auditing-web-application-security/scripts/audit.py "<소스경로>
 
 ## 구성 (오케스트레이션 대상)
 - 정적: `scan_all.py` → 9개 `detecting-*` 스캐너
-- 동적: `exploiting-*` (sql-injection, xss, broken-access-control, auth-session) + `tools/scope_guard.py` 안전게이트
+- 동적: `exploiting-*` (sql-injection, xss, broken-access-control, auth-session, ssrf-and-open-redirect) + `tools/scope_guard.py` 안전게이트
 - 산출물: `reports/audit-<프로젝트>.md`
