@@ -168,7 +168,9 @@ def run_access_dynamic(target, static_result, creds, authorized):
         # scope_blocked(error만·findings 없음)를 'dynamic'으로 오표기하던 잠복결함 수정(사용자2).
         if data.get("error") == "scope_blocked":
             return {"blocked": "scope_guard", "detail": data.get("detail"), "returncode": 1}
-        if data.get("error") == "login_failed" or out.returncode == 2:
+        # 로그인 실패는 자식이 {"error":"login_failed"} JSON 출력 후 exit(2)하므로 error 키로 판정.
+        # (argparse 인자오류 등 stdout 없는 rc=2는 아래 rc 게이트가 error로 정직 표기 — 코드리뷰 #11)
+        if data.get("error") == "login_failed":
             return {"confidence": "login-failed", "detail": data.get("detail"),
                     "returncode": 2}
         # rc 게이트: 발사(계정 있음) 후 stdout이 빈 채(data=={}) 비정상 종료(rc≠0)면
@@ -233,7 +235,9 @@ def run_auth_dynamic(target, creds, probe, authorized):
                     "blocked_or_no_json": True}
         if data.get("error") == "scope_blocked":
             return {"blocked": "scope_guard", "detail": data.get("detail"), "returncode": 1}
-        if data.get("error") == "login_failed" or out.returncode == 2:
+        # 로그인 실패는 자식이 {"error":"login_failed"} JSON 출력 후 exit(2)하므로 error 키로 판정.
+        # (argparse 인자오류 등 stdout 없는 rc=2는 아래 rc 게이트가 error로 정직 표기 — 코드리뷰 #11)
+        if data.get("error") == "login_failed":
             return {"confidence": "login-failed", "detail": data.get("detail"),
                     "returncode": 2}
         # rc 게이트(크래시 은폐 방지, ZT CRITICAL): 발사(계정 있음) 후 stdout이 빈 채
@@ -306,7 +310,9 @@ def run_ssrf_dynamic(target, creds, redirect_target, ssrf_target, authorized):
         # 판정 우선순위(auth 계약 동일): scope_blocked > login_failed/rc2 > rc게이트 > fired없음
         if data.get("error") == "scope_blocked":
             return {"blocked": "scope_guard", "detail": data.get("detail"), "returncode": 1}
-        if data.get("error") == "login_failed" or out.returncode == 2:
+        # 로그인 실패는 자식이 {"error":"login_failed"} JSON 출력 후 exit(2)하므로 error 키로 판정.
+        # (argparse 인자오류 등 stdout 없는 rc=2는 아래 rc 게이트가 error로 정직 표기 — 코드리뷰 #11)
+        if data.get("error") == "login_failed":
             return {"confidence": "login-failed", "detail": data.get("detail"),
                     "returncode": 2}
         # rc 게이트: 발사(계정 있음) 후 stdout이 빈 채(data=={}) 비정상 종료(rc≠0)면
@@ -392,7 +398,9 @@ def run_pathupload_dynamic(target, creds, traversal_target, upload_target, uploa
         # 판정 우선순위(ssrf 계약 동일): scope_blocked > login_failed/rc2 > rc게이트 > fired없음
         if data.get("error") == "scope_blocked":
             return {"blocked": "scope_guard", "detail": data.get("detail"), "returncode": 1}
-        if data.get("error") == "login_failed" or out.returncode == 2:
+        # 로그인 실패는 자식이 {"error":"login_failed"} JSON 출력 후 exit(2)하므로 error 키로 판정.
+        # (argparse 인자오류 등 stdout 없는 rc=2는 아래 rc 게이트가 error로 정직 표기 — 코드리뷰 #11)
+        if data.get("error") == "login_failed":
             return {"confidence": "login-failed", "detail": data.get("detail"),
                     "returncode": 2}
         # rc 게이트: 발사(계정 있음) 후 stdout이 빈 채(data=={}) 비정상 종료(rc≠0)면 자식이
@@ -437,6 +445,30 @@ def _ssrf_unreached(f):
     if kind == "ssrf":
         return f.get("status") is None and not f.get("vulnerable")
     return False
+
+
+def _ssrf_finding_line(f):
+    """SSRF/오픈리다이렉트 finding 1건을 요약 한 줄 문자열로 렌더한다(테스트 가능 헬퍼).
+
+    우선순위: skipped > error > (ssrf 콜백판정) > 미도달 > vulnerable/방어.
+    SSRF는 OOB 콜백 수신만이 취약 확정이다 — 콜백 미수신은 '방어'가 아니라 '미확정'으로 렌더한다.
+    원격/비동기 대상은 loopback canary에 콜백할 수 없어 status 2xx여도 취약을 확정하지 못하며,
+    이를 '방어'로 찍으면 원격 스테이징 SSRF를 안전으로 오도한다(코드리뷰 #12).
+    """
+    if not isinstance(f, dict):
+        return None
+    kind = f.get("kind")
+    if f.get("skipped"):
+        return f"    - [{kind}] 미발사({f.get('skipped')})"
+    if f.get("error"):
+        return f"    - [{kind}] ⚠ 오류: {f.get('error')}"
+    if kind == "ssrf":
+        if f.get("vulnerable"):
+            return f"    - [{kind}] 🔴 취약(OOB 콜백 수신)"
+        return f"    - [{kind}] ⚠ 미확정 — 콜백 미수신(원격/비동기 대상이면 취약 가능·안전 단정 금지)"
+    if _ssrf_unreached(f):
+        return f"    - [{kind}] ⚠ 미확정 — 프로브 미도달(대상 무응답/전변형 오류)"
+    return f"    - [{kind}] {'🔴 취약' if f.get('vulnerable') else '방어'}"
 
 
 def render_dynamic_line(d):
@@ -732,20 +764,12 @@ def main():
         tg = ss.get("targets", {})
         kinds_seen = set()
         for f in res.get("findings", []):
-            # 우선순위 skipped > error > 미도달 > vulnerable. 미도달(전변형 오류/status None)을
-            # '방어'로 오표기하면 조용한 실패가 되므로 '미확정'으로 정직 표기한다(MUST 해소).
+            # 우선순위 skipped > error > (ssrf 콜백판정) > 미도달 > vulnerable/방어.
+            # 렌더 판정은 _ssrf_finding_line 헬퍼로 위임(유닛 테스트 가능·조용한 실패 금지).
             if not isinstance(f, dict):
                 continue
-            kind = f.get("kind")
-            kinds_seen.add(kind)
-            if f.get("skipped"):
-                print(f"    - [{kind}] 미발사({f.get('skipped')})")
-            elif f.get("error"):
-                print(f"    - [{kind}] ⚠ 오류: {f.get('error')}")
-            elif _ssrf_unreached(f):
-                print(f"    - [{kind}] ⚠ 미확정 — 프로브 미도달(대상 무응답/전변형 오류)")
-            else:
-                print(f"    - [{kind}] {'🔴 취약' if f.get('vulnerable') else '방어'}")
+            kinds_seen.add(f.get("kind"))
+            print(_ssrf_finding_line(f))
         # 종류별 표적 미지정 개별 표기(CONSIDER 부분표적)
         if tg.get("redirect") is False and "open-redirect" not in kinds_seen:
             print("    - [open-redirect] 표적 미지정(--redirect-target)")

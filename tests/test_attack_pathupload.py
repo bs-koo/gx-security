@@ -72,6 +72,24 @@ class TestRunPathTraversal(unittest.TestCase):
         out = A.run_path_traversal("http://app.local", "/download?file=")
         self.assertFalse(out["vulnerable"])
 
+    @patch("tools.dyn_session.request")
+    def test_request_exception_does_not_abort_scan(self, mock_req):
+        # 코드리뷰 #13: 요청이 네트워크 오류로 예외를 던져도 스캔 전체가 죽지 않고 결과 dict를 반환.
+        mock_req.side_effect = ConnectionError("connection reset")
+        out = A.run_path_traversal("http://app.local", "/download?file=")
+        self.assertFalse(out["vulnerable"])
+        self.assertIn("error", out)  # 미도달 → '방어' 아닌 오류로 정직 표기
+
+    @patch("tools.dyn_session.request")
+    def test_partial_failure_preserves_leak(self, mock_req):
+        # 첫 변형이 예외로 실패해도 이후 변형에서 발견한 누출은 보존된다(부분결과 손실 방지).
+        mock_req.side_effect = [ConnectionError("x")] + [
+            {"status": 200, "body": "root:x:0:0:root:/root",
+             "elapsed": 0.0, "headers": {}}] * 60
+        out = A.run_path_traversal("http://app.local", "/download?file=")
+        self.assertTrue(out["vulnerable"])
+        self.assertNotIn("error", out)  # 누출 확정 시엔 오류 표기하지 않음
+
 
 class TestMarkerUpload(unittest.TestCase):
     def test_marker_is_inert_jsp(self):
@@ -121,6 +139,30 @@ class TestRunUpload(unittest.TestCase):
             out = A.run_upload("http://app.local", "/api/upload",
                                retrieve_base="http://app.local/files/")
         self.assertFalse(out["retrievable"])
+
+    @patch("tools.dyn_session.request")
+    def test_upload_request_exception_no_crash(self, mock_req):
+        # 코드리뷰 #13: 업로드 POST가 네트워크 예외를 던져도 run_upload가 크래시하지 않고 error dict 반환.
+        mock_req.side_effect = ConnectionError("reset")
+        with patch.object(A, "make_marker_upload",
+                          return_value=("gxmarker_x.jsp", "GXMARKER-x", "x")):
+            out = A.run_upload("http://app.local", "/api/upload")
+        self.assertFalse(out["vulnerable"])
+        self.assertIn("error", out)
+
+    @patch("tools.dyn_session.request")
+    def test_retrieve_exception_preserves_accepted(self, mock_req):
+        # 업로드는 수용(2xx)됐으나 회수 GET이 예외 → accepted·leftover 보존(정리 안내 위해), 크래시 없음.
+        mock_req.side_effect = [
+            {"status": 200, "body": "ok", "elapsed": 0.0, "headers": {}},  # POST 수용
+            ConnectionError("retrieve down")]                              # 회수 GET 실패
+        with patch.object(A, "make_marker_upload",
+                          return_value=("gxmarker_x.jsp", "GXMARKER-x", "x")):
+            out = A.run_upload("http://app.local", "/api/upload",
+                               retrieve_base="http://app.local/files/")
+        self.assertTrue(out["accepted"])
+        self.assertFalse(out["retrievable"])
+        self.assertEqual(out["leftover"], "gxmarker_x.jsp")
 
 
 class TestRunUploadRealPath(unittest.TestCase):
