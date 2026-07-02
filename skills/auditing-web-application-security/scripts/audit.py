@@ -212,7 +212,9 @@ def run_auth_dynamic(target, creds, probe, authorized):
                     "blocked_or_no_json": True}
         if data.get("error") == "scope_blocked":
             return {"blocked": "scope_guard", "detail": data.get("detail"), "returncode": 1}
-        if data.get("error") == "login_failed" or out.returncode == 2:
+        # 로그인 실패는 자식이 {"error":"login_failed"} JSON 출력 후 exit(2)하므로 error 키로 판정.
+        # (argparse 인자오류 등 stdout 없는 rc=2는 아래 rc 게이트가 error로 정직 표기 — 코드리뷰 #11)
+        if data.get("error") == "login_failed":
             return {"confidence": "login-failed", "detail": data.get("detail"),
                     "returncode": 2}
         # rc 게이트(크래시 은폐 방지, ZT CRITICAL): 발사(계정 있음) 후 stdout이 빈 채
