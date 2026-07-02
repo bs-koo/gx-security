@@ -114,10 +114,12 @@ def login_response(base_url, login_path, cred, *, body_template=None,
     return {"token": token, "set_cookie": set_cookie}
 
 
-def request(method, url, *, token=None, json_body=None, timeout=10):
+def request(method, url, *, token=None, json_body=None, files=None, data=None, timeout=10):
     """인증 헤더를 자동 부착해 요청. {status, body, headers, elapsed} 반환.
 
     headers는 응답 헤더 dict(Location 등 오픈리다이렉트 판정에 필수).
+    files/data는 multipart 업로드(파일업로드 동적 검사)용 — 기본 None이면 requests가
+    바디에 싣지 않으므로 기존 5종 호출과 바이트 동일(하위호환).
     attack_auth/access는 status/body만 참조하므로 하위호환(키 추가만).
     """
     import requests
@@ -127,6 +129,7 @@ def request(method, url, *, token=None, json_body=None, timeout=10):
     t0 = time.monotonic()
     resp = requests.request(
         method.upper(), url, headers=headers, json=json_body,
+        files=files, data=data,
         timeout=timeout, allow_redirects=False)
     return {"status": resp.status_code, "body": resp.text,
             "headers": dict(resp.headers),

@@ -354,6 +354,244 @@ class TestSsrfUnreached(unittest.TestCase):
                          {"variant": "b", "status": 302}]}))
 
 
+class TestPathuploadDynamic(unittest.TestCase):
+    """AC-5~9 — run_pathupload_dynamic의 게이트·조기반환·과대표기 방지 경로 유닛 검증.
+
+    TestSsrfDynamic 구조 준용: 표적/계정/파괴적 게이트는 네트워크 미접속으로 즉시 종료,
+    발사 경로(login-failed)는 127.0.0.1:1 접속 거부로 빠르게 끝난다. scope_blocked·
+    rc게이트는 subprocess.run을 mock해 재현한다. creds dict 키는 audit.py 실제 코드
+    (user_a_id/user_a_pw/token_a)와 일치.
+    """
+
+    def test_no_target_static_only(self):
+        # 표적 미지정(계정은 있음) → 발사하지 않고 static-only '표적 미지정'(AC-6). 네트워크 미접속.
+        out = audit.run_pathupload_dynamic(
+            "http://localhost:7171", {"token_a": "t"}, None, None, "file", None, False, True)
+        self.assertEqual(out["confidence"], "static-only")
+        self.assertIn("표적 미지정", out["note"])
+
+    def test_no_creds_static_only(self):
+        # 표적은 있으나 계정/토큰 미지정 → static-only(AC-7). note에 '계정' 사유.
+        out = audit.run_pathupload_dynamic(
+            "http://localhost:7171", {}, "/download?filePath=", None, "file", None, False, True)
+        self.assertEqual(out["confidence"], "static-only")
+        self.assertIn("계정", out["note"])
+
+    def test_no_target_no_creds_target_first(self):
+        # 표적·계정 둘 다 없음 → '표적 우선' 판정으로 '표적 미지정' 사유가 나와야 한다(AC-6).
+        out = audit.run_pathupload_dynamic(
+            "http://localhost:7171", {}, None, None, "file", None, False, True)
+        self.assertEqual(out["confidence"], "static-only")
+        self.assertIn("표적 미지정", out["note"])  # 계정 아닌 표적 사유 우선
+
+    def test_upload_only_no_destructive_skipped(self):
+        # AC-8/BR-3: upload 표적만 + --allow-destructive 미지정 → subprocess 미호출, static-only.
+        with patch.object(audit.subprocess, "run") as mock_run:
+            out = audit.run_pathupload_dynamic(
+                "http://localhost:7171", {"token_a": "t"}, None, "/api/upload",
+                "file", None, False, True)
+        mock_run.assert_not_called()  # 파괴적 게이트로 발사 자체를 안 함(방어심층)
+        self.assertEqual(out["confidence"], "static-only")
+
+    def test_upload_gated_cmd_excludes_flag(self):
+        # AC-8: 경로조작+업로드 표적이나 --allow-destructive 미지정이면 cmd에서 업로드 인자를
+        # 배제하고 경로조작만 발사한다(자식 게이트와 독립 이중방어).
+        class _Proc:
+            stdout = ('{"findings":[{"kind":"path-traversal","vulnerable":false,'
+                      '"status":200}]}')
+            stderr = ""
+            returncode = 0
+        with patch.object(audit.subprocess, "run", return_value=_Proc()) as mock_run:
+            audit.run_pathupload_dynamic(
+                "http://127.0.0.1:1", {"token_a": "t"}, "/download?filePath=",
+                "/api/upload", "file", None, False, True)  # allow_destructive=False
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("--traversal-target", cmd)
+        self.assertNotIn("--upload-target", cmd)
+        self.assertNotIn("--allow-destructive", cmd)
+
+    def test_dynamic_fires(self):
+        # AC-5: 표적+계정 → attack_pathupload를 subprocess로 호출해 confidence=dynamic 반환.
+        class _Proc:
+            stdout = ('{"findings":[{"kind":"path-traversal","vulnerable":true,'
+                      '"status":200,"findings":[{"variant":"plain_d3","leaked":true}]}]}')
+            stderr = ""
+            returncode = 0
+        with patch.object(audit.subprocess, "run", return_value=_Proc()) as mock_run:
+            out = audit.run_pathupload_dynamic(
+                "http://127.0.0.1:1", {"token_a": "t"}, "/download?filePath=",
+                None, "file", None, False, True)
+        self.assertEqual(out["confidence"], "dynamic")
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("--traversal-target", cmd)
+
+    def test_scope_blocked(self):
+        # AC-9: scope_guard 차단(error=scope_blocked, rc=1)은 rc게이트로 뭉개지 말고
+        # 최상단에서 blocked=="scope_guard"로 표기해야 한다. mock 재현.
+        class _Proc:
+            stdout = '{"error":"scope_blocked","detail":"운영 차단"}'
+            stderr = ""
+            returncode = 1
+        with patch.object(audit.subprocess, "run", return_value=_Proc()):
+            out = audit.run_pathupload_dynamic(
+                "http://127.0.0.1:1", {"token_a": "t"}, "/download?filePath=",
+                None, "file", None, False, True)
+        self.assertEqual(out.get("blocked"), "scope_guard")
+        self.assertEqual(out.get("detail"), "운영 차단")
+
+    def test_login_failed_distinguished(self):
+        # AC-9: 표적+계정 제공 → 발사하나 127.0.0.1:1 로그인 접속 거부 → login-failed로 종료.
+        # '취약점 미발견(static-only)'과 구분된다.
+        out = audit.run_pathupload_dynamic(
+            "http://127.0.0.1:1", {"user_a_id": "x", "user_a_pw": "y"},
+            "/download?filePath=", None, "file", None, False, True)
+        self.assertEqual(out["confidence"], "login-failed")
+
+    def test_rc_gate_error_not_static_only(self):
+        # AC-9: 계정+표적으로 발사했으나 자식이 stdout 빈 채 rc=1로 비정상 종료하면
+        # static-only로 오분류 말고 error로 정직 표기(P0 조용한 실패 금지). mock 재현.
+        class _Proc:
+            stdout, stderr, returncode = "", "", 1
+        with patch.object(audit.subprocess, "run", return_value=_Proc()):
+            out = audit.run_pathupload_dynamic(
+                "http://127.0.0.1:1", {"token_a": "t"}, "/download?filePath=",
+                None, "file", None, False, True)
+        self.assertIn("error", out)
+        self.assertNotEqual(out.get("confidence"), "static-only")
+        self.assertEqual(out.get("returncode"), 1)
+
+    def test_missing_script_skipped(self):
+        # _PATHUP_SCRIPT 부재 재현 → 발사 전 조기반환으로 "skipped" 표기
+        with patch.object(audit.os.path, "exists", return_value=False):
+            out = audit.run_pathupload_dynamic(
+                "http://127.0.0.1:1", {"token_a": "t"}, "/download?filePath=",
+                None, "file", None, False, True)
+        self.assertIn("skipped", out)
+
+    def test_upload_destructive_cmd_includes_flag(self):
+        # BR-3 이중 게이트 positive: 업로드 표적+계정+--allow-destructive면 자식 cmd에
+        # --upload-target과 --allow-destructive가 '모두' 실려 실제 발사된다(게이트 개방 방향;
+        # test_upload_gated_cmd_excludes_flag의 대칭 검증).
+        class _Proc:
+            stdout = ('{"findings":[{"kind":"file-upload","vulnerable":true,'
+                      '"status":200,"accepted":true}]}')
+            stderr = ""
+            returncode = 0
+        with patch.object(audit.subprocess, "run", return_value=_Proc()) as mock_run:
+            audit.run_pathupload_dynamic(
+                "http://127.0.0.1:1", {"token_a": "t"}, None,
+                "/api/files", "file", None, True, True)  # allow_destructive=True
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("--upload-target", cmd)
+        self.assertIn("--allow-destructive", cmd)
+
+
+class TestPathuploadRender(unittest.TestCase):
+    """AC-10~12 + MUST-ADDRESS 3건 — render_pathupload가 미도달≠방어, leftover accepted
+    게이팅, 미지정 표적 '미검사' 명시를 지켜 '방어' 오표기를 내지 않는다(design-critic).
+    """
+
+    def _dynamic(self, findings, targets=None, upload_gated=False):
+        return {"confidence": "dynamic", "result": {"findings": findings},
+                "targets": targets if targets is not None else {"traversal": True, "upload": True},
+                "upload_gated": upload_gated}
+
+    def test_render_traversal_vulnerable(self):
+        # AC-10: 시그니처 검출 → 🔴 취약
+        text = "\n".join(audit.render_pathupload(
+            self._dynamic([{"kind": "path-traversal", "vulnerable": True, "status": 200}])))
+        self.assertIn("🔴", text)
+        self.assertIn("path-traversal", text)
+
+    def test_render_traversal_404_unreached_not_defended(self):
+        # MUST#1: status=404·미취약은 '방어'가 아니라 '미확정/미도달'이어야 한다.
+        # 엔드포인트 오지정으로 전량 404가 와도 '방어'로 뭉개지 않는다(QE-1).
+        text = "\n".join(audit.render_pathupload(
+            self._dynamic([{"kind": "path-traversal", "vulnerable": False, "status": 404}])))
+        self.assertIn("미확정", text)
+        self.assertNotIn("방어", text)
+
+    def test_render_traversal_200_defended(self):
+        # MUST#1: status=200·미취약은 진짜 방어(정상 응답·시그니처 없음).
+        text = "\n".join(audit.render_pathupload(
+            self._dynamic([{"kind": "path-traversal", "vulnerable": False, "status": 200}])))
+        self.assertIn("방어", text)
+        self.assertNotIn("🔴", text)
+
+    def test_render_upload_high_retrievable(self):
+        # AC-11: 회수 성공 → 웹루트 저장 가중(High)
+        text = "\n".join(audit.render_pathupload(self._dynamic(
+            [{"kind": "file-upload", "vulnerable": True, "accepted": True,
+              "retrievable": True, "leftover": "gxmarker_x.jsp", "status": 200}])))
+        self.assertIn("🔴", text)
+        self.assertIn("High", text)
+
+    def test_render_upload_medium_accepted(self):
+        # AC-11: 2xx 수용·회수 실패 → 위험확장자 수용(Medium)
+        text = "\n".join(audit.render_pathupload(self._dynamic(
+            [{"kind": "file-upload", "vulnerable": True, "accepted": True,
+              "retrievable": False, "leftover": "gxmarker_x.jsp", "status": 200}])))
+        self.assertIn("Medium", text)
+        self.assertNotIn("High", text)
+
+    def test_leftover_notice_only_when_accepted(self):
+        # AC-12: accepted된 업로드 leftover → '정리 필요' 안내 노출
+        text = "\n".join(audit.render_pathupload(self._dynamic(
+            [{"kind": "file-upload", "vulnerable": True, "accepted": True,
+              "retrievable": False, "leftover": "gxmarker_x.jsp", "status": 200}])))
+        self.assertIn("정리 필요", text)
+        self.assertIn("gxmarker_x.jsp", text)
+
+    def test_no_leftover_notice_when_rejected(self):
+        # MUST#2: accepted=False인데 leftover 필드가 남아있어도(거부) 정리 안내는 노출 안 함.
+        text = "\n".join(audit.render_pathupload(self._dynamic(
+            [{"kind": "file-upload", "vulnerable": False, "accepted": False,
+              "retrievable": False, "leftover": "gxmarker_x.jsp", "status": 403}])))
+        self.assertNotIn("정리 필요", text)
+
+    def test_render_upload_only_marks_traversal_unchecked(self):
+        # MUST#3: --upload-target만 지정(targets traversal=False) → 경로조작은 '미검사'로
+        # 명시돼 '검사됨·방어' 오추론을 차단한다. 경로조작 finding·방어 표기는 없어야 한다.
+        text = "\n".join(audit.render_pathupload(self._dynamic(
+            [{"kind": "file-upload", "vulnerable": False, "accepted": False,
+              "retrievable": False, "leftover": "gxmarker_x.jsp", "status": 403}],
+            targets={"traversal": False, "upload": True})))
+        self.assertIn("[경로조작] 표적 미지정", text)
+        self.assertNotIn("[path-traversal]", text)  # 경로조작은 발사조차 안 됨(방어 아님)
+
+    def test_render_upload_gated_marks_not_fired(self):
+        # MUST#3 변형: 경로조작만 발사되고 업로드는 게이트로 미발사 → '미발사(--allow-destructive 필요)'
+        text = "\n".join(audit.render_pathupload(self._dynamic(
+            [{"kind": "path-traversal", "vulnerable": False, "status": 200}],
+            targets={"traversal": True, "upload": True}, upload_gated=True)))
+        self.assertIn("미발사(--allow-destructive 필요)", text)
+
+    def test_render_scope_blocked(self):
+        # AC-9 렌더: scope 차단은 최상단에서 '차단됨(scope_guard)'
+        text = "\n".join(audit.render_pathupload(
+            {"blocked": "scope_guard", "detail": "운영 차단"}))
+        self.assertIn("차단됨", text)
+        self.assertIn("운영 차단", text)
+
+    def test_render_login_failed(self):
+        text = "\n".join(audit.render_pathupload(
+            {"confidence": "login-failed", "detail": "conn refused"}))
+        self.assertIn("로그인 실패", text)
+
+    def test_render_error_upload_hint_when_upload_target(self):
+        # QE-2: rc게이트 error + 업로드 표적 지정 → 마커 잔존 확인 권장 부기
+        text = "\n".join(audit.render_pathupload(
+            {"error": "경로조작/업로드 발사 중 오류(rc=1)", "returncode": 1,
+             "upload_target": True}))
+        self.assertIn("오류", text)
+        self.assertIn("마커", text)
+
+    def test_render_non_dict_no_crash(self):
+        # res가 dict 아님(None/list)이어도 예외 없이 list 반환(비-dict 방어)
+        self.assertIsInstance(audit.render_pathupload(None), list)
+        self.assertIsInstance(audit.render_pathupload([1, 2]), list)
+
+
 class TestSsrfFindingLine(unittest.TestCase):
     """코드리뷰 #12 회귀 — SSRF 콜백 미수신을 '방어'로 오표기하지 않는다.
 

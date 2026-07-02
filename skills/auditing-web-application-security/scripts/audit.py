@@ -104,6 +104,9 @@ _AUTH_SCRIPT = os.path.join(
 _SSRF_SCRIPT = os.path.join(
     ROOT, "skills", "exploiting-ssrf-and-open-redirect", "scripts", "attack_ssrf.py")
 
+_PATHUP_SCRIPT = os.path.join(
+    ROOT, "skills", "exploiting-path-traversal-upload", "scripts", "attack_pathupload.py")
+
 
 def _extract_access_candidates(static_result):
     """정적 통합 결과(by_skill)에서 접근통제(BFLA/IDOR) 후보만 추출."""
@@ -329,6 +332,98 @@ def run_ssrf_dynamic(target, creds, redirect_target, ssrf_target, authorized):
         return {"error": str(e)[:120]}
 
 
+def run_pathupload_dynamic(target, creds, traversal_target, upload_target, upload_field,
+                           retrieve_base, allow_destructive, authorized):
+    """정적 추정된 경로조작·파일업로드를 attack_pathupload로 동적 확정한다(FR-1~5).
+
+    표적(--traversal-target/--upload-target)과 계정/토큰이 '모두' 있어야 발사한다(PRD1).
+    표적 우선 판정: 표적이 없으면 계정 유무와 무관하게 '표적 미지정' static-only(AC-6).
+    업로드는 파괴적(서버에 파일 기록)이라 audit 레이어에서도 --allow-destructive 없이는
+    발사하지 않는다(이중 게이트/BR-3). audit이 --allow-destructive 없이는 --upload-target
+    자체를 자식에 넘기지 않아 attack_pathupload 게이트와 독립적으로 이중 방어한다.
+    run_ssrf_dynamic 미러링(판정 순서·비-dict 방어·반환 형식 동형).
+    """
+    if not os.path.exists(_PATHUP_SCRIPT):
+        return {"skipped": "attack_pathupload.py 없음"}
+    has_target = bool(traversal_target or upload_target)
+    has_creds = creds.get("token_a") or (creds.get("user_a_id") and creds.get("user_a_pw"))
+    # 표적 우선(PRD1): 표적이 없으면 계정 유무와 무관하게 '표적 미지정'으로 표기한다.
+    if not has_target:
+        return {
+            "confidence": "static-only",
+            "note": ("경로조작/파일업로드 표적 미지정(--traversal-target/--upload-target) → "
+                     "정적 추정. 주입점 지정 시 동적 확정."),
+        }
+    if not has_creds:
+        return {
+            "confidence": "static-only",
+            "note": ("표적은 있으나 계정/토큰 미지정 → 정적 추정. "
+                     "--user-a-id/pw 또는 --token-a 제공 시 발사."),
+        }
+    # 이중 파괴적 게이트: 업로드 표적만 있고 --allow-destructive가 없으면(경로조작 미지정)
+    # 발사할 게 없으므로 subprocess를 아예 호출하지 않고 static-only로 표기한다(방어심층/AC-8).
+    fireable = bool(traversal_target) or (bool(upload_target) and allow_destructive)
+    if not fireable:
+        return {
+            "confidence": "static-only",
+            "note": ("업로드 표적은 있으나 --allow-destructive 미지정 → 미발사(정적 추정). "
+                     "서버에 파일을 기록하는 파괴적 검사라 명시적 옵트인이 필요하다."),
+        }
+    cmd = [sys.executable, _PATHUP_SCRIPT, target, "--json"]
+    if traversal_target:
+        cmd += ["--traversal-target", traversal_target]
+    # audit이 --allow-destructive 없이는 --upload-target 자체를 넘기지 않는다(자식 게이트와 독립 이중방어).
+    if upload_target and allow_destructive:
+        cmd += ["--upload-target", upload_target, "--allow-destructive"]
+    if upload_field:
+        cmd += ["--upload-field", upload_field]
+    if retrieve_base:
+        cmd += ["--retrieve-base", retrieve_base]
+    if creds.get("token_a"):
+        cmd += ["--token-a", creds["token_a"]]
+    elif creds.get("user_a_id") and creds.get("user_a_pw"):
+        cmd += ["--user-a-id", creds["user_a_id"], "--user-a-pw", creds["user_a_pw"]]
+    if authorized:
+        cmd += ["--authorized"]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=600)
+        try:
+            data = json.loads(out.stdout or "{}")
+            if not isinstance(data, dict):  # dict 아닌 JSON(list 등) 반환 시 data.get() 크래시 방어
+                data = {"raw": str(data)[:200], "blocked_or_no_json": True}
+        except json.JSONDecodeError:
+            data = {"raw": (out.stdout or out.stderr or "").strip()[:200],
+                    "blocked_or_no_json": True}
+        # 판정 우선순위(ssrf 계약 동일): scope_blocked > login_failed/rc2 > rc게이트 > fired없음
+        if data.get("error") == "scope_blocked":
+            return {"blocked": "scope_guard", "detail": data.get("detail"), "returncode": 1}
+        # 로그인 실패는 자식이 {"error":"login_failed"} JSON 출력 후 exit(2)하므로 error 키로 판정.
+        # (argparse 인자오류 등 stdout 없는 rc=2는 아래 rc 게이트가 error로 정직 표기 — 코드리뷰 #11)
+        if data.get("error") == "login_failed":
+            return {"confidence": "login-failed", "detail": data.get("detail"),
+                    "returncode": 2}
+        # rc 게이트: 발사(계정 있음) 후 stdout이 빈 채(data=={}) 비정상 종료(rc≠0)면 자식이
+        # uncaught 예외로 죽은 것(경로조작 미도달 크래시 포함) — static-only로 오분류 말고
+        # error로 정직 표기한다. 업로드 표적이 있었으면 회수 중 크래시로 leftover가 소실됐을 수
+        # 있어, 렌더가 '마커 잔존 확인' 안내를 붙이도록 upload_target 플래그를 함께 싣는다(QE-2).
+        if data == {} and out.returncode not in (0, None):
+            return {"error": f"경로조작/업로드 발사 중 오류(rc={out.returncode}) — 자식 프로세스 비정상 종료",
+                    "returncode": out.returncode, "upload_target": bool(upload_target)}
+        findings = data.get("findings", [])
+        fired = [f for f in findings if isinstance(f, dict) and not f.get("skipped")]
+        if not fired:
+            return {"confidence": "static-only", "result": data,
+                    "note": "발사 시도했으나 모든 표적이 skip — 정적 추정"}
+        # targets: 렌더의 종류별 표적 미지정 표기용. upload_gated: 업로드 표적은 있으나
+        # --allow-destructive 미지정으로 audit이 업로드 인자를 배제한 채 경로조작만 발사한 경우.
+        return {"confidence": "dynamic", "result": data, "returncode": out.returncode,
+                "upload_gated": bool(upload_target and not allow_destructive),
+                "targets": {"traversal": bool(traversal_target), "upload": bool(upload_target)}}
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return {"error": str(e)[:120], "upload_target": bool(upload_target)}
+
+
 def _ssrf_unreached(f):
     """SSRF/오픈리다이렉트 finding이 '프로브 미도달'(전변형 오류/status None)인지 판정한다.
 
@@ -400,6 +495,87 @@ def render_dynamic_line(d):
     return f"{prefix}{'🔴 악용 확정' if res.get('exploited') else '— 미확인'}"
 
 
+def render_pathupload(res):
+    """경로조작/파일업로드 동적 결과를 사람이 읽는 요약 줄들(list[str])로 렌더링한다(FR-6/7).
+
+    SSRF 렌더 블록 미러링 — 판정 우선순위: scope_blocked > login-failed > static-only >
+    dynamic > error > skipped. render_dynamic_line 재사용 안 함(그건 sql/xss param 전용).
+    MUST 해소 3건: ①경로조작 미검출은 2xx면 방어, 그 외(non-2xx/None)는 '방어' 아닌
+    '미확정'(미도달/차단) — 404 전량을 방어로 뭉개지 않는다, ②leftover 정리 안내는
+    accepted(2xx 수용)된 업로드만, ③미지정 표적은 '미검사'로 명시(targets 소비).
+    res 비-dict 방어.
+    """
+    if not isinstance(res, dict):
+        res = {}
+    lines = []
+    if res.get("blocked") == "scope_guard":  # rc로 안 뭉개지게 최상단
+        lines.append(f"[경로조작/파일업로드] 차단됨(scope_guard) — {res.get('detail') or 'scope 범위 밖'}")
+    elif res.get("confidence") == "login-failed":  # '미발견'과 구분
+        lines.append(f"[경로조작/파일업로드] 동적 미확정(로그인 실패) — {res.get('detail')}")
+    elif res.get("confidence") == "static-only":  # 과대표기 방지(표적/계정/게이트 사유)
+        lines.append(f"[경로조작/파일업로드] 정적 추정(동적 미확정) — {res.get('note')}")
+    elif res.get("confidence") == "dynamic":
+        lines.append("[경로조작/파일업로드] 동적 확정 발사")
+        result = res.get("result", {})
+        if not isinstance(result, dict):  # 자식이 dict 아닌 JSON 반환 시 방어
+            result = {}
+        findings = result.get("findings", [])
+        for f in findings:
+            # 우선순위 skipped > error > kind별 판정. error finding(발사 예외 격리)을
+            # '방어'로 오표기하면 크래시 은폐가 되므로 정직 표기한다.
+            if not isinstance(f, dict):
+                continue
+            kind = f.get("kind")
+            if f.get("skipped"):
+                lines.append(f"    - [{kind}] 미발사({f.get('skipped')})")
+            elif f.get("error"):
+                lines.append(f"    - [{kind}] ⚠ 오류: {f.get('error')}")
+            elif kind == "path-traversal":
+                # MUST#1: 미검출을 무조건 '방어'로 뭉개지 않는다. 정상 2xx 응답에서 시그니처가
+                # 없어야 진짜 방어이고, non-2xx(404/403/5xx)·status None은 미도달/차단 '미확정'.
+                status = f.get("status")
+                if f.get("vulnerable"):
+                    lines.append(f"    - [{kind}] 🔴 취약(파일내용 시그니처 검출)")
+                elif isinstance(status, int) and 200 <= status < 300:
+                    lines.append(f"    - [{kind}] 방어(정상 응답·시그니처 없음)")
+                else:
+                    lines.append(f"    - [{kind}] ⚠ 미확정 — 미도달/차단 추정(엔드포인트·주입점 확인)")
+            elif kind == "file-upload":
+                if f.get("retrievable"):
+                    lines.append(f"    - [{kind}] 🔴 취약(High·웹루트 저장 확인)")
+                elif f.get("vulnerable"):
+                    lines.append(f"    - [{kind}] 🔴 취약(Medium·위험확장자 2xx 수용)")
+                else:
+                    lines.append(f"    - [{kind}] 방어(거부)")
+            else:
+                lines.append(f"    - [{kind}] {'🔴 취약' if f.get('vulnerable') else '방어'}")
+        # MUST#3: 종류별 표적 미지정 개별 표기(targets 소비, SSRF 동형). 미지정 표적을
+        # '검사됨·방어'로 오추론하지 않게 '미검사'로 명시한다.
+        tg = res.get("targets", {})
+        if not tg.get("traversal"):
+            lines.append("    - [경로조작] 표적 미지정(--traversal-target) — 미검사")
+        if res.get("upload_gated"):  # 업로드 표적은 있으나 게이트로 미발사
+            lines.append("    - [파일업로드] 미발사(--allow-destructive 필요)")
+        elif not tg.get("upload"):
+            lines.append("    - [파일업로드] 표적 미지정(--upload-target) — 미검사")
+        # MUST#2: leftover 정리 안내는 accepted(2xx 수용)된 업로드만 — 거부(403·미기록)엔
+        # 서버에 파일이 남지 않으므로 안내하지 않는다(FR-7/QE-2).
+        leftover = [f.get("leftover") for f in findings
+                    if isinstance(f, dict) and f.get("leftover") and f.get("accepted")]
+        if leftover:
+            lines.append(f"    [정리 필요] 업로드된 마커 파일: {', '.join(leftover)} — "
+                         f"서버에서 수동 삭제 권장")
+    elif res.get("error"):
+        line = f"[경로조작/파일업로드] 오류: {res['error']}"
+        # 업로드 표적이 지정됐던 경우 회수 중 크래시로 leftover가 소실됐을 수 있어 잔존 확인 권장(QE-2)
+        if res.get("upload_target"):
+            line += " — 업로드가 수용됐을 수 있으니 서버에 마커 파일 잔존 여부 확인 권장"
+        lines.append(line)
+    elif res.get("skipped"):
+        lines.append(f"[경로조작/파일업로드] {res['skipped']}")
+    return lines
+
+
 def main():
     ap = argparse.ArgumentParser(description="SQIsoft 보안 통합 점검 오케스트레이터")
     ap.add_argument("source", help="검사 대상 소스 디렉토리")
@@ -418,6 +594,15 @@ def main():
                                               "지정+계정(--user-a-id/pw 또는 --token-a) 시 동적 확정")
     ap.add_argument("--ssrf-target", help="SSRF 주입점(예: /api/fetch?url=). "
                                           "동적 확정에는 계정(--user-a-id/pw 또는 --token-a)도 필요")
+    # 경로조작/파일업로드 동적 연계용 주입점 (계정/토큰 플래그 재사용)
+    ap.add_argument("--traversal-target", help="경로조작 주입점(예: /download?filePath=). "
+                                              "지정+계정(--user-a-id/pw 또는 --token-a) 시 동적 확정")
+    ap.add_argument("--upload-target", help="파일업로드 엔드포인트(예: /api/v1/files). "
+                                           "발사에는 계정과 --allow-destructive(파괴적 옵트인)도 필요")
+    ap.add_argument("--upload-field", default="file", help="업로드 multipart 필드명(기본 file)")
+    ap.add_argument("--retrieve-base", help="업로드 파일 회수 URL 베이스(웹루트 저장 가중 판정용)")
+    ap.add_argument("--allow-destructive", action="store_true",
+                    help="파일업로드(서버에 파일 기록) 허용 — 명시해야 업로드 검사 발사")
     ap.add_argument("--json", action="store_true", help="통합 JSON 출력")
     args = ap.parse_args()
 
@@ -462,11 +647,18 @@ def main():
             {"user_a_id": args.user_a_id, "user_a_pw": args.user_a_pw,
              "token_a": args.token_a},
             args.redirect_target, args.ssrf_target, args.authorized)
+        report["phases"]["pathupload_dynamic"] = run_pathupload_dynamic(
+            args.target,
+            {"user_a_id": args.user_a_id, "user_a_pw": args.user_a_pw,
+             "token_a": args.token_a},
+            args.traversal_target, args.upload_target, args.upload_field,
+            args.retrieve_base, args.allow_destructive, args.authorized)
     else:
         report["phases"]["dynamic"] = {"skipped": "대상 URL(--target) 미지정 — 정적만 수행"}
         report["phases"]["access_dynamic"] = {"skipped": "대상 URL 미지정"}
         report["phases"]["auth_dynamic"] = {"skipped": "대상 URL 미지정"}
         report["phases"]["ssrf_dynamic"] = {"skipped": "대상 URL 미지정"}
+        report["phases"]["pathupload_dynamic"] = {"skipped": "대상 URL 미지정"}
 
     report["next"] = ("Claude Code에서 auditing-web-application-security 스킬로 "
                       "오탐 제거·컨텍스트 검증·4요소 통합 리포트를 완성하세요.")
@@ -587,6 +779,10 @@ def main():
         print(f"[SSRF/오픈리다이렉트] 오류: {ss['error']}")
     elif ss.get("skipped"):
         print(f"[SSRF/오픈리다이렉트] {ss['skipped']}")
+
+    pu = report["phases"].get("pathupload_dynamic", {})
+    for line in render_pathupload(pu):
+        print(line)
 
     print(f"\n※ {report['next']}")
 
