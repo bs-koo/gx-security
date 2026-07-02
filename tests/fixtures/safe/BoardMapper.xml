@@ -1,0 +1,1 @@
+<mapper><select id="find">SELECT * FROM board WHERE title = #{title}</select></mapper>
