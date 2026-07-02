@@ -12,7 +12,7 @@ tags: [csrf, cwe-352, owasp-a01, spring-security, jsp, servlet, sqisoft]
 cwe: [CWE-352]
 owasp: [A01:2021-Broken-Access-Control]
 stacks: [spring-modern, jsp-legacy]
-version: "0.1"
+version: "0.2.1"
 author: sqisoft-security
 license: Proprietary
 ---

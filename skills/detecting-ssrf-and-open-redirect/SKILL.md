@@ -26,7 +26,7 @@ tags:
 cwe: [CWE-918, CWE-601]
 owasp: [A10:2021-Server-Side-Request-Forgery, A01:2021-Broken-Access-Control]
 stacks: [spring-modern, jsp-legacy]
-version: "0.1"
+version: "0.2.1"
 author: sqisoft-security
 license: Proprietary
 ---

@@ -167,6 +167,14 @@ def main():
         "note": "1차 후보입니다. 최종 판정/4요소 리포트는 Claude Code에서 각 스킬 2단계(AI 검증) 수행.",
     }
 
+    # [폴백 경고] grep-fallback 엔진이 하나라도 쓰였으면 recall 저하 경고를 실어 보낸다
+    if "grep-fallback" in engines:
+        summary["warnings"] = [
+            "grep-fallback 엔진 사용 — recall(탐지율)이 낮습니다",
+            "semgrep 설치 권장: pip install semgrep",
+            "후보 0건이 안전을 의미하지 않습니다",
+        ]
+
     if args.json:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return
@@ -183,6 +191,10 @@ def main():
         print(f"{r['label']:<24}{str(cnt):>8}{note}")
     print(f"{'─'*56}")
     print(f"{'합계':<24}{summary['total_candidates']:>8}")
+    if summary.get("warnings"):
+        print(f"\n[!] 폴백 경고")
+        for w in summary["warnings"]:
+            print(f"  - {w}")
     print(f"\n※ 1차 후보(오탐 포함)입니다. 정확한 취약/오탐 판정과")
     print(f"  4요소 리포트는 Claude Code에서 각 스킬을 호출해 완성하세요.")
 

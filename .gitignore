@@ -16,3 +16,6 @@ reports/
 # 동적 공격 증거(스크린샷·캡처) 기본 제외
 evidence/
 *.har
+
+# gx-dev 산출물
+.dev/
