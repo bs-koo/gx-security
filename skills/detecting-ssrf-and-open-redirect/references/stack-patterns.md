@@ -150,3 +150,6 @@ return "redirect:/accessDenied.do";
 2. **서버 설정에서만 읽히는 URL** — `@Value("${api.url}")` 고정 URL → 오탐 (단, 설정값 외부 조작 불가 전제)
 3. **URL 도메인이 고정**이고 사용자 입력은 query param value만 → 낮은 위험, "의도된 예외(확인 권장)"으로 기록
 4. **내부 서비스간 통신** — 브라우저 경유 없이 MSA 내부 호출만 하는 경우 → 위험 모델 다름, 별도 기록
+
+---
+> 심각도 판정은 공통 루브릭을 따른다: [`docs/severity-rubric.md`](../../../docs/severity-rubric.md)

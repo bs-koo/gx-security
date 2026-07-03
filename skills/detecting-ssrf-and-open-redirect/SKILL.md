@@ -47,7 +47,7 @@ license: Proprietary
 ## Prerequisites
 
 - 대상 프로젝트 소스에 대한 읽기 접근
-- (선택, 권장) `semgrep` 설치 — 없으면 `scripts/scan_ssrf.py`가 정규식 폴백으로 동작
+- (선택, 권장) `semgrep` 설치 — 없으면 `scripts/scan_ssrf.py`가 grep-fallback으로 동작
 - 스택 판별 참고: `references/stack-patterns.md`
 
 ## Workflow
@@ -65,7 +65,7 @@ license: Proprietary
 python skills/detecting-ssrf-and-open-redirect/scripts/scan_ssrf.py <TARGET> --json
 ```
 
-스크립트는 스택을 감지해 Semgrep 룰 또는 정규식 폴백으로 후보를 잡는다.
+스크립트는 스택을 감지해 Semgrep 룰 또는 grep-fallback으로 후보를 잡는다.
 출력은 `{file, line, rule_id, stack, snippet}` 목록.
 
 ### 2단계 — AI 컨텍스트 검증 (핵심)
@@ -187,6 +187,6 @@ python skills/detecting-ssrf-and-open-redirect/scripts/scan_ssrf.py <TARGET> --j
 
 ## Tools & Systems
 
-- Semgrep (룰: `rules/ssrf-redirect.yml`) · 정규식 폴백
+- Semgrep (룰: `rules/ssrf-redirect.yml`) · grep-fallback
 - 참고: `references/stack-patterns.md`
 - 관련 도구: OWASP ZAP (능동 스캔으로 SSRF/오픈리다이렉트 검증)

@@ -57,11 +57,11 @@ license: Proprietary
 | `spring-modern` | `build.gradle.kts`/`settings.gradle*`, `@Controller`/`@RestController`, `@RequestParam` | `rules/path-traversal.yml`의 spring 룰 |
 | `jsp-legacy` | `**/WEB-INF/web.xml`, `*.jsp`, `@RequestMapping("/download.do")` 형태 | `rules/path-traversal.yml`의 jsp 룰 + AI 패턴 검사 |
 
+### 1단계 — 스캐너 1차 탐지 (재현 가능)
+
 ```bash
 python skills/detecting-path-traversal/scripts/scan_pathtraversal.py "$TARGET" --json
 ```
-
-### 1단계 — 스캐너 1차 탐지
 
 스크립트가 스택을 감지해 Semgrep 룰 또는 grep 폴백으로 후보를 수집한다.
 출력: `{file, line, rule_id, stack, snippet}` 목록.
