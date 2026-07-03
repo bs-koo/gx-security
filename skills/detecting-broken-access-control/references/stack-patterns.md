@@ -242,3 +242,6 @@ if (loginVo == null || !(AuthUtil.isAdmin(loginVo) || AuthUtil.isEnt(loginVo))) 
 5. **화이트리스트 기반 공개 경로** — `JWT_AUTH_WHITELIST` / `AuthInterceptor.WHITELIST` 의도적 공개
 
 오탐으로 판정하면 리포트의 "오탐 제외"에 사유 한 줄로 남긴다.
+
+---
+> 심각도 판정은 공통 루브릭을 따른다: [`docs/severity-rubric.md`](../../../docs/severity-rubric.md)

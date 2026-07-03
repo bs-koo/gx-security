@@ -186,3 +186,6 @@ element.innerHTML = DOMPurify.sanitize(rawHtml);  // 허용 (Sanitizer 존재)
 7. **JSON API 응답** — `Content-Type: application/json`이고 JSONP 없으면 브라우저가 HTML 파싱 안 함 → XSS 위험 낮음(단 `//`로 시작하는 JSON 하이재킹 별도 확인).
 
 오탐으로 판정하면 리포트의 "오탐 제외"에 사유 한 줄로 남긴다.
+
+---
+> 심각도 판정은 공통 루브릭을 따른다: [`docs/severity-rubric.md`](../../../docs/severity-rubric.md)

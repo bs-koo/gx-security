@@ -58,7 +58,8 @@ def detect_stacks(target):
 
 # ── semgrep 경로 ─────────────────────────────────────────────────
 def run_semgrep(target):
-    cmd = ["semgrep", "--config", RULES, "--json", "--quiet", target]
+    cmd = ["semgrep", "--config", RULES, "--json", "--quiet",
+           "--exclude", ".dev", "--exclude", ".omc", "--exclude", ".humanize", target]
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
                              encoding="utf-8", errors="replace")

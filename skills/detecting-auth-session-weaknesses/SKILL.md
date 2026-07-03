@@ -20,6 +20,7 @@ tags:
   - cwe-384
   - cwe-916
   - cwe-614
+  - cwe-798
   - owasp-a07
   - spring-security
   - jsp

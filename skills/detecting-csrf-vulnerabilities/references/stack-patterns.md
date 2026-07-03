@@ -114,3 +114,6 @@ protected void doPost(HttpServletRequest req, HttpServletResponse resp) {
 3. **내부 서버간 통신 엔드포인트**(브라우저 비경유, mTLS 등) → 위험 모델 다름
 
 오탐으로 판정하면 리포트의 "오탐 제외"에 사유 한 줄로 남긴다.
+
+---
+> 심각도 판정은 공통 루브릭을 따른다: [`docs/severity-rubric.md`](../../../docs/severity-rubric.md)
