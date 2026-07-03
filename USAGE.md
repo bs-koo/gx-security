@@ -138,6 +138,30 @@ python skills/auditing-web-application-security/scripts/audit.py "D:\SQ\sqisoft-
 - **leftover 정리(수동 삭제)**: `--allow-destructive`로 업로드가 실제 **수용(accepted)**되면 대상 서버에 마커 `.jsp` 파일이 남는다. audit 요약에 `[정리 필요] 업로드된 마커 파일: … — 서버에서 수동 삭제 권장` 안내가 노출되므로, 점검 후 해당 파일을 직접 삭제한다. 자동 삭제(`--cleanup-target`)는 제공하지 않는다(거부돼 파일이 남지 않은 경우엔 안내하지 않는다).
 - **한계**: `audit.py` 경유 실행은 **sef-2026 로그인 프리셋**(`/api/v1/auth/login`, 토큰 경로 `data.accessToken`)을 전제로 한다. 비표준 로그인 API나 세밀한 옵션은 `skills/exploiting-path-traversal-upload/scripts/attack_pathupload.py`를 단독 실행한다.
 
+### 레거시(form 로그인·세션쿠키) 동적 점검
+
+form-urlencoded 로그인 + 세션쿠키(JSESSIONID)를 쓰는 **JSP 레거시** 앱은 `--auth-mode cookie`로 동적 침투 4종(접근통제·인증세션·SSRF·경로조작/업로드)을 돌린다. 4개 attack 스크립트(및 `audit.py`) 공통 옵션이다.
+
+```bash
+python skills/exploiting-broken-access-control/scripts/attack_access.py "http://localhost:8080" \
+    --scan reports/scan_access.json \
+    --auth-mode cookie \
+    --user-a-id <id> --user-a-pw <pw> \
+    --user-b-id <id2> --user-b-pw <pw2> --resource-id <A소유리소스> \
+    --id-field j_username --pw-field j_password \
+    --success-path /main --json
+```
+
+- `--auth-mode bearer|cookie` — 기본 `bearer`(기존 JWT/Bearer 동작 100% 동일). `cookie`면 form 로그인 + 세션쿠키 인증.
+- `--id-field`/`--pw-field` — 로그인 폼 필드명(기본 `username`/`password`). 예: 서블릿 `j_username`/`j_password`.
+- `--success-path` — 로그인 성공 시 이동 경로. **cookie 모드 필수.**
+- **판정**: form 로그인은 응답 리다이렉트 `Location`이 `--success-path`와 일치하면 성공, 아니면 실패(자격/형식 원인 구분). 세션쿠키를 `requests.Session` jar에 저장해 이후 발사에 자동 포함.
+
+**한계(중요):**
+- **`--success-path` 정확 지정 필수** — Spring 기본 formLogin은 성공 시 저장된 원요청 URL이나 `/`로 이동하고, SPA형 백엔드는 `200`+쿠키로 성공을 알린다. cookie 모드는 실제 성공 후 목적지를 정확히 지정해야 판정이 맞다.
+- **인증·세션·JWT**: cookie 모드엔 Bearer 토큰이 없어 JWT 변조·토큰 재사용 검사는 **미발사(skipped, N/A)**. 쿠키 속성(Secure/HttpOnly/SameSite)·보호 엔드포인트 도달성만 세션으로 발사.
+- CSRF 히든필드 자동추출·세션 만료 자동 재로그인·다단계 로그인(OTP/SSO)은 미지원(실패로 보고).
+
 ---
 
 ## 5. 명령 레퍼런스
