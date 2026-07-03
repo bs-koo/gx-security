@@ -43,7 +43,8 @@ def detect_stacks(target):
     for root, dirs, files in os.walk(target):
         # 잡음 디렉토리 제외
         dirs[:] = [d for d in dirs if d not in
-                   (".git", "node_modules", "build", "target", "dist", ".gradle")]
+                   (".git", "node_modules", "build", "target", "dist", ".gradle",
+                    ".dev", ".omc", ".humanize", ".idea", ".vscode")]
         base = os.path.basename(root)
         for f in files:
             if f in ("build.gradle.kts", "settings.gradle.kts", "build.gradle"):
@@ -68,7 +69,8 @@ def detect_stacks(target):
 def run_semgrep(target):
     cmd = ["semgrep", "--config", RULES, "--json", "--quiet", target]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+                             encoding="utf-8", errors="replace")
     except (subprocess.TimeoutExpired, OSError) as e:
         return None, f"semgrep 실행 실패: {e}"
     if out.returncode not in (0, 1):  # 1 = findings 있음
@@ -98,8 +100,8 @@ def run_semgrep(target):
 #     SQL 컨텍스트가 아니므로 XML 파일에서만 잡는다
 #   - 폴백은 단순 정규식이라 오탐 가능성 높음 → AI 검증 필수
 
-# MyBatis XML ${} — #{} 가 아닌 것만 (느슨한 판별)
-_MYBATIS_DOLLAR = re.compile(r'\$\{(?!#)[^}]+\}')
+# MyBatis XML ${}: 파라미터 문자열 보간(취약). #{}(바인딩)는 $로 시작 안 해 자연히 제외됨.
+_MYBATIS_DOLLAR = re.compile(r'\$\{[^}]+\}')
 
 # JDBC Statement + SQL 문자열 연결 의심
 # [^;]+ — 문장 종결자(;) 전까지: 다중 인자·공백 포함 문자열 리터럴("SELECT " + x)·
@@ -162,7 +164,8 @@ def run_fallback(target):
     findings = []
     for root, dirs, files in os.walk(target):
         dirs[:] = [d for d in dirs if d not in
-                   (".git", "node_modules", "build", "target", "dist", ".gradle")]
+                   (".git", "node_modules", "build", "target", "dist", ".gradle",
+                    ".dev", ".omc", ".humanize", ".idea", ".vscode")]
         for f in files:
             ext = os.path.splitext(f)[1].lower()
             path = os.path.join(root, f)

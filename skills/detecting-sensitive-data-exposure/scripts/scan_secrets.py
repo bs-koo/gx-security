@@ -38,7 +38,8 @@ RULES = os.path.join(os.path.dirname(HERE), "rules", "sensitive-data.yml")
 
 # 스캔 제외 디렉토리
 SKIP_DIRS = {".git", "node_modules", "build", "target", "dist", ".gradle",
-             "__pycache__", ".svn", ".idea", ".vscode"}
+             "__pycache__", ".svn", ".idea", ".vscode",
+             ".dev", ".omc", ".humanize"}
 
 
 # ── 스택 감지 ────────────────────────────────────────────────────
