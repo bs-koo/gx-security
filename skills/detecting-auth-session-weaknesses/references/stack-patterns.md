@@ -293,3 +293,6 @@ concurrentExpiredUrl="/accessExpired.do"
 3. **jjwt 0.12.x `parseSignedClaims()`** — alg=none 자동 거부. `parseClaimsJwt()` 와 혼동 금지
 4. **`hash="sha-256"` 설정** — plaintext보다 나으나 BCrypt보다 취약. Medium으로 보고
 5. **개발 환경 전용 설정** — `dev`/`local` 프로필 한정 설정은 운영 적용 여부 별도 확인
+
+---
+> 심각도 판정은 공통 루브릭을 따른다: [`docs/severity-rubric.md`](../../../docs/severity-rubric.md)

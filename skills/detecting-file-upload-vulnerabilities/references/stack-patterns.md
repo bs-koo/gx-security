@@ -150,3 +150,6 @@ mf.transferTo(new File(tempVo.getFilePath()));
    - 예: `Gseed_Web_Renew`의 `UploadFileSaveHandler.init()` — `FileValidator.validate()` → UUID 파일명 → `/home/was/gseed_files/` (외부 경로)
 2. **파일 저장이 없는 읽기 처리** (엑셀 파싱 후 DB 저장, 이미지 리사이즈 후 스트림 반환 등) → 오탐
 3. **내부 배치/관리자 도구만 사용** (인터넷 노출 없음, 강한 접근 통제) → 위험 모델 다름, 낮음으로 기록
+
+---
+> 심각도 판정은 공통 루브릭을 따른다: [`docs/severity-rubric.md`](../../../docs/severity-rubric.md)
