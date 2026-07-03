@@ -114,20 +114,85 @@ def login_response(base_url, login_path, cred, *, body_template=None,
     return {"token": token, "set_cookie": set_cookie}
 
 
-def request(method, url, *, token=None, json_body=None, files=None, data=None, timeout=10):
+def new_session():
+    """requests.Session 팩토리(테스트 seam 단일화)."""
+    import requests
+    return requests.Session()
+
+
+def _location_matches(location, success_path):
+    """응답 Location의 path가 success_path(전체 URL 또는 경로)와 일치하는지(후행슬래시 정규화)."""
+    if not location or not success_path:
+        return False
+    from urllib.parse import urlparse
+    loc = urlparse(location).path.rstrip("/") or "/"
+    want = urlparse(success_path).path.rstrip("/") or "/"
+    return loc == want
+
+
+def _safe_location(location):
+    """실패 메시지용 Location 정제 — 세션ID/토큰이 담길 수 있는 쿼리·매트릭스 파라미터를
+    제거하고 path만 노출한다(레거시 URL rewriting의 ;jsessionid= 등이 로그·리포트에 유출되는 것 방지)."""
+    if not location:
+        return ""
+    from urllib.parse import urlparse
+    path = urlparse(location).path        # 쿼리·프래그먼트 제거
+    return path.split(";", 1)[0] or "/"    # ;jsessionid 등 매트릭스 파라미터 제거
+
+
+def form_login(base_url, login_path, cred, *, id_field=None, pw_field=None,
+               success_path=None, timeout=10, session=None):
+    """form-urlencoded 로그인 + 세션쿠키 확보. 성공 시 {"session","set_cookie","status","location"}.
+
+    실패 시 원인(자격/형식/필드)을 구분한 RuntimeError. success_path는 필수(Location 일치 판정).
+    session 미전달 시 new_session()으로 생성. data=(form)로 form-urlencoded 전송.
+    """
+    if not success_path:   # 발사 전 검증 — 대상 서버에 불필요한 로그인 요청을 보내지 않는다
+        raise RuntimeError("form 로그인은 --success-path 필요")
+    session = session or new_session()
+    url = base_url.rstrip("/") + login_path
+    form = {(id_field or "username"): cred["id"], (pw_field or "password"): cred["pw"]}
+    try:
+        resp = session.post(url, data=form, timeout=timeout, allow_redirects=False)
+    except Exception as e:
+        raise RuntimeError(f"로그인 요청 실패: {url} — {type(e).__name__}")
+    status = resp.status_code
+    location = resp.headers.get("Location", "")
+    if 300 <= status < 400:
+        if _location_matches(location, success_path):
+            return {"session": session,
+                    "set_cookie": resp.headers.get("Set-Cookie", ""),
+                    "status": status, "location": location}
+        if location:
+            raise RuntimeError(
+                f"로그인 실패(자격 추정): 성공 경로 '{success_path}' 아닌 "
+                f"'{_safe_location(location)}'로 이동")
+        raise RuntimeError("로그인 실패(형식): 3xx이나 Location 없음")
+    if 200 <= status < 300:
+        raise RuntimeError(
+            f"로그인 실패(형식/필드): 리다이렉트 없이 {status} — "
+            f"폼 재표시 추정, 필드명 확인")
+    raise RuntimeError(f"로그인 실패(형식): 요청 거부 HTTP {status}")
+
+
+def request(method, url, *, token=None, json_body=None, files=None, data=None,
+            timeout=10, session=None):
     """인증 헤더를 자동 부착해 요청. {status, body, headers, elapsed} 반환.
 
     headers는 응답 헤더 dict(Location 등 오픈리다이렉트 판정에 필수).
     files/data는 multipart 업로드(파일업로드 동적 검사)용 — 기본 None이면 requests가
     바디에 싣지 않으므로 기존 5종 호출과 바이트 동일(하위호환).
+    session 유무로 발사 경로 결정: 있으면 세션 쿠키 jar 자동 사용, 없으면 requests
+    (미전달 시 requests.request 적중 → 기존 5종 호출 바이트 불변).
     attack_auth/access는 status/body만 참조하므로 하위호환(키 추가만).
     """
     import requests
     headers = {}
     if token:
         headers["Authorization"] = "Bearer " + token
+    caller = session if session is not None else requests
     t0 = time.monotonic()
-    resp = requests.request(
+    resp = caller.request(
         method.upper(), url, headers=headers, json=json_body,
         files=files, data=data,
         timeout=timeout, allow_redirects=False)
