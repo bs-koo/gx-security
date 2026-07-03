@@ -9,6 +9,16 @@ SQIsoft 보안 플러그인 통합 스캐너 런처.
    최종 취약/오탐 판정과 4요소 리포트는 Claude Code에서 각 스킬의
    2단계(AI 컨텍스트 검증)를 수행해야 완성된다.
 
+── 후보(candidate) 공통 스키마 계약 — 9종 scan_*.py 균일 (v0.3.x~) ──
+  · 필수 필드: file(str), line(int), rule_id(str), stack(str),
+    confidence(str), snippet(str)  ← semgrep·grep-fallback 두 경로 모두 방출.
+  · 선택 필드: severity(str) — "있으면 쓰고 없으면 무시". 현재 scan_secrets의
+    debug-output-residue(디버그 잔류)만 "info"로 방출한다.
+  · 각 스캐너 상위 JSON: {target, detected_stacks, engine, candidate_count,
+    rule_summary(dict), candidates(list), note}. 자식 실패 시 error 필드 추가.
+  AI 2단계 검증기·집계기는 필수 필드를 무조건 존재한다고 가정해도 되며,
+  선택 필드(severity 등)는 .get()으로 접근해 부재를 허용해야 한다.
+
 사용:
   python scan_all.py <target_path>            # 요약 표
   python scan_all.py <target_path> --json     # 통합 JSON

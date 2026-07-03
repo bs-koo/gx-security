@@ -78,6 +78,7 @@ def run_semgrep(target):
             "line": r.get("start", {}).get("line"),
             "rule_id": r.get("check_id", "").split(".")[-1],
             "stack": r.get("extra", {}).get("metadata", {}).get("stack", "?"),
+            "confidence": r.get("extra", {}).get("metadata", {}).get("confidence") or "needs-context",
             "snippet": (r.get("extra", {}).get("lines", "") or "").strip()[:200],
         })
     return findings, None
@@ -145,7 +146,8 @@ def run_fallback(target):
                             if rx.search(line):
                                 findings.append({
                                     "file": path, "line": i, "rule_id": rule_id,
-                                    "stack": stack, "snippet": line.strip()[:200],
+                                    "stack": stack, "confidence": "needs-context",
+                                    "snippet": line.strip()[:200],
                                 })
             except OSError:
                 continue
@@ -184,6 +186,7 @@ def check_admin_controllers_without_preauthorize(target):
                             "line": i,
                             "rule_id": "spring-admin-controller-no-preauthorize",
                             "stack": "spring-modern",
+                            "confidence": "needs-context",
                             "snippet": line.strip()[:200],
                         })
                         break
@@ -191,6 +194,14 @@ def check_admin_controllers_without_preauthorize(target):
 
 
 # ── main ─────────────────────────────────────────────────────────
+def summarize(findings):
+    """rule_id 별 집계를 반환."""
+    counts = {}
+    for f in findings:
+        counts[f["rule_id"]] = counts.get(f["rule_id"], 0) + 1
+    return counts
+
+
 def main():
     ap = argparse.ArgumentParser(description="SQIsoft 접근통제 1차 스캐너")
     ap.add_argument("target", help="검사 대상 디렉토리")
@@ -227,6 +238,7 @@ def main():
         "detected_stacks": stacks,
         "engine": engine,
         "candidate_count": len(findings),
+        "rule_summary": summarize(findings),
         "candidates": findings,
         "note": (
             "후보 목록입니다. 최종 취약/오탐 판정은 SKILL.md 2단계 AI 검증으로 수행하세요. "
