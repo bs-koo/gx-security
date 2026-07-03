@@ -63,9 +63,14 @@ class TestBuildTargets(unittest.TestCase):
 
 
 class TestBfla(unittest.TestCase):
+    # run_bfla는 무토큰 대조 오라클 도입 후 anon→user 순으로 request를 2회 호출한다.
     @patch("tools.dyn_session.request")
     def test_bfla_2xx_is_vulnerable(self, mock_req):
-        mock_req.return_value = {"status": 200, "body": "[]", "elapsed": 0.01}
+        # anon(무토큰) 거부(401) + 일반 토큰 2xx → 역할우회 취약.
+        mock_req.side_effect = [
+            {"status": 401, "body": "", "elapsed": 0.01},    # anon
+            {"status": 200, "body": "[]", "elapsed": 0.01},  # user
+        ]
         t = {"kind": "bfla", "method": "GET", "path": "/adm/v1/users"}
         out = attack_access.run_bfla("http://localhost:7171", t, "NORMALTOK")
         self.assertTrue(out["vulnerable"])
@@ -73,10 +78,40 @@ class TestBfla(unittest.TestCase):
 
     @patch("tools.dyn_session.request")
     def test_bfla_403_is_defended(self, mock_req):
-        mock_req.return_value = {"status": 403, "body": "", "elapsed": 0.01}
+        # anon 거부(401) + 일반 토큰도 거부(403) → 방어(정상).
+        mock_req.side_effect = [
+            {"status": 401, "body": "", "elapsed": 0.01},    # anon
+            {"status": 403, "body": "", "elapsed": 0.01},    # user
+        ]
         t = {"kind": "bfla", "method": "GET", "path": "/adm/v1/users"}
         out = attack_access.run_bfla("http://localhost:7171", t, "NORMALTOK")
         self.assertFalse(out["vulnerable"])
+
+    @patch("tools.dyn_session.request")
+    def test_bfla_anon_denied_user_2xx_is_vulnerable(self, mock_req):
+        # anon 401 + user 200 → 역할우회 취약(note 없음, anon_status 노출).
+        mock_req.side_effect = [
+            {"status": 401, "body": "", "elapsed": 0.01},    # anon
+            {"status": 200, "body": "[]", "elapsed": 0.01},  # user
+        ]
+        t = {"kind": "bfla", "method": "GET", "path": "/adm/v1/users"}
+        out = attack_access.run_bfla("http://localhost:7171", t, "NORMALTOK")
+        self.assertTrue(out["vulnerable"])
+        self.assertEqual(out["anon_status"], 401)
+        self.assertIsNone(out["note"])
+
+    @patch("tools.dyn_session.request")
+    def test_bfla_public_endpoint_anon_2xx_not_vulnerable(self, mock_req):
+        # anon도 2xx(공개 엔드포인트) → 역할우회 아님(거짓양성 방지), note 세팅.
+        mock_req.side_effect = [
+            {"status": 200, "body": "[]", "elapsed": 0.01},  # anon
+            {"status": 200, "body": "[]", "elapsed": 0.01},  # user
+        ]
+        t = {"kind": "bfla", "method": "GET", "path": "/public/v1/notices"}
+        out = attack_access.run_bfla("http://localhost:7171", t, "NORMALTOK")
+        self.assertFalse(out["vulnerable"])
+        self.assertEqual(out["anon_status"], 200)
+        self.assertIsNotNone(out["note"])
 
 
 class TestIdor(unittest.TestCase):
