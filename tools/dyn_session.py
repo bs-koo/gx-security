@@ -190,6 +190,11 @@ def request(method, url, *, token=None, json_body=None, files=None, data=None,
     headers = {}
     if token:
         headers["Authorization"] = "Bearer " + token
+    # token 과 session 은 직교(독립) 전송 수단이다:
+    #   · token  → Authorization: Bearer 헤더(스테이트리스 인증)
+    #   · session → requests.Session 쿠키 jar(세션쿠키 인증) + 발사 caller
+    # 현재 attack 배선은 둘을 상호배타로 쓴다(bearer=token만 / cookie=session만).
+    # 둘 다 전달돼도 오류는 아니며(헤더+쿠키 동시 부착) 단지 현재 미사용 조합일 뿐이다.
     caller = session if session is not None else requests
     t0 = time.monotonic()
     resp = caller.request(
