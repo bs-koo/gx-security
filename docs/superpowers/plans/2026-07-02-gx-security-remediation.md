@@ -525,8 +525,8 @@ git commit -am "feat: XSS 핵심 반사 경로 java AST 룰 보강(generic-regex
 
 **문제:** `rule_summary`(D 패밀리만)·`confidence`(ssrf만)·`severity`(secrets만)로 후보 스키마가 4 authoring family로 갈림 → 상위 집계기/AI 파서가 균일 스키마 가정 시 취약.
 
-- [ ] **Step 1: 공통 최소 스키마 확정**(`{file,line,rule_id,stack,snippet, confidence?, severity?}`), 선택 필드는 있으면-쓰고-없으면-무시 계약을 `scan_all.py`·오케스트레이터에 명문화
-- [ ] **Step 2: 9종이 `confidence`를 일관 방출하도록 보강(없던 스캐너에 기본값)** → **Step 3: 스키마 계약 테스트 추가** → **Step 4: 커밋**
+- [x] **Step 1: 공통 최소 스키마 확정**(`{file,line,rule_id,stack,confidence,snippet}` 필수 + `severity?` 선택), 선택 필드는 있으면-쓰고-없으면-무시 계약을 `scan_all.py` docstring에 명문화. (confidence 는 optional→required 로 승격 — 9종 균일 방출)
+- [x] **Step 2: 9종이 `confidence`를 일관 방출**(semgrep=룰 메타 우선, 폴백=`needs-context` 기본; ssrf likely-fp 로직 유지) + `rule_summary` 미보유 7종에 추가 → **Step 3: `tests/test_scanner_schema.py` 계약 테스트 3건 추가** → **Step 4: 커밋**
 
 ### Task 5.2: subprocess 인코딩 고정(7종) + XSS Playwright 문서 정정
 

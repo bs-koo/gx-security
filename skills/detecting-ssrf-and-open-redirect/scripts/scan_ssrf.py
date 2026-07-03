@@ -86,6 +86,7 @@ def run_semgrep(target):
             "line": r.get("start", {}).get("line"),
             "rule_id": r.get("check_id", "").split(".")[-1],
             "stack": r.get("extra", {}).get("metadata", {}).get("stack", "?"),
+            "confidence": r.get("extra", {}).get("metadata", {}).get("confidence") or "needs-context",
             "snippet": (r.get("extra", {}).get("lines", "") or "").strip()[:200],
         })
     return findings, None

@@ -86,6 +86,7 @@ def run_semgrep(target):
             "line": r.get("start", {}).get("line"),
             "rule_id": r.get("check_id", "").split(".")[-1],
             "stack": r.get("extra", {}).get("metadata", {}).get("stack", "?"),
+            "confidence": r.get("extra", {}).get("metadata", {}).get("confidence") or "needs-context",
             "snippet": (r.get("extra", {}).get("lines", "") or "").strip()[:200],
         })
     return findings, None
@@ -253,6 +254,7 @@ def run_fallback(target):
                             "line": i,
                             "rule_id": rule_id,
                             "stack": stack,
+                            "confidence": "needs-context",
                             "snippet": snippet,
                         }
                         # [M-3] 디버그 잔류 출력은 info 등급 표기
@@ -278,6 +280,7 @@ def run_fallback(target):
                         "line": line_no,
                         "rule_id": rule_id,
                         "stack": stack,
+                        "confidence": "needs-context",
                         "snippet": snippet,
                     })
 
