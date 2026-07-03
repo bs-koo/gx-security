@@ -228,3 +228,6 @@ public List<BoardVo> list(String sortCol) {
 6. **`ORDER BY` 허용 목록 검증 후 `${}`** — 서비스 레이어에서 허용 목록 검증이 확인된 경우 조건부 허용. 단 검증 코드를 직접 확인해야 함.
 
 오탐으로 판정하면 리포트의 "오탐 제외"에 사유 한 줄로 남긴다.
+
+---
+> 심각도 판정은 공통 루브릭을 따른다: [`docs/severity-rubric.md`](../../../docs/severity-rubric.md)

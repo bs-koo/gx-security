@@ -184,3 +184,6 @@ if (!canonical.startsWith(allowedBase + File.separator)) {
    - 예: `sqisoft-sef-2026`의 `BoardFileServiceImpl.downloadBoardFile()` (라인 121~124)
 2. **화이트리스트 ID 매핑** — 파일 경로를 외부에 노출하지 않고 DB ID만 사용 → 오탐
 3. **경로가 100% 서버 내부 상수** — 사용자 입력이 경로에 개입하지 않음 → 오탐
+
+---
+> 심각도 판정은 공통 루브릭을 따른다: [`docs/severity-rubric.md`](../../../docs/severity-rubric.md)

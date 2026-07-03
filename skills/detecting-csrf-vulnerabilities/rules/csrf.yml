@@ -85,3 +85,18 @@ rules:
           metavariable: $REQ
           patterns:
             - pattern-not-regex: "^$"
+
+  - id: sqisoft-jsp-post-form-needs-csrf-review
+    languages: [generic]
+    severity: INFO
+    paths:
+      include: ["*.jsp", "*.html"]
+    message: >-
+      POST form입니다. CSRF 토큰(hidden 필드) 부재는 음성 패턴이라 룰로 단정할 수 없습니다 —
+      2단계 AI 검증에서 토큰/전역 CSRF 필터(CSRFGuard 등) 유무를 전수 확인하세요.
+    metadata:
+      cwe: "CWE-352"
+      owasp: "A01:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    pattern-regex: '<form\b[^>]*\bmethod\s*=\s*["'']?post'

@@ -56,11 +56,11 @@ license: Proprietary
 | `spring-modern` | `build.gradle.kts`/`settings.gradle*`, `@RestController`/`@Controller`, `MultipartFile` | `rules/file-upload.yml`의 spring 룰 |
 | `jsp-legacy` | `**/WEB-INF/web.xml`, `*.jsp`, `FileItem`/`DiskFileItemFactory`, `MultipartHttpServletRequest` | `rules/file-upload.yml`의 jsp 룰 + AI 패턴 검사 |
 
+### 1단계 — 스캐너 1차 탐지 (재현 가능)
+
 ```bash
 python skills/detecting-file-upload-vulnerabilities/scripts/scan_upload.py "$TARGET" --json
 ```
-
-### 1단계 — 스캐너 1차 탐지
 
 스크립트가 스택을 감지해 Semgrep 룰 또는 grep 폴백으로 후보를 수집한다.
 출력: `{file, line, rule_id, stack, snippet}` 목록.

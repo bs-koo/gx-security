@@ -38,7 +38,8 @@ RULES = os.path.join(os.path.dirname(HERE), "rules", "sensitive-data.yml")
 
 # 스캔 제외 디렉토리
 SKIP_DIRS = {".git", "node_modules", "build", "target", "dist", ".gradle",
-             "__pycache__", ".svn", ".idea", ".vscode"}
+             "__pycache__", ".svn", ".idea", ".vscode",
+             ".dev", ".omc", ".humanize"}
 
 
 # ── 스택 감지 ────────────────────────────────────────────────────
@@ -65,7 +66,8 @@ def detect_stacks(target):
 
 # ── semgrep 경로 ─────────────────────────────────────────────────
 def run_semgrep(target):
-    cmd = ["semgrep", "--config", RULES, "--json", "--quiet", target]
+    cmd = ["semgrep", "--config", RULES, "--json", "--quiet",
+           "--exclude", ".dev", "--exclude", ".omc", "--exclude", ".humanize", target]
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
                              encoding="utf-8", errors="replace")

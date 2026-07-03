@@ -35,7 +35,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 RULES = os.path.join(os.path.dirname(HERE), "rules", "file-upload.yml")
 
 # 탐지 대상에서 제외할 디렉토리 (빌드 산출물, 의존성 등)
-SKIP_DIRS = {".git", "node_modules", "build", "target", "dist", ".gradle", ".idea", "__pycache__"}
+SKIP_DIRS = {".git", "node_modules", "build", "target", "dist", ".gradle", ".idea", "__pycache__",
+             ".dev", ".omc", ".humanize", ".vscode"}
 
 
 # ── 스택 감지 신호 ────────────────────────────────────────────────
@@ -60,9 +61,11 @@ def detect_stacks(target):
 
 # ── semgrep 경로 ─────────────────────────────────────────────────
 def run_semgrep(target):
-    cmd = ["semgrep", "--config", RULES, "--json", "--quiet", target]
+    cmd = ["semgrep", "--config", RULES, "--json", "--quiet",
+           "--exclude", ".dev", "--exclude", ".omc", "--exclude", ".humanize", target]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+                             encoding="utf-8", errors="replace")
     except (subprocess.TimeoutExpired, OSError) as e:
         return None, f"semgrep 실행 실패: {e}"
     if out.returncode not in (0, 1):  # 1 = findings 있음
