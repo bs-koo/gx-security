@@ -1,12 +1,17 @@
 """후보 객체 스키마 균일화 계약 테스트 (계획 Task 5.1).
 
-9종 scan_*.py 를 grep-fallback 경로에서 트리거 픽스처에 돌려,
-  · 상위 JSON 이 균일 필드(rule_summary 포함)를 방출하는지
+9종 scan_*.py 가
   · 모든 후보(candidate)가 필수 6키(file/line/rule_id/stack/confidence/snippet)를 갖는지
+  · 상위 JSON 이 균일 필드(rule_summary 포함)를 방출하는지
   · 선택 필드 severity 는 있으면 str 인지
 를 검증한다. 각 스캐너가 ≥1 후보를 내도록 픽스처를 맞춰 "0건이면 무조건 통과"
 (vacuous pass)로 계약이 무력화되는 것을 막는다.
+
+엔진 독립성: `run_fallback()` 을 직접 호출하는 결정적 경로(semgrep 유무 무관)로
+per-candidate 계약을 검증한다. subprocess(main) 경로는 상위 스키마(rule_summary 등)를
+검증하되, ≥1 단언은 grep-fallback 엔진일 때만 강제한다(semgrep 설치 개발환경 거짓실패 방지).
 """
+import importlib.util
 import json
 import os
 import subprocess
@@ -29,8 +34,18 @@ SCANNERS = {
     "secrets": "skills/detecting-sensitive-data-exposure/scripts/scan_secrets.py",
 }
 
-# 각 스캐너가 grep-fallback 에서 ≥1 후보를 반환하도록 만드는 최소 트리거 픽스처.
-# (semgrep 미설치 환경 = CI 기준. 폴백 정규식은 스택 감지와 무관하게 확장자로 적용됨)
+
+def _load(key, rel):
+    spec = importlib.util.spec_from_file_location(
+        f"schema_{key}", os.path.join(_ROOT, *rel.split("/")))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_MODS = {key: _load(key, rel) for key, rel in SCANNERS.items()}
+
+# 각 스캐너의 run_fallback 정규식이 grep-fallback 에서 ≥1 후보를 잡도록 만드는 최소 트리거.
 _FIXTURES = {
     # sqli: JDBC Statement 문자열 연결
     "Sql.java": (
@@ -70,7 +85,7 @@ _FIXTURES = {
     ),
     # access: /adm 매핑 (spring-admin-no-preauthorize)
     "AdmCtrl.java": (
-        '@RequestMapping("/adm/users")\n'
+        '@RequestMapping("/adm/v1/users")\n'
         "public class AdmCtrl {\n"
         "  public String get(@PathVariable Long userId){ return \"x\"; }\n"
         "}\n"
@@ -92,6 +107,17 @@ REQUIRED_TOP_KEYS = {
 }
 
 
+def _assert_candidate_uniform(tc, key, candidates):
+    for c in candidates:
+        missing = REQUIRED_CANDIDATE_KEYS - set(c)
+        tc.assertFalse(
+            missing, f"{key}: 후보 필드 누락 {missing} (rule_id={c.get('rule_id')})")
+        tc.assertIsInstance(c["confidence"], str, f"{key}: confidence 는 str 여야 함")
+        tc.assertTrue(c["confidence"].strip(), f"{key}: confidence 가 빈 문자열")
+        if "severity" in c:
+            tc.assertIsInstance(c["severity"], str, f"{key}: severity 는 str 여야 함")
+
+
 class TestScannerSchemaUniformity(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -100,7 +126,8 @@ class TestScannerSchemaUniformity(unittest.TestCase):
         for name, content in _FIXTURES.items():
             with open(os.path.join(target, name), "w", encoding="utf-8") as fh:
                 fh.write(content)
-        # 각 스캐너를 한 번씩만 실행해 결과를 캐시(subprocess 중복 방지)
+        cls.target = target
+        # main() 산출 상위 스키마 검증용 — 각 스캐너 --json 을 한 번씩 캐시
         cls.results = {}
         for key, rel in SCANNERS.items():
             proc = subprocess.run(
@@ -115,8 +142,18 @@ class TestScannerSchemaUniformity(unittest.TestCase):
     def tearDownClass(cls):
         cls._tmp.cleanup()
 
+    def test_fallback_candidates_uniform(self):
+        """엔진 독립: run_fallback() 을 직접 호출해 ≥1 후보 + 필수 6키를 결정적으로 검증."""
+        for key, mod in _MODS.items():
+            with self.subTest(scanner=key):
+                findings = mod.run_fallback(self.target)
+                self.assertGreaterEqual(
+                    len(findings), 1,
+                    f"{key}: run_fallback 픽스처가 후보를 트리거하지 못함 — 계약 검증 무효화")
+                _assert_candidate_uniform(self, key, findings)
+
     def test_top_level_schema_uniform(self):
-        """9종 상위 JSON 이 rule_summary 포함 균일 필드를 방출한다."""
+        """9종 상위 JSON(main 산출)이 rule_summary 포함 균일 필드를 방출한다."""
         for key in SCANNERS:
             with self.subTest(scanner=key):
                 r = self.results[key]
@@ -126,31 +163,17 @@ class TestScannerSchemaUniformity(unittest.TestCase):
                                       f"{key}: rule_summary 는 dict 여야 함")
                 self.assertIsInstance(r["candidates"], list)
 
-    def test_every_candidate_has_required_keys(self):
-        """모든 후보가 필수 6키(confidence 포함)를 갖고, confidence 는 비지 않은 str."""
+    def test_main_candidates_uniform(self):
+        """main 산출 후보(추가 분석 포함)도 균일. ≥1 단언은 grep-fallback 엔진일 때만 강제
+        (semgrep 설치 개발환경에서 폴백용 픽스처 미매치로 인한 거짓실패 방지)."""
         for key in SCANNERS:
             with self.subTest(scanner=key):
                 r = self.results[key]
-                self.assertGreaterEqual(
-                    r["candidate_count"], 1,
-                    f"{key}: 픽스처가 후보를 트리거하지 못함 — 계약 검증이 무효화됨")
-                for c in r["candidates"]:
-                    missing = REQUIRED_CANDIDATE_KEYS - set(c)
-                    self.assertFalse(
-                        missing, f"{key}: 후보 필드 누락 {missing} (rule_id={c.get('rule_id')})")
-                    self.assertIsInstance(c["confidence"], str,
-                                          f"{key}: confidence 는 str 여야 함")
-                    self.assertTrue(c["confidence"].strip(),
-                                    f"{key}: confidence 가 빈 문자열")
-
-    def test_optional_severity_is_str_when_present(self):
-        """선택 필드 severity 는 있으면 str (있으면-쓰고-없으면-무시 계약)."""
-        for key in SCANNERS:
-            with self.subTest(scanner=key):
-                for c in self.results[key]["candidates"]:
-                    if "severity" in c:
-                        self.assertIsInstance(c["severity"], str,
-                                              f"{key}: severity 는 str 여야 함")
+                if r.get("engine") == "grep-fallback":
+                    self.assertGreaterEqual(
+                        r["candidate_count"], 1,
+                        f"{key}: 픽스처가 후보를 트리거하지 못함 — 계약 검증 무효화")
+                _assert_candidate_uniform(self, key, r["candidates"])
 
 
 if __name__ == "__main__":
