@@ -101,5 +101,33 @@ class TestFallbackFixtureIntegration(unittest.TestCase):
         self.assertIn("spring-jpa-createquery-string-concat", rule_ids)
 
 
+class TestMybatisDollarDedup(unittest.TestCase):
+    """코드리뷰 M6 — MyBatis ${}가 단일 룰로 통합돼 이중 카운트되지 않고,
+    스택은 경로(mybatis/=spring-modern, 그 외=jsp-legacy)로 판별된다."""
+
+    _XML = "<mapper><select id=\"f\">SELECT * FROM t WHERE x = '${p}'</select></mapper>\n"
+
+    def _scan_under(self, subdir):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = os.path.join(tmp, subdir)
+            os.makedirs(d)
+            with open(os.path.join(d, "BoardMapper.xml"), "w", encoding="utf-8") as fh:
+                fh.write(self._XML)
+            return scan_sqli.run_fallback(tmp)
+
+    def test_single_candidate_not_double(self):
+        # 과거 jsp/spring 두 룰이 같은 ${} 라인을 2건으로 이중 카운트 → 이제 정확히 1건
+        myb = [c for c in self._scan_under("mybatis")
+               if c["rule_id"] == "mybatis-xml-dollar-interpolation"]
+        self.assertEqual(len(myb), 1)
+        self.assertEqual(myb[0]["stack"], "spring-modern")
+
+    def test_stack_jsp_for_sqlmap_path(self):
+        myb = [c for c in self._scan_under("sqlmap")
+               if c["rule_id"] == "mybatis-xml-dollar-interpolation"]
+        self.assertEqual(len(myb), 1)
+        self.assertEqual(myb[0]["stack"], "jsp-legacy")
+
+
 if __name__ == "__main__":
     unittest.main()

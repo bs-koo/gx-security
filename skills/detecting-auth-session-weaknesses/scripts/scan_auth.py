@@ -96,9 +96,11 @@ FALLBACK_PATTERNS = [
          r'\s*"[A-Za-z0-9+/=_\-]{8,}"'
      )),
 
-    # spring-modern: 서명 없는 JWT 파싱 (구 jjwt API)
+    # spring-modern: 서명 검증 없는 JWT 파싱 (구 jjwt API)
+    # parseClaimsJws(서명키 설정 시 서명을 검증하는 안전 호출)는 제외 — 안전 호출을
+    # 취약으로 뒤집는 방향성 오탐 방지(코드리뷰 M1). 미검증은 parseClaimsJwt/parse(만 해당.
     ("spring-jwt-parse-no-verify", "spring-modern", (".java", ".kt"),
-     re.compile(r'\.parseClaimsJwt\s*\(|\.parseClaimsJws\s*\(|Jwts\.parser\(\)\.parse\s*\(')),
+     re.compile(r'\.parseClaimsJwt\s*\(|Jwts\.parser\(\)\.parse\s*\(')),
 
     # spring-modern: Cookie Secure 미설정 (setSecure 호출 없이 addCookie)
     ("spring-cookie-no-secure", "spring-modern", (".java", ".kt"),
