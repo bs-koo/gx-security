@@ -138,9 +138,9 @@ FALLBACK_PATTERNS = [
     ("spring-jpa-createquery-string-concat", "spring-modern", (".java", ".kt"),
      _JPA_CREATE_CONCAT),
 
-    # spring-modern — MyBatis XML ${} (mybatis mapper XML)
-    ("mybatis-xml-dollar-spring", "spring-modern", (".xml",),
-     _MYBATIS_DOLLAR),
+    # MyBatis XML ${}는 단일 룰(mybatis-xml-dollar-interpolation)로 통합한다.
+    # 과거 jsp/spring 두 룰이 동일 _MYBATIS_DOLLAR 정규식으로 같은 라인을 이중 카운트했다
+    # (코드리뷰 M6). 스택 라벨은 run_fallback에서 경로(mybatis/ vs 그 외)로 판별한다.
 ]
 
 # XML 파일을 MyBatis 맥락에서만 검사하기 위한 경로 필터
@@ -189,9 +189,14 @@ def run_fallback(target):
                             continue
                         for rule_id, stack, _exts, rx in rules:
                             if rx.search(line):
+                                eff_stack = stack
+                                # MyBatis ${}는 단일 룰이므로 스택을 경로로 판별(mybatis/=spring, 그 외=jsp)
+                                if rule_id == "mybatis-xml-dollar-interpolation":
+                                    norm = path.replace("\\", "/").lower()
+                                    eff_stack = "spring-modern" if "mybatis" in norm else "jsp-legacy"
                                 findings.append({
                                     "file": path, "line": i, "rule_id": rule_id,
-                                    "stack": stack, "confidence": "needs-context",
+                                    "stack": eff_stack, "confidence": "needs-context",
                                     "snippet": line.strip()[:200],
                                 })
             except OSError:

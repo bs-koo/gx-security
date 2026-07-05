@@ -131,9 +131,11 @@ def classify(target: str) -> tuple[str, str]:
                 return "needs-authorization", f"사설 IP(사내 운영 가능 — 기본 차단): {host}"
         return "needs-authorization", f"공인 IP: {host}"
 
-    # ③ 명시 허용 호스트(환경변수) — 정확매칭 또는 suffix(.example.com)
+    # ③ 명시 허용 호스트(환경변수) — 정확매칭은 단일 라벨(내부 호스트명)도 허용하되,
+    #    suffix 매칭은 도메인(점 포함, ≥2 라벨)만 허용한다. "com" 같은 과대 suffix가
+    #    evil.com 을 여는 풋건을 차단한다(코드리뷰 M8).
     for entry in _env_list("SECURITY_PLUGIN_ALLOW_HOSTS"):
-        if host == entry or host.endswith("." + entry):
+        if host == entry or ("." in entry and host.endswith("." + entry)):
             return "allow", f"허용 목록(SECURITY_PLUGIN_ALLOW_HOSTS): {host}"
 
     # ③ localhost 및 RFC 예약 TLD만 자동 허용

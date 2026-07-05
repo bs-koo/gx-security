@@ -116,13 +116,21 @@ def _extract_access_candidates(static_result):
     return []
 
 
-def _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path, login_path=None):
-    """cookie 모드 form 로그인 인자 + (지정 시) 커스텀 로그인 경로를 attack 자식 subprocess cmd에 덧붙인다.
+def _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path, login_path=None,
+                      body_template=None, token_path=None):
+    """cookie 모드 form 로그인 인자 + (지정 시) 커스텀 로그인 경로·바디·토큰경로를
+    attack 자식 subprocess cmd에 덧붙인다.
 
-    bearer(기본)·login_path 미지정이면 무동작이라 기존 cmd 계약(테스트 고정)이 불변이다.
+    bearer(기본)·미지정 옵션은 무동작이라 기존 cmd 계약(테스트 고정)이 불변이다.
+    login_path/body_template/token_path 는 sef-2026 프리셋을 벗어난 앱(비표준 로그인
+    경로·바디 `{id}/{pw}`·토큰 추출 경로)에 audit 경유 동적 점검을 적용하기 위한 패스스루다.
     """
     if login_path:                       # 커스텀 로그인 경로(JSP 레거시 등) — 양 모드 공통 전달
         cmd += ["--login-path", login_path]
+    if body_template:                    # 비-sef 로그인 바디(JSON, {id}/{pw} 치환) — bearer 로그인
+        cmd += ["--body-template", body_template]
+    if token_path:                       # 토큰 추출 경로 오버라이드(기본 data.accessToken)
+        cmd += ["--token-path", token_path]
     if auth_mode == "cookie":
         cmd += ["--auth-mode", "cookie"]
         if id_field:
@@ -135,7 +143,8 @@ def _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path, login_pa
 
 
 def run_access_dynamic(target, static_result, creds, authorized, *,
-                       auth_mode="bearer", id_field=None, pw_field=None, success_path=None, login_path=None):
+                       auth_mode="bearer", id_field=None, pw_field=None, success_path=None, login_path=None,
+                       body_template=None, token_path=None):
     """정적 access-control 후보를 attack_access로 동적 확정한다(개선 D).
 
     계정/토큰 미제공 시 발사하지 않고 'static-only'(정적 추정·동적 미확정)로 표기한다(개선 E).
@@ -174,7 +183,8 @@ def run_access_dynamic(target, static_result, creds, authorized, *,
             cmd += ["--user-b-id", creds["user_b_id"], "--user-b-pw", creds["user_b_pw"]]
         if authorized:
             cmd += ["--authorized"]
-        _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path, login_path)
+        _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path, login_path,
+                          body_template, token_path)
         out = subprocess.run(cmd, capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=600)
         try:
@@ -219,7 +229,8 @@ def run_access_dynamic(target, static_result, creds, authorized, *,
 
 
 def run_auth_dynamic(target, creds, probe, authorized, *,
-                     auth_mode="bearer", id_field=None, pw_field=None, success_path=None, login_path=None):
+                     auth_mode="bearer", id_field=None, pw_field=None, success_path=None, login_path=None,
+                     body_template=None, token_path=None):
     """정적 추정된 인증/세션/JWT를 attack_auth로 동적 확정한다(FR-2/3).
 
     계정/토큰 미제공 시 발사하지 않고 'static-only'(정적 추정·동적 미확정)로 표기한다(AC-2).
@@ -244,7 +255,8 @@ def run_auth_dynamic(target, creds, probe, authorized, *,
         cmd += ["--user-a-id", creds["user_a_id"], "--user-a-pw", creds["user_a_pw"]]
     if authorized:
         cmd += ["--authorized"]
-    _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path)
+    _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path, login_path,
+                      body_template, token_path)
     try:
         out = subprocess.run(cmd, capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=600)
@@ -284,7 +296,8 @@ def run_auth_dynamic(target, creds, probe, authorized, *,
 
 
 def run_ssrf_dynamic(target, creds, redirect_target, ssrf_target, authorized, *,
-                     auth_mode="bearer", id_field=None, pw_field=None, success_path=None, login_path=None):
+                     auth_mode="bearer", id_field=None, pw_field=None, success_path=None, login_path=None,
+                     body_template=None, token_path=None):
     """정적 추정된 SSRF/오픈리다이렉트를 attack_ssrf로 동적 확정한다(FR-2/3).
 
     표적(--redirect-target/--ssrf-target)과 계정/토큰이 '모두' 있어야 발사한다(PRD1).
@@ -320,7 +333,8 @@ def run_ssrf_dynamic(target, creds, redirect_target, ssrf_target, authorized, *,
         cmd += ["--user-a-id", creds["user_a_id"], "--user-a-pw", creds["user_a_pw"]]
     if authorized:
         cmd += ["--authorized"]
-    _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path)
+    _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path, login_path,
+                      body_template, token_path)
     try:
         out = subprocess.run(cmd, capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=600)
@@ -358,7 +372,8 @@ def run_ssrf_dynamic(target, creds, redirect_target, ssrf_target, authorized, *,
 
 def run_pathupload_dynamic(target, creds, traversal_target, upload_target, upload_field,
                            retrieve_base, allow_destructive, authorized, *,
-                           auth_mode="bearer", id_field=None, pw_field=None, success_path=None, login_path=None):
+                           auth_mode="bearer", id_field=None, pw_field=None, success_path=None, login_path=None,
+                       body_template=None, token_path=None):
     """정적 추정된 경로조작·파일업로드를 attack_pathupload로 동적 확정한다(FR-1~5).
 
     표적(--traversal-target/--upload-target)과 계정/토큰이 '모두' 있어야 발사한다(PRD1).
@@ -410,7 +425,8 @@ def run_pathupload_dynamic(target, creds, traversal_target, upload_target, uploa
         cmd += ["--user-a-id", creds["user_a_id"], "--user-a-pw", creds["user_a_pw"]]
     if authorized:
         cmd += ["--authorized"]
-    _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path)
+    _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path, login_path,
+                      body_template, token_path)
     try:
         out = subprocess.run(cmd, capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=600)
@@ -637,6 +653,9 @@ def main():
     ap.add_argument("--success-path", help="cookie 모드 로그인 성공 판정용 리다이렉트 경로")
     ap.add_argument("--login-path", help="로그인 엔드포인트 경로(미지정 시 attack 기본값). "
                                          "JSP 레거시 등 비표준 로그인 경로에 필요")
+    ap.add_argument("--body-template", help="로그인 요청 바디 템플릿(JSON, {id}/{pw} 치환). "
+                                            "비-sef 로그인 폼(bearer)")
+    ap.add_argument("--token-path", help="로그인 응답의 토큰 추출 경로(기본 data.accessToken)")
     ap.add_argument("--json", action="store_true", help="통합 JSON 출력")
     args = ap.parse_args()
 
@@ -671,7 +690,8 @@ def main():
                 print(f"[!] --user-{_who}-id/--user-{_who}-pw는 함께 지정해야 합니다 (한쪽만 전달 — 무시됨)")
         _cookie = {"auth_mode": args.auth_mode, "id_field": args.id_field,
                    "pw_field": args.pw_field, "success_path": args.success_path,
-                   "login_path": args.login_path}
+                   "login_path": args.login_path,
+                   "body_template": args.body_template, "token_path": args.token_path}
         report["phases"]["access_dynamic"] = run_access_dynamic(
             args.target, report["phases"]["static"], creds, args.authorized, **_cookie)
         report["phases"]["auth_dynamic"] = run_auth_dynamic(

@@ -103,19 +103,5 @@ rules:
           - pattern: $EM.createQuery($Q + $INPUT, $CLASS)
           - pattern: $EM.createNativeQuery($Q + $INPUT, $CLASS)
 
-  - id: sqisoft-mybatis-xml-dollar-spring
-    languages: [generic]
-    severity: ERROR
-    paths:
-      include:
-        - "*.xml"
-    message: >-
-      MyBatis Mapper XML에서 ${} 구문을 사용하고 있습니다 (spring-modern 스택).
-      ${}는 PreparedStatement 바인딩이 아닌 문자열 치환입니다.
-      값 바인딩에는 #{} 로 교체하고, ORDER BY·컬럼명에는 서비스 레이어 허용 목록 검증을 적용하세요.
-    metadata:
-      cwe: "CWE-89"
-      owasp: "A03:2021"
-      stack: spring-modern
-      confidence: needs-context
-    pattern-regex: '\$\{(?!pageContext|contextPath)[^}]+\}'
+  # MyBatis XML ${}는 sqisoft-mybatis-xml-dollar-interpolation 단일 룰로 커버한다.
+  # 과거 spring 룰이 동일 *.xml/${} 를 이중 매칭해 이중 카운트했다(코드리뷰 M6).
