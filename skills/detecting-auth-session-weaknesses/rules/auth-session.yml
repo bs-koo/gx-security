@@ -46,8 +46,8 @@ rules:
       confidence: high
     patterns:
       - pattern-either:
+          # parseClaimsJws(서명키 설정 시 서명을 검증하는 안전 호출)는 제외 — 방향성 오탐 방지(코드리뷰 M1)
           - pattern: $P.parseClaimsJwt($TOKEN)
-          - pattern: $P.parseClaimsJws($TOKEN)
           - pattern: $P.parse($TOKEN)
       - pattern-not-inside: |
           Jwts.parser().verifyWith(...).build().$M($TOKEN)
