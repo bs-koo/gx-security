@@ -190,3 +190,22 @@ rules:
           - pattern: $RESP.getWriter().print($REQ.getParameter(...))
           - pattern: $RESP.getWriter().println($REQ.getParameter(...))
           - pattern: $RESP.getWriter().write($REQ.getParameter(...))
+
+  - id: sqisoft-jsp-el-unescaped-model-attr
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - "*.jsp"
+    message: >-
+      저장형 모델 객체의 속성을 EL(${board.title} 등)로 이스케이프 없이 출력하고 있습니다.
+      JSP EL은 HTML 자동이스케이프를 하지 않아 저장형 XSS 위험입니다.
+      <c:out value="${board.title}"/> 또는 ${fn:escapeXml(board.title)}로 변경하세요.
+    metadata:
+      cwe: "CWE-79"
+      owasp: "A03:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern-regex: '\$\{(?!(?:param|requestScope|sessionScope|pageContext|applicationScope|header|cookie|initParam)[.\}])[a-zA-Z_]\w*\.[^}]+\}'
+      - pattern-not-regex: 'escapeXml|<c:out'

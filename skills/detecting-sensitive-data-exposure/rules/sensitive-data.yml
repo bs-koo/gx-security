@@ -190,3 +190,109 @@ rules:
         - "*.xml"
     # <property name="password" value="실제값"/> — ${...} 참조 제외
     pattern-regex: '<property\s+name\s*=\s*"(?i)(password|passwd|pwd|secret)"\s+value\s*=\s*"(?!\$\{)[^"]{4,}"'
+
+  # ───────────────────────── 포맷 기반 시크릿 (FR-9) ─────────────────────────
+
+  - id: sqisoft-aws-access-key-id
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      AWS Access Key ID(AKIA...)가 소스/설정에 평문으로 노출되어 있습니다.
+      즉시 키를 폐기·교체하고 환경변수 또는 시크릿 저장소로 분리하세요.
+    metadata:
+      cwe: "CWE-798"
+      owasp: "A02:2021"
+      stack: spring-modern
+      confidence: needs-context
+    paths:
+      include:
+        - "*.java"
+        - "*.kt"
+        - "*.properties"
+        - "*.yml"
+        - "*.yaml"
+        - "*.xml"
+        - "*.json"
+        - "*.env"
+        - "*.conf"
+        - "*.config"
+    pattern-regex: '\bAKIA[0-9A-Z]{16}\b'
+
+  - id: sqisoft-github-token
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      GitHub Personal Access Token(ghp_...)이 소스/설정에 평문으로 노출되어 있습니다.
+      즉시 토큰을 폐기하고 시크릿 저장소로 분리하세요.
+    metadata:
+      cwe: "CWE-798"
+      owasp: "A02:2021"
+      stack: spring-modern
+      confidence: needs-context
+    paths:
+      include:
+        - "*.java"
+        - "*.kt"
+        - "*.properties"
+        - "*.yml"
+        - "*.yaml"
+        - "*.xml"
+        - "*.json"
+        - "*.env"
+        - "*.conf"
+        - "*.config"
+    pattern-regex: '\bghp_[0-9A-Za-z]{20,}\b'
+
+  - id: sqisoft-pem-private-key
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      PEM 개인키(-----BEGIN ... PRIVATE KEY-----)가 형상관리에 포함되어 있습니다.
+      개인키는 저장소에서 제거하고 키를 재발급하세요. 공개 인증서(CERTIFICATE)는 대상이 아닙니다.
+    metadata:
+      cwe: "CWE-798"
+      owasp: "A02:2021"
+      stack: spring-modern
+      confidence: needs-context
+    paths:
+      include:
+        - "*.pem"
+        - "*.key"
+        - "*.txt"
+        - "*.java"
+        - "*.kt"
+        - "*.properties"
+        - "*.yml"
+        - "*.yaml"
+        - "*.xml"
+        - "*.json"
+        - "*.env"
+        - "*.conf"
+        - "*.config"
+    pattern-regex: '-----BEGIN\s+(?:RSA|EC|DSA|OPENSSH|PGP|ENCRYPTED)?\s*PRIVATE KEY-----'
+
+  - id: sqisoft-jdbc-url-password-plaintext
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      JDBC 접속 URL에 DB 비밀번호가 평문으로 포함되어 있습니다.
+      비밀번호는 URL에서 분리하고 환경변수 또는 시크릿 저장소로 관리하세요.
+    metadata:
+      cwe: "CWE-798"
+      owasp: "A02:2021"
+      stack: spring-modern
+      confidence: needs-context
+    paths:
+      include:
+        - "*.java"
+        - "*.kt"
+        - "*.properties"
+        - "*.yml"
+        - "*.yaml"
+        - "*.xml"
+        - "*.json"
+        - "*.env"
+        - "*.conf"
+        - "*.config"
+    # ${...} 플레이스홀더는 (?!\$\{) 로 제외
+    pattern-regex: '(?i)jdbc:\w+:[^\s"'']*[?&;]password=(?!\$\{)[^&\s"'';]+'

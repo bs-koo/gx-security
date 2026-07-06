@@ -30,6 +30,26 @@ rules:
           @$MAPPING(...)
           $RET $METHOD(..., @RequestParam $TYPE $URL, ...) { ... }
 
+  - id: sqisoft-ssrf-resttemplate-var-call
+    languages: [java]
+    severity: WARNING
+    message: >-
+      RestTemplate 계열 HTTP 호출(getForObject/getForEntity/postForObject/postForEntity/exchange)이
+      임의 변수로 이뤄집니다. URL이 사용자 입력에서 유래하면 SSRF 취약점입니다.
+      @RequestParam 한정 없이 넓게 후보를 잡으므로 2단계에서 데이터 흐름을 확인하세요.
+    metadata:
+      cwe: "CWE-918"
+      owasp: "A10:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: $RT.getForEntity(...)
+          - pattern: $RT.getForObject(...)
+          - pattern: $RT.postForEntity(...)
+          - pattern: $RT.postForObject(...)
+          - pattern: $RT.exchange(...)
+
   - id: sqisoft-ssrf-webclient-param
     languages: [java]
     severity: ERROR

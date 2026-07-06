@@ -34,6 +34,10 @@ except (AttributeError, ValueError):
 HERE = os.path.dirname(os.path.abspath(__file__))
 RULES = os.path.join(os.path.dirname(HERE), "rules", "file-upload.yml")
 
+# 초대형 단일 라인(minified 등)에 폴백 정규식을 적용하면 O(n²) 백트래킹으로
+# 사실상 멈출 수 있다(ReDoS). 이 길이를 넘는 라인은 매칭을 조용히 스킵한다.
+_MAX_LINE_LEN = 5000
+
 # 탐지 대상에서 제외할 디렉토리 (빌드 산출물, 의존성 등)
 SKIP_DIRS = {".git", "node_modules", "build", "target", "dist", ".gradle", ".idea", "__pycache__",
              ".dev", ".omc", ".humanize", ".vscode"}
@@ -115,6 +119,11 @@ FALLBACK_PATTERNS = [
     ("jsp-transferto-without-validator", "jsp-legacy", (".java",),
      re.compile(r"\.transferTo\s*\(new\s+File\s*\(")),
 
+    # JSP: commons-fileupload(ServletFileUpload/DiskFileItemFactory) 직접 사용
+    ("jsp-commons-fileupload", "jsp-legacy", (".java",),
+     re.compile(r"\bnew\s+ServletFileUpload\s*\(|\bnew\s+DiskFileItemFactory\s*\("
+                r"|\bServletFileUpload\b|\bDiskFileItemFactory\b")),
+
     # JSP: 업로드 폼 enctype 감지
     ("jsp-multipart-form", "jsp-legacy", (".jsp", ".html"),
      re.compile(r'enctype\s*=\s*["\']multipart/form-data["\']', re.I)),
@@ -144,6 +153,9 @@ def run_fallback(target):
                 file_content = "".join(lines)
 
                 for i, line in enumerate(lines, 1):
+                    # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해 스킵
+                    if len(line) > _MAX_LINE_LEN:
+                        continue
                     for rule_id, stack, _exts, rx in applicable:
                         if not rx.search(line):
                             continue

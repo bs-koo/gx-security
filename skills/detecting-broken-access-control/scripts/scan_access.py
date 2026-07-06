@@ -32,6 +32,10 @@ except (AttributeError, ValueError):
 HERE = os.path.dirname(os.path.abspath(__file__))
 RULES = os.path.join(os.path.dirname(HERE), "rules", "access-control.yml")
 
+# 초대형 단일 라인(minified 등)에 폴백 정규식을 적용하면 O(n²) 백트래킹으로
+# 사실상 멈출 수 있다(ReDoS). 이 길이를 넘는 라인은 매칭을 조용히 스킵한다.
+_MAX_LINE_LEN = 5000
+
 
 # ── 스택 감지 신호 ────────────────────────────────────────────────
 def detect_stacks(target):
@@ -97,6 +101,11 @@ FALLBACK_PATTERNS = [
     ("spring-pathvariable-id", "spring-modern", (".java", ".kt"),
      re.compile(r'@PathVariable\s+(?:\w+\s+)?(\w*[Ii][Dd]\w*|\w*[Ss]eq\w*|\w*[Nn]o\b)')),
 
+    # spring-modern: @PathVariable("id")/@PathVariable(name="userId") 어노테이션 값 지정형
+    # value= 및 name= 별칭 모두 처리 + id/seq/no 부분매칭 (변수명이 아닌 어노테이션 값)
+    ("spring-pathvariable-annotated-id", "spring-modern", (".java", ".kt"),
+     re.compile(r'@PathVariable\s*\(\s*(?:(?:value|name)\s*=\s*)?"[^"]*(?:[Ii][Dd]|[Ss]eq|[Nn]o)\b[^"]*"')),
+
     # spring-modern: anyRequest().permitAll() — 사각지대 위험
     ("spring-anyrequestpermitall", "spring-modern", (".java", ".kt"),
      re.compile(r'anyRequest\s*\(\s*\)\s*\.\s*permitAll\s*\(\s*\)')),
@@ -142,6 +151,9 @@ def run_fallback(target):
             try:
                 with open(path, encoding="utf-8", errors="replace") as fh:
                     for i, line in enumerate(fh, 1):
+                        # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해 스킵
+                        if len(line) > _MAX_LINE_LEN:
+                            continue
                         for rule_id, stack, _exts, rx in rules:
                             if rx.search(line):
                                 findings.append({

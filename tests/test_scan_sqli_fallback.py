@@ -101,6 +101,110 @@ class TestFallbackFixtureIntegration(unittest.TestCase):
         self.assertIn("spring-jpa-createquery-string-concat", rule_ids)
 
 
+class TestTwoLineSqlConcat(unittest.TestCase):
+    """FR-1/AC-1 — 2줄 인접 조립+실행(변수 상관). 직전줄 "리터럴"+식별자 대입 +
+    현재줄 executeQuery/executeUpdate가 같은 변수일 때만 jdbc-two-line-sql-concat 후보."""
+
+    def _scan(self, java):
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "Vuln.java"), "w", encoding="utf-8") as fh:
+                fh.write(java)
+            return {c["rule_id"] for c in scan_sqli.run_fallback(tmp)}
+
+    def test_vuln_two_line_concat_execute(self):
+        java = (
+            "public class Vuln {\n"
+            "    void a(java.sql.Statement stmt, String id) throws Exception {\n"
+            '        String sql = "SELECT * FROM t WHERE id=" + id;\n'
+            "        stmt.executeQuery(sql);\n"
+            "    }\n"
+            "}\n"
+        )
+        self.assertIn("jdbc-two-line-sql-concat", self._scan(java))
+
+    def test_safe_constant_only_no_concat(self):
+        # 상수만 SQL(concat 없음) → 후보 아님(QE-1)
+        java = (
+            "public class Safe {\n"
+            "    void a(java.sql.Statement stmt) throws Exception {\n"
+            '        String sql = "SELECT * FROM t WHERE id=1";\n'
+            "        stmt.executeQuery(sql);\n"
+            "    }\n"
+            "}\n"
+        )
+        self.assertNotIn("jdbc-two-line-sql-concat", self._scan(java))
+
+    def test_safe_variable_mismatch(self):
+        # 조립 변수(query)와 실행 변수(other)가 다름 → 변수 상관 불일치로 후보 아님(MUST-ADDRESS-1)
+        java = (
+            "public class Safe {\n"
+            "    void a(java.sql.Statement stmt, String id, String other) throws Exception {\n"
+            '        String query = "SELECT * FROM t WHERE id=" + id;\n'
+            "        stmt.executeQuery(other);\n"
+            "    }\n"
+            "}\n"
+        )
+        self.assertNotIn("jdbc-two-line-sql-concat", self._scan(java))
+
+    def test_safe_execute_excluded(self):
+        # execute()(인자없는 PreparedStatement.execute/Runnable.execute)는 제외 대상 →
+        # log 조립 다음 executor.execute(task)는 후보 아님(오탐 차단)
+        java = (
+            "public class Safe {\n"
+            "    void a(java.util.concurrent.Executor executor, String user) {\n"
+            '        log.info("done " + user);\n'
+            "        executor.execute(task);\n"
+            "    }\n"
+            "}\n"
+        )
+        self.assertNotIn("jdbc-two-line-sql-concat", self._scan(java))
+
+    def test_safe_bare_execute_with_matching_var_excluded(self):
+        # 변수 상관이 일치(sql=sql)해도 bare execute()는 정규식 alternation에서 제외 →
+        # 후보 아님. (execute를 실수로 추가하면 이 테스트만 실패해 회귀를 잡는다 — MUST-ADDRESS-1)
+        java = (
+            "public class Safe {\n"
+            "    void a(java.sql.Statement stmt, String id) throws Exception {\n"
+            '        String sql = "SELECT * FROM t WHERE id=" + id;\n'
+            "        stmt.execute(sql);\n"
+            "    }\n"
+            "}\n"
+        )
+        self.assertNotIn("jdbc-two-line-sql-concat", self._scan(java))
+
+
+class TestPrepareStatementConcat(unittest.TestCase):
+    """FR-2/AC-2 — prepareStatement("리터럴" + ...) 인라인 concat.
+    ?+setString(바인딩)은 concat이 없어 미검출."""
+
+    def _scan(self, java):
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "Vuln.java"), "w", encoding="utf-8") as fh:
+                fh.write(java)
+            return {c["rule_id"] for c in scan_sqli.run_fallback(tmp)}
+
+    def test_vuln_prepare_concat(self):
+        java = (
+            "public class Vuln {\n"
+            "    void a(java.sql.Connection conn, String id) throws Exception {\n"
+            '        conn.prepareStatement("SELECT * FROM t WHERE id=" + id);\n'
+            "    }\n"
+            "}\n"
+        )
+        self.assertIn("jdbc-preparestatement-concat", self._scan(java))
+
+    def test_safe_placeholder_binding(self):
+        # ? 플레이스홀더(바인딩) → concat 없어 후보 아님(QE-1)
+        java = (
+            "public class Safe {\n"
+            "    void a(java.sql.Connection conn) throws Exception {\n"
+            '        conn.prepareStatement("SELECT * FROM t WHERE id=?");\n'
+            "    }\n"
+            "}\n"
+        )
+        self.assertNotIn("jdbc-preparestatement-concat", self._scan(java))
+
+
 class TestMybatisDollarDedup(unittest.TestCase):
     """코드리뷰 M6 — MyBatis ${}가 단일 룰로 통합돼 이중 카운트되지 않고,
     스택은 경로(mybatis/=spring-modern, 그 외=jsp-legacy)로 판별된다."""

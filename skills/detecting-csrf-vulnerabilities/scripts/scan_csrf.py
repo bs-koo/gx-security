@@ -32,6 +32,10 @@ except (AttributeError, ValueError):
 HERE = os.path.dirname(os.path.abspath(__file__))
 RULES = os.path.join(os.path.dirname(HERE), "rules", "csrf.yml")
 
+# 초대형 단일 라인(minified 등)에 폴백 정규식을 적용하면 O(n²) 백트래킹으로
+# 사실상 멈출 수 있다(ReDoS). 이 길이를 넘는 라인은 매칭을 조용히 스킵한다.
+_MAX_LINE_LEN = 5000
+
 # ── 스택 감지 신호 ────────────────────────────────────────────────
 def detect_stacks(target):
     """리포에 섞일 수 있으므로 발견된 스택들의 집합을 반환."""
@@ -89,7 +93,8 @@ def run_semgrep(target):
 FALLBACK_PATTERNS = [
     # (rule_id, stack, 파일확장자들, 정규식)
     ("spring-csrf-disabled", "spring-modern", (".java", ".kt"),
-     re.compile(r"\.csrf\s*\(.*?\)\s*\.disable\s*\(\)|csrf\s*\(\s*[\w]*\s*->\s*[\w]*\.disable")),
+     re.compile(r"\.csrf\s*\(.*?\)\s*\.disable\s*\(\)|csrf\s*\(\s*[\w]*\s*->\s*[\w]*\.disable"
+                r"|csrf\s*\(\s*[A-Za-z_]\w*(?:\.\w+)*\s*::\s*\w*[Dd]isable")),
     ("spring-cors-wildcard", "spring-modern", (".java", ".kt"),
      re.compile(r'@CrossOrigin|origins\s*=\s*"\*"')),
     ("jsp-state-changing-get-link", "jsp-legacy", (".jsp", ".html"),
@@ -114,6 +119,9 @@ def run_fallback(target):
             try:
                 with open(path, encoding="utf-8", errors="replace") as fh:
                     for i, line in enumerate(fh, 1):
+                        # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해 스킵
+                        if len(line) > _MAX_LINE_LEN:
+                            continue
                         for rule_id, stack, _exts, rx in rules:
                             if rx.search(line):
                                 findings.append({

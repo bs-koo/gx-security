@@ -36,6 +36,10 @@ except (AttributeError, ValueError):
 HERE = os.path.dirname(os.path.abspath(__file__))
 RULES = os.path.join(os.path.dirname(HERE), "rules", "sensitive-data.yml")
 
+# 초대형 단일 라인(minified 등)에 폴백 정규식을 적용하면 O(n²) 백트래킹으로
+# 사실상 멈출 수 있다(ReDoS). 이 길이를 넘는 라인은 매칭을 조용히 스킵한다.
+_MAX_LINE_LEN = 5000
+
 # 스캔 제외 디렉토리
 SKIP_DIRS = {".git", "node_modules", "build", "target", "dist", ".gradle",
              "__pycache__", ".svn", ".idea", ".vscode",
@@ -94,6 +98,11 @@ def run_semgrep(target):
 
 # ── 폴백 정규식 패턴 정의 ─────────────────────────────────────────
 # (rule_id, stack, 대상 확장자 튜플, 컴파일된 정규식)
+
+# [FR-9] 포맷 기반 시크릿 대상 확장자 (코드+설정 중심, 문서 .md 제외)
+_SECRET_FMT_EXTS = (".java", ".kt", ".properties", ".yml", ".yaml",
+                    ".xml", ".json", ".env", ".conf", ".config")
+
 FALLBACK_PATTERNS = [
     # --- properties/yml: 평문 시크릿 ---
     # password=실제값 (${...} 참조 제외, 주석 라인 제외)
@@ -193,6 +202,36 @@ FALLBACK_PATTERNS = [
             r'@Value\s*\(\s*"\$\{[^}]+:[^$\{"]{6,}\}"\s*\)',
         ),
     ),
+
+    # --- [FR-9] 포맷 기반 시크릿 5종 ---
+    # AWS Access Key ID (AKIA + 16자 = 총 20자)
+    (
+        "aws-access-key-id",
+        "spring-modern",
+        _SECRET_FMT_EXTS,
+        re.compile(r'\bAKIA[0-9A-Z]{16}\b'),
+    ),
+    # GitHub Personal Access Token (ghp_ + 20자 이상, 자리표시자 _ 는 자연 회피)
+    (
+        "github-token",
+        "spring-modern",
+        _SECRET_FMT_EXTS,
+        re.compile(r'\bghp_[0-9A-Za-z]{20,}\b'),
+    ),
+    # PEM 개인키 마커 — .pem/.key 파일 내용까지 스캔(공개 인증서 BEGIN CERTIFICATE 는 미탐)
+    (
+        "pem-private-key",
+        "spring-modern",
+        _SECRET_FMT_EXTS + (".pem", ".key", ".txt"),
+        re.compile(r'-----BEGIN\s+(?:RSA|EC|DSA|OPENSSH|PGP|ENCRYPTED)?\s*PRIVATE KEY-----'),
+    ),
+    # JDBC URL 내 평문 password — (?!\$\{) 로 카멜케이스 플레이스홀더 ${dbPassword} 차단
+    (
+        "jdbc-url-password",
+        "spring-modern",
+        _SECRET_FMT_EXTS,
+        re.compile(r'(?i)jdbc:\w+:[^\s"\']*[?&;]password=(?!\$\{)[^&\s"\';]+'),
+    ),
 ]
 
 # [M-4] 멀티라인 전용 패턴: (rule_id, stack, 대상 확장자 튜플, 컴파일된 정규식)
@@ -244,6 +283,9 @@ def run_fallback(target):
             # ── 라인단위 매칭 ──────────────────────────────────────
             lines = content.splitlines()
             for i, line in enumerate(lines, 1):
+                # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해 스킵
+                if len(line) > _MAX_LINE_LEN:
+                    continue
                 for rule_id, stack, _exts, rx in line_patterns:
                     if rx.search(line):
                         snippet = line.strip()[:200]
