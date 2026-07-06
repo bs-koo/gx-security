@@ -36,6 +36,10 @@ except (AttributeError, ValueError):
 HERE = os.path.dirname(os.path.abspath(__file__))
 RULES = os.path.join(os.path.dirname(HERE), "rules", "ssrf-redirect.yml")
 
+# 초대형 단일 라인(minified 등)에 폴백 정규식을 적용하면 O(n²) 백트래킹으로
+# 사실상 멈출 수 있다(ReDoS). 이 길이를 넘는 라인은 매칭을 조용히 스킵한다.
+_MAX_LINE_LEN = 5000
+
 # 스캔 제외 디렉토리
 SKIP_DIRS = {".git", "node_modules", "build", "target", "dist", ".gradle",
              "__pycache__", ".svn", ".idea", ".vscode",
@@ -95,14 +99,17 @@ def run_semgrep(target):
 # ── 폴백 정규식 패턴 정의 ─────────────────────────────────────────
 # (rule_id, stack, 대상 확장자 튜플, 컴파일된 정규식)
 FALLBACK_PATTERNS = [
-    # ── SSRF: RestTemplate ──
+    # ── SSRF: RestTemplate (변수명 임의화 일반화) ──
+    # 변수명 restTemplate 고정형을 임의 변수명으로 일반화(예: httpClient.getForObject).
+    # execute 제외(jdbcTemplate.execute/Statement.execute 충돌 차단). exchange는 RestTemplate 고유라 유지.
+    # 오탐 억제: run_fallback 에서 파일에 RestTemplate 컨텍스트가 있을 때만 이 룰을 보고한다.
     (
         "ssrf-resttemplate",
         "spring-modern",
         (".java", ".kt"),
         re.compile(
-            r'restTemplate\s*\.\s*(?:getForEntity|getForObject|postForEntity|'
-            r'postForObject|exchange|execute)\s*\(',
+            r'\b([A-Za-z_]\w*)\s*\.\s*(?:getForEntity|getForObject|postForEntity|'
+            r'postForObject|exchange)\s*\(',
         ),
     ),
     # ── SSRF: WebClient ──
@@ -181,6 +188,10 @@ HARDCODED_SPRING_REDIRECT_RE = re.compile(
     r'return\s+"redirect:[^"]*(?:\.do|\.jsp|\.html|/)[^"]*"\s*;',
 )
 
+# ssrf-resttemplate 룰은 변수명을 일반화했으므로, 파일에 RestTemplate 선언이
+# 있을 때만 후보화한다(임의 변수 HTTP 메서드 호출의 광범위 오탐 억제).
+_RESTTEMPLATE_CONTEXT = re.compile(r'\bRestTemplate\b')
+
 
 # ── 폴백 실행 ────────────────────────────────────────────────────
 def run_fallback(target):
@@ -195,27 +206,38 @@ def run_fallback(target):
             path = os.path.join(root, f)
             try:
                 with open(path, encoding="utf-8", errors="replace") as fh:
-                    for i, line in enumerate(fh, 1):
-                        for rule_id, stack, _exts, rx in applicable:
-                            if not rx.search(line):
+                    lines = fh.readlines()
+                file_content = "".join(lines)
+                # [PERF] RestTemplate 컨텍스트 유무는 파일당 1회만 계산(라인루프 재실행 방지)
+                has_rt_context = bool(_RESTTEMPLATE_CONTEXT.search(file_content))
+                for i, line in enumerate(lines, 1):
+                    # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해 스킵
+                    if len(line) > _MAX_LINE_LEN:
+                        continue
+                    for rule_id, stack, _exts, rx in applicable:
+                        if not rx.search(line):
+                            continue
+                        # ssrf-resttemplate 는 파일에 RestTemplate 컨텍스트가 있을 때만 보고
+                        if rule_id == "ssrf-resttemplate":
+                            if not has_rt_context:
                                 continue
-                            snippet = line.strip()[:200]
-                            # 하드코딩 경로 리다이렉트는 낮은 신뢰도로 표기
-                            confidence = "needs-context"
-                            if rule_id == "open-redirect-sendredirect":
-                                if HARDCODED_REDIRECT_RE.search(line):
-                                    confidence = "likely-fp"
-                            if rule_id == "open-redirect-spring-return":
-                                if HARDCODED_SPRING_REDIRECT_RE.search(line):
-                                    confidence = "likely-fp"
-                            findings.append({
-                                "file": path,
-                                "line": i,
-                                "rule_id": rule_id,
-                                "stack": stack,
-                                "confidence": confidence,
-                                "snippet": snippet,
-                            })
+                        snippet = line.strip()[:200]
+                        # 하드코딩 경로 리다이렉트는 낮은 신뢰도로 표기
+                        confidence = "needs-context"
+                        if rule_id == "open-redirect-sendredirect":
+                            if HARDCODED_REDIRECT_RE.search(line):
+                                confidence = "likely-fp"
+                        if rule_id == "open-redirect-spring-return":
+                            if HARDCODED_SPRING_REDIRECT_RE.search(line):
+                                confidence = "likely-fp"
+                        findings.append({
+                            "file": path,
+                            "line": i,
+                            "rule_id": rule_id,
+                            "stack": stack,
+                            "confidence": confidence,
+                            "snippet": snippet,
+                        })
             except OSError:
                 continue
     return findings

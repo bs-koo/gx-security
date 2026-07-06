@@ -32,6 +32,10 @@ except (AttributeError, ValueError):
 HERE = os.path.dirname(os.path.abspath(__file__))
 RULES = os.path.join(os.path.dirname(HERE), "rules", "xss.yml")
 
+# 초대형 단일 라인(minified 등)에 폴백 정규식을 적용하면 O(n²) 백트래킹으로
+# 사실상 멈출 수 있다(ReDoS). 이 길이를 넘는 라인은 매칭을 조용히 스킵한다.
+_MAX_LINE_LEN = 5000
+
 # ── 스택 감지 신호 ────────────────────────────────────────────────
 def detect_stacks(target):
     """리포에 섞일 수 있으므로 발견된 스택들의 집합을 반환."""
@@ -98,6 +102,12 @@ FALLBACK_PATTERNS = [
     ("jsp-el-unescaped-param", "jsp-legacy", (".jsp",),
      re.compile(r'\$\{param\.[^}]+\}|\$\{requestScope\.[^}]+\}', re.I)),
 
+    # jsp-legacy — 저장형 모델 EL 미이스케이프 (FR-4)
+    # 내장 암묵객체(param/requestScope 등)를 제외한 `객체.속성` EL 접근.
+    # run_fallback 후처리에서 c:out/escapeXml 래핑 라인은 후보에서 제외한다.
+    ("jsp-el-unescaped-model", "jsp-legacy", (".jsp",),
+     re.compile(r'\$\{(?!(?:param|requestScope|sessionScope|pageContext|applicationScope|header|cookie|initParam)[.\}])[a-zA-Z_]\w*\.[^}]+\}')),
+
     # jsp-legacy — escapeXml=false
     ("jsp-c-out-escapexml-false", "jsp-legacy", (".jsp",),
      re.compile(r'escapeXml\s*=\s*["\']false["\']', re.I)),
@@ -121,6 +131,12 @@ FALLBACK_PATTERNS = [
     # spring-modern — document.write
     ("js-document-write", "spring-modern", (".js", ".ts", ".jsx", ".tsx", ".jsp", ".html"),
      re.compile(r'document\.write\s*\(')),
+
+    # spring-modern — 서블릿 반사형 XSS (FR-3)
+    # getWriter().print/println/write 직후 바로 request.getParameter (인라인).
+    # 이스케이프 래핑(print(Encode.forHtml(...)))은 사이에 함수호출이 끼어 미검출.
+    ("servlet-getwriter-reflected-xss", "spring-modern", (".java",),
+     re.compile(r'\.getWriter\s*\(\s*\)\s*\.\s*(?:print|println|write)\s*\(\s*request\.getParameter', re.I)),
 ]
 
 
@@ -152,8 +168,15 @@ def run_fallback(target):
             try:
                 with open(path, encoding="utf-8", errors="replace") as fh:
                     for i, line in enumerate(fh, 1):
+                        # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해 스킵
+                        if len(line) > _MAX_LINE_LEN:
+                            continue
                         for rule_id, stack, _exts, rx in rules:
                             if rx.search(line):
+                                # FR-4 — 저장형 모델 EL은 c:out/escapeXml로 래핑되면 안전 → 후보 제외.
+                                if rule_id == "jsp-el-unescaped-model" and \
+                                        re.search(r'escapeXml|<c:out', line):
+                                    continue
                                 findings.append({
                                     "file": path, "line": i, "rule_id": rule_id,
                                     "stack": stack, "confidence": "needs-context",

@@ -106,6 +106,24 @@ rules:
       - pattern-not-inside: |
           ... UploadFileSaveHandler.init(...); ...
 
+  - id: sqisoft-jsp-commons-fileupload-usage
+    languages: [java]
+    severity: WARNING
+    message: >-
+      Apache Commons FileUpload(ServletFileUpload/DiskFileItemFactory)를 직접 사용하고 있습니다.
+      확장자·매직바이트 화이트리스트 검증 없이 파일을 저장하면 .jsp 웹쉘 업로드 → RCE(CWE-434) 위험이 있습니다.
+      저장 경로를 웹루트 밖으로 두고 서버 측 검증이 선행되는지 확인하세요.
+    metadata:
+      cwe: "CWE-434"
+      owasp: "A04:2021"
+      stack: jsp-legacy
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: new ServletFileUpload(...)
+          - pattern: new DiskFileItemFactory(...)
+          - pattern: ServletFileUpload $V
+
   - id: sqisoft-jsp-multipart-form-enctype
     languages: [generic]
     severity: INFO

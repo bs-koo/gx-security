@@ -66,6 +66,27 @@ rules:
               ...
           }
 
+  - id: sqisoft-spring-pathvariable-annotated-id
+    languages: [java]
+    severity: WARNING
+    message: >-
+      @PathVariable("id") 처럼 어노테이션 값으로 id/seq/no 계열 경로 변수를 받습니다.
+      세션 사용자와의 소유권 비교 없이 이 값으로 리소스를 조회하면 IDOR 가능성이 있습니다.
+      @AuthenticationPrincipal로 인증 사용자를 받아 서비스 레이어에서 소유권을 검증하세요.
+    metadata:
+      cwe: "CWE-639"
+      owasp: "A01:2021"
+      stack: spring-modern
+      confidence: needs-context
+    patterns:
+      - pattern-either:
+          - pattern: "@PathVariable($NAME) $TYPE $VAR"
+          - pattern: "@PathVariable(value=$NAME) $TYPE $VAR"
+          - pattern: "@PathVariable(name=$NAME) $TYPE $VAR"
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: '"(?i).*(?:id|seq|no)\b.*"'
+
   - id: sqisoft-spring-anyrequestpermitall-risk
     languages: [java]
     severity: INFO

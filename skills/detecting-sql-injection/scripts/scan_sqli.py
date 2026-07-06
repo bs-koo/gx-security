@@ -119,12 +119,28 @@ _JDBC_TMPL_CONCAT = re.compile(
 _JPA_CREATE_CONCAT = re.compile(
     r'\.(createQuery|createNativeQuery)\s*\(\s*[^;]+\s*\+', re.I)
 
+# FR-1 — 2줄 인접 조립+실행(변수 상관). 직전줄에서 변수에 "리터럴"+식별자를 대입하고,
+# 현재줄에서 같은 변수를 executeQuery/executeUpdate로 실행하는 형태만 후보화한다.
+# group(1) = 조립/실행 변수명. 두 group(1)이 문자열 동일할 때만 매칭(Runnable/스레드풀 오탐 차단).
+_SQL_CONCAT_ASSIGN = re.compile(
+    r'([A-Za-z_]\w*)\s*(?:=|\+=)\s*[^;]*"[^"]*"\s*\+\s*[A-Za-z_]\w*', re.I)
+_SQL_EXECUTE_VAR = re.compile(
+    r'(?:executeQuery|executeUpdate)\s*\(\s*([A-Za-z_]\w*)\s*\)', re.I)
+
+# FR-2 — prepareStatement("리터럴" + ...) 인라인 concat. ?+setString(안전)은 미매치.
+_PREPARE_CONCAT = re.compile(
+    r'prepareStatement\s*\(\s*[^;)]*"[^"]*"\s*\+', re.I)
+
 FALLBACK_PATTERNS = [
     # (rule_id, stack, 파일확장자들, 정규식)
 
     # jsp-legacy — Statement 문자열 연결
     ("jdbc-statement-string-concat", "jsp-legacy", (".java",),
      _STMT_CONCAT),
+
+    # jsp-legacy — prepareStatement 인라인 문자열 연결 (FR-2)
+    ("jdbc-preparestatement-concat", "jsp-legacy", (".java",),
+     _PREPARE_CONCAT),
 
     # 공통 — MyBatis XML ${} (jsp-legacy sqlmap XML)
     ("mybatis-xml-dollar-interpolation", "jsp-legacy", (".xml",),
@@ -182,10 +198,14 @@ def run_fallback(target):
 
             try:
                 with open(path, encoding="utf-8", errors="replace") as fh:
+                    # FR-1 — 직전줄 버퍼. 2줄 인접 조립+실행(변수 상관) 판정에 사용.
+                    prev = ""
                     for i, line in enumerate(fh, 1):
                         # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해
                         # 매칭을 조용히 스킵한다(성능 가드).
                         if len(line) > _MAX_LINE_LEN:
+                            # 초과 라인은 prev를 비워 2줄 전 라인과의 오결합을 차단한다.
+                            prev = ""
                             continue
                         for rule_id, stack, _exts, rx in rules:
                             if rx.search(line):
@@ -199,6 +219,22 @@ def run_fallback(target):
                                     "stack": eff_stack, "confidence": "needs-context",
                                     "snippet": line.strip()[:200],
                                 })
+                        # FR-1 — 직전줄 "리터럴"+식별자 대입 + 현재줄 executeQuery/executeUpdate,
+                        # 두 변수명이 동일할 때만 후보화(변수 상관). java 파일 전용.
+                        if ext == ".java":
+                            m_exec = _SQL_EXECUTE_VAR.search(line)
+                            if m_exec:
+                                m_assign = _SQL_CONCAT_ASSIGN.search(prev)
+                                if m_assign and m_assign.group(1) == m_exec.group(1):
+                                    findings.append({
+                                        "file": path, "line": i,
+                                        "rule_id": "jdbc-two-line-sql-concat",
+                                        "stack": "jsp-legacy",
+                                        "confidence": "needs-context",
+                                        "snippet": line.strip()[:200],
+                                    })
+                        # 정상 라인은 다음 반복의 직전줄로 보관(모든 반복 종료 시 갱신).
+                        prev = line
             except OSError:
                 continue
     return findings
