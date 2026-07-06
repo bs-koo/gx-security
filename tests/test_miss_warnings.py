@@ -6,6 +6,7 @@
     engine==semgrep 이라 폴백 경고가 나오지 않는 게 정상 → semgrep 설치 시 skip.
 JSON 결과의 warnings 키(비어있지 않을 때만 존재)와 문구를 검증한다.
 """
+import importlib.util
 import json
 import os
 import shutil
@@ -88,6 +89,51 @@ class TestFallbackWarning(unittest.TestCase):
                     self.assertFalse(
                         any(_STACK_WARNING in w for w in warnings),
                         f"{key}: 스택 known(spring-modern)이면 스택 경고는 없어야 한다")
+
+
+def _load_build_warnings():
+    """대표 스캐너(scan_sqli) 를 importlib 로 로드해 build_warnings 를 직접 얻는다.
+    9스캐너의 build_warnings 는 완전 동일 복붙이므로 하나로 대표 검증한다."""
+    scanner = os.path.join(_ROOT, SCANNERS["sqli"])
+    spec = importlib.util.spec_from_file_location("_scan_sqli_for_warntest", scanner)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.build_warnings
+
+
+class TestBuildWarningsUnit(unittest.TestCase):
+    """build_warnings 직접 단위 테스트. 두 경고 모두 candidate_count==0 게이트 안에
+    묶였는지 검증한다 (Gemini 리뷰: 후보 1건 이상이면 "0건이..." 문구 미발화)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.build_warnings = staticmethod(_load_build_warnings())
+
+    def test_unknown_fallback_zero_two_warnings(self):
+        # unknown 스택 + 폴백 + 0건 → 스택 경고 + 폴백 경고 2건.
+        w = self.build_warnings(["unknown"], "grep-fallback", 0)
+        self.assertEqual(len(w), 2, f"2건이어야 한다: {w}")
+        self.assertTrue(any(_STACK_WARNING in x for x in w))
+        self.assertTrue(any(_FALLBACK_WARNING in x for x in w))
+
+    def test_unknown_fallback_nonzero_no_warnings(self):
+        # Gemini 시나리오 회귀: 후보 3건이면 unknown 이어도 "0건이..." 문구 없음.
+        w = self.build_warnings(["unknown"], "grep-fallback", 3)
+        self.assertEqual(w, [], f"후보 1건 이상이면 경고 없음: {w}")
+
+    def test_known_fallback_zero_fallback_only(self):
+        # known 스택 + 폴백 + 0건 → 폴백 경고만.
+        w = self.build_warnings(["spring-modern"], "grep-fallback", 0)
+        self.assertEqual(len(w), 1, f"폴백 경고만 1건: {w}")
+        self.assertTrue(any(_FALLBACK_WARNING in x for x in w))
+        self.assertFalse(any(_STACK_WARNING in x for x in w))
+
+    def test_unknown_semgrep_zero_stack_only(self):
+        # unknown 스택 + semgrep + 0건 → 스택 경고만 (semgrep 이라 폴백 경고 없음).
+        w = self.build_warnings(["unknown"], "semgrep", 0)
+        self.assertEqual(len(w), 1, f"스택 경고만 1건: {w}")
+        self.assertTrue(any(_STACK_WARNING in x for x in w))
+        self.assertFalse(any(_FALLBACK_WARNING in x for x in w))
 
 
 if __name__ == "__main__":

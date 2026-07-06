@@ -253,11 +253,14 @@ def summarize(findings):
 
 # ── main ─────────────────────────────────────────────────────────
 def build_warnings(detected_stacks, engine, candidate_count):
+    # 두 경고 모두 "0건" 맥락이므로 candidate_count==0 일 때만 노출한다.
+    # (후보가 1건 이상인데 unknown 스택이라는 이유로 "0건이..." 를 띄우면 결과와 모순 — Gemini 리뷰 반영)
     w = []
-    if detected_stacks == ["unknown"]:
-        w.append("프로젝트 구조를 인식하지 못했습니다. 0건이 스캔 대상 인식 실패 때문일 수 있습니다.")
-    if candidate_count == 0 and engine == "grep-fallback":
-        w.append("정규식 폴백 엔진은 재현율이 낮습니다. 0건이 안전을 보장하지 않습니다.")
+    if candidate_count == 0:
+        if detected_stacks == ["unknown"]:
+            w.append("프로젝트 구조를 인식하지 못했습니다. 0건이 스캔 대상 인식 실패 때문일 수 있습니다.")
+        if engine == "grep-fallback":
+            w.append("정규식 폴백 엔진은 재현율이 낮습니다. 0건이 안전을 보장하지 않습니다.")
     return w
 
 
