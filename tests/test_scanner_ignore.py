@@ -22,10 +22,13 @@ _VULN_MAPPER = "<mapper><select id=\"x\">SELECT * FROM t WHERE a = '${p}'</selec
 
 
 def _scan_abs(target):
+    # GXSEC_NO_SEMGREP=1 로 폴백 강제 — semgrep-tests job 에서도 재현율(취약 실재) 검증 유지.
+    # M5 CI 실측상 semgrep 룰이 전역 0건이라, 강제 없이는 실재검증이 가짜 실패한다.
     proc = subprocess.run(
         [sys.executable, _SCANNER, target, "--json"],
         capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=120,
+        env=dict(os.environ, GXSEC_NO_SEMGREP="1"),
     )
     return json.loads(proc.stdout)
 

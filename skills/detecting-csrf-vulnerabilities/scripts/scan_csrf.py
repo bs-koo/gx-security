@@ -163,7 +163,7 @@ def main():
         sys.exit(2)
 
     stacks = detect_stacks(args.target)
-    engine = "semgrep" if shutil.which("semgrep") else "grep-fallback"
+    engine = "semgrep" if (shutil.which("semgrep") and not os.environ.get("GXSEC_NO_SEMGREP")) else "grep-fallback"
 
     if engine == "semgrep":
         findings, err = run_semgrep(args.target)
