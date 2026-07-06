@@ -33,6 +33,10 @@ except (AttributeError, ValueError):
 HERE = os.path.dirname(os.path.abspath(__file__))
 RULES = os.path.join(os.path.dirname(HERE), "rules", "auth-session.yml")
 
+# 초대형 단일 라인(minified 등)에 폴백 정규식을 적용하면 O(n²) 백트래킹으로
+# 사실상 멈출 수 있다(ReDoS). 이 길이를 넘는 라인은 매칭을 조용히 스킵한다.
+_MAX_LINE_LEN = 5000
+
 
 # ── 스택 감지 신호 ────────────────────────────────────────────────
 def detect_stacks(target):
@@ -43,7 +47,7 @@ def detect_stacks(target):
                    (".git", "node_modules", "build", "target", "dist", ".gradle",
                     ".dev", ".omc", ".humanize", ".idea", ".vscode")]
         for f in files:
-            if f in ("build.gradle.kts", "settings.gradle.kts", "build.gradle"):
+            if f in ("build.gradle.kts", "settings.gradle.kts", "build.gradle", "pom.xml"):
                 stacks.add("spring-modern")
             if f == "web.xml" and "WEB-INF" in root.replace("\\", "/"):
                 stacks.add("jsp-legacy")
@@ -163,6 +167,9 @@ def run_fallback(target):
             try:
                 with open(path, encoding="utf-8", errors="replace") as fh:
                     for i, line in enumerate(fh, 1):
+                        # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해 스킵
+                        if len(line) > _MAX_LINE_LEN:
+                            continue
                         for rule_id, stack, _exts, rx in rules:
                             if rx.search(line):
                                 findings.append({
@@ -258,6 +265,18 @@ def summarize(findings):
     return counts
 
 
+def build_warnings(detected_stacks, engine, candidate_count):
+    # 두 경고 모두 "0건" 맥락이므로 candidate_count==0 일 때만 노출한다.
+    # (후보가 1건 이상인데 unknown 스택이라는 이유로 "0건이..." 를 띄우면 결과와 모순 — Gemini 리뷰 반영)
+    w = []
+    if candidate_count == 0:
+        if detected_stacks == ["unknown"]:
+            w.append("프로젝트 구조를 인식하지 못했습니다. 0건이 스캔 대상 인식 실패 때문일 수 있습니다.")
+        if engine == "grep-fallback":
+            w.append("정규식 폴백 엔진은 재현율이 낮습니다. 0건이 안전을 보장하지 않습니다.")
+    return w
+
+
 def main():
     ap = argparse.ArgumentParser(description="SQIsoft 인증·세션·JWT 1차 스캐너")
     ap.add_argument("target", help="검사 대상 디렉토리")
@@ -269,7 +288,7 @@ def main():
         sys.exit(2)
 
     stacks = detect_stacks(args.target)
-    engine = "semgrep" if shutil.which("semgrep") else "grep-fallback"
+    engine = "semgrep" if (shutil.which("semgrep") and not os.environ.get("GXSEC_NO_SEMGREP")) else "grep-fallback"
 
     if engine == "semgrep":
         findings, err = run_semgrep(args.target)
@@ -296,6 +315,8 @@ def main():
                     findings.append(e)
                     existing_keys.add((e["file"], e["line"]))
 
+    warnings = build_warnings(stacks, engine, len(findings))
+
     result = {
         "target": args.target,
         "detected_stacks": stacks,
@@ -309,6 +330,8 @@ def main():
             "context-security.xml hash= 값, COOKIE_SECURE 환경변수 설정을 코드로 확인하세요."
         ),
     }
+    if warnings:
+        result["warnings"] = warnings
 
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -319,6 +342,10 @@ def main():
         for c in findings:
             print(f"  [{c['stack']}] {c['rule_id']}  {c['file']}:{c['line']}")
             print(f"      {c['snippet']}")
+        if warnings:
+            print("\n[!] 미탐 경고:")
+            for wmsg in warnings:
+                print(f"  - {wmsg}")
         print(
             "\n※ 후보일 뿐입니다. 2단계 AI 컨텍스트 검증 필요"
             " (JWT 서명 검증, 세션 재생성, 비밀번호 해시, 쿠키 보안속성)."

@@ -47,7 +47,7 @@ def detect_stacks(target):
                     ".dev", ".omc", ".humanize", ".idea", ".vscode")]
         base = os.path.basename(root)
         for f in files:
-            if f in ("build.gradle.kts", "settings.gradle.kts", "build.gradle"):
+            if f in ("build.gradle.kts", "settings.gradle.kts", "build.gradle", "pom.xml"):
                 stacks.add("spring-modern")
             if f == "web.xml" and "WEB-INF" in root.replace("\\", "/"):
                 stacks.add("jsp-legacy")
@@ -249,6 +249,18 @@ def summarize(findings):
     return counts
 
 
+def build_warnings(detected_stacks, engine, candidate_count):
+    # 두 경고 모두 "0건" 맥락이므로 candidate_count==0 일 때만 노출한다.
+    # (후보가 1건 이상인데 unknown 스택이라는 이유로 "0건이..." 를 띄우면 결과와 모순 — Gemini 리뷰 반영)
+    w = []
+    if candidate_count == 0:
+        if detected_stacks == ["unknown"]:
+            w.append("프로젝트 구조를 인식하지 못했습니다. 0건이 스캔 대상 인식 실패 때문일 수 있습니다.")
+        if engine == "grep-fallback":
+            w.append("정규식 폴백 엔진은 재현율이 낮습니다. 0건이 안전을 보장하지 않습니다.")
+    return w
+
+
 def main():
     ap = argparse.ArgumentParser(description="SQIsoft SQL Injection 1차 스캐너")
     ap.add_argument("target", help="검사 대상 디렉토리")
@@ -260,7 +272,7 @@ def main():
         sys.exit(2)
 
     stacks = detect_stacks(args.target)
-    engine = "semgrep" if shutil.which("semgrep") else "grep-fallback"
+    engine = "semgrep" if (shutil.which("semgrep") and not os.environ.get("GXSEC_NO_SEMGREP")) else "grep-fallback"
 
     if engine == "semgrep":
         findings, err = run_semgrep(args.target)
@@ -269,6 +281,8 @@ def main():
             engine, findings = "grep-fallback", run_fallback(args.target)
     else:
         findings = run_fallback(args.target)
+
+    warnings = build_warnings(stacks, engine, len(findings))
 
     result = {
         "target": args.target,
@@ -280,6 +294,8 @@ def main():
         "note": "후보 목록입니다. 최종 취약/오탐 판정은 SKILL.md 2단계 AI 검증으로 수행하세요. "
                 "MyBatis #{} 는 안전(오탐), ${}는 입력 출처·allowlist 확인 필수.",
     }
+    if warnings:
+        result["warnings"] = warnings
 
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -290,6 +306,10 @@ def main():
         for c in findings:
             print(f"  [{c['stack']}] {c['rule_id']}  {c['file']}:{c['line']}")
             print(f"      {c['snippet']}")
+        if warnings:
+            print("\n[!] 미탐 경고:")
+            for wmsg in warnings:
+                print(f"  - {wmsg}")
         print("\n※ 후보일 뿐입니다. 2단계 AI 컨텍스트 검증 필요")
         print("  (#{} → 오탐, ${} → 입력 출처·ORDER BY allowlist 확인).")
 
