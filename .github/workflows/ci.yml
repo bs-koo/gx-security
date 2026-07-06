@@ -5,6 +5,7 @@ on:
   pull_request:
 jobs:
   test:
+    # 폴백(grep-fallback) 경로 — 항상 green 주 게이트. semgrep 미설치 환경 동작 보장.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,4 +15,18 @@ jobs:
       - name: Install deps
         run: pip install requests PyYAML
       - name: Run unittest suite
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+
+  semgrep-tests:
+    # semgrep 경로(required, D3) — 골든셋 dual-catch·엔진 테스트·FR-4 실측을 semgrep 엔진으로 확정.
+    # 버전 핀(D5): 재현성 — FR-4 실측값·룰 동작 드리프트 방지. 필요시 B3에서 조정.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps (semgrep 핀)
+        run: for i in 1 2 3; do pip install requests PyYAML "semgrep==1.95.0" && break || sleep 5; done
+      - name: Run unittest suite (semgrep 경로)
         run: python -m unittest discover -s tests -p "test_*.py" -v

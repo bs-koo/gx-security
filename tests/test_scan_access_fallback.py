@@ -75,6 +75,79 @@ class TestPathVariableAnnotatedId(unittest.TestCase):
             'class Ctrl { public String get(@PathVariable("consequence") String c) { return "x"; } }\n')
         self.assertNotIn("spring-pathvariable-annotated-id", rules)
 
+    def test_pathvariable_avoid_not_flagged(self):
+        # @PathVariable("avoid") — "id" 부분포함이나 값 전체가 id/seq/no도 camelCase 접미도 아님 → 배제(==0)
+        rules = self._rule_ids(
+            "Ctrl.java",
+            'class Ctrl { public String get(@PathVariable("avoid") String a) { return "x"; } }\n')
+        self.assertNotIn("spring-pathvariable-annotated-id", rules)
+
+    def test_pathvariable_boardid_not_flagged(self):
+        # @PathVariable("boardid") — all-lowercase 접미 → camelCase 접미도 whole-word도 아님 → 배제(==0)(D1)
+        rules = self._rule_ids(
+            "Ctrl.java",
+            'class Ctrl { public String get(@PathVariable("boardid") Long b) { return "x"; } }\n')
+        self.assertNotIn("spring-pathvariable-annotated-id", rules)
+
+
+class TestPathVariableBareId(unittest.TestCase):
+    """FR-7 (D1, AC-9): bare @PathVariable id/seq/no 계열 변수명 워드바운더리 회귀.
+
+    spring-pathvariable-id 폴백 룰(어노테이션 값이 아닌 '변수명' 기준):
+      alt1 = 대소문자 구분 camelCase 접미(userId/boardSeq/certiNo/seqNo) 유지,
+      alt2 = whole-word 정확한 id/seq/no 유지, avoid/String avoid 는 둘 다 실패 → 배제.
+    all-lowercase 접미(boardid 등)는 미탐 손실 허용·문서화(D1).
+    """
+
+    def _rule_ids(self, filename, body):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, filename), "w", encoding="utf-8") as fh:
+                fh.write(body)
+            findings = scan_access.run_fallback(d)
+        return {c["rule_id"] for c in findings}
+
+    def test_bare_userid_flagged(self):
+        # @PathVariable Long userId — camelCase 접미 Id → 검출
+        rules = self._rule_ids(
+            "Ctrl.java",
+            'class Ctrl { public String get(@PathVariable Long userId) { return "x"; } }\n')
+        self.assertIn("spring-pathvariable-id", rules)
+
+    def test_bare_boardseq_flagged(self):
+        # @PathVariable Long boardSeq — camelCase 접미 Seq → 검출
+        rules = self._rule_ids(
+            "Ctrl.java",
+            'class Ctrl { public String get(@PathVariable Long boardSeq) { return "x"; } }\n')
+        self.assertIn("spring-pathvariable-id", rules)
+
+    def test_bare_certino_flagged(self):
+        # @PathVariable Long certiNo — camelCase 접미 No → 검출
+        rules = self._rule_ids(
+            "Ctrl.java",
+            'class Ctrl { public String get(@PathVariable Long certiNo) { return "x"; } }\n')
+        self.assertIn("spring-pathvariable-id", rules)
+
+    def test_bare_seqno_flagged(self):
+        # @PathVariable Long seqNo — camelCase 접미 No → 검출
+        rules = self._rule_ids(
+            "Ctrl.java",
+            'class Ctrl { public String get(@PathVariable Long seqNo) { return "x"; } }\n')
+        self.assertIn("spring-pathvariable-id", rules)
+
+    def test_bare_id_flagged(self):
+        # @PathVariable Long id — whole-word id → 검출
+        rules = self._rule_ids(
+            "Ctrl.java",
+            'class Ctrl { public String get(@PathVariable Long id) { return "x"; } }\n')
+        self.assertIn("spring-pathvariable-id", rules)
+
+    def test_bare_avoid_not_flagged(self):
+        # @PathVariable String avoid — "avoid" 는 camelCase 접미도 whole-word 도 아님 → 배제
+        rules = self._rule_ids(
+            "Ctrl.java",
+            'class Ctrl { public String get(@PathVariable String avoid) { return "x"; } }\n')
+        self.assertNotIn("spring-pathvariable-id", rules)
+
 
 if __name__ == "__main__":
     unittest.main()

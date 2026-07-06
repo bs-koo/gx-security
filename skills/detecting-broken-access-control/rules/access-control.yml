@@ -58,7 +58,7 @@ rules:
           }
       - metavariable-regex:
           metavariable: $ID
-          regex: '(?i)(id|seq|no|userId|memberId|certiNo|boardId)'
+          regex: '^(?i:id|seq|no)$|^[A-Za-z_]\w*(?:Id|Seq|No)$'
       - pattern-not: |
           @GetMapping($PATH)
           public $RET $METHOD(@PathVariable $TYPE $ID,
@@ -85,7 +85,7 @@ rules:
           - pattern: "@PathVariable(name=$NAME) $TYPE $VAR"
       - metavariable-regex:
           metavariable: $NAME
-          regex: '"(?i).*(?:id|seq|no)\b.*"'
+          regex: '^"(?:[A-Za-z_]\w*(?:Id|Seq|No)|(?i:id|seq|no))"$'
 
   - id: sqisoft-spring-anyrequestpermitall-risk
     languages: [java]

@@ -50,7 +50,7 @@ def detect_stacks(target):
     for root, dirs, files in os.walk(target):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         for f in files:
-            if f in ("build.gradle.kts", "settings.gradle.kts", "build.gradle"):
+            if f in ("build.gradle.kts", "settings.gradle.kts", "build.gradle", "pom.xml"):
                 stacks.add("spring-modern")
             if f == "web.xml" and "WEB-INF" in root.replace("\\", "/"):
                 stacks.add("jsp-legacy")
@@ -187,6 +187,15 @@ def summarize(findings):
     return counts
 
 
+def build_warnings(detected_stacks, engine, candidate_count):
+    w = []
+    if detected_stacks == ["unknown"]:
+        w.append("프로젝트 구조를 인식하지 못했습니다. 0건이 스캔 대상 인식 실패 때문일 수 있습니다.")
+    if candidate_count == 0 and engine == "grep-fallback":
+        w.append("정규식 폴백 엔진은 재현율이 낮습니다. 0건이 안전을 보장하지 않습니다.")
+    return w
+
+
 def main():
     ap = argparse.ArgumentParser(description="SQIsoft 파일 업로드 취약점 1차 스캐너 (CWE-434)")
     ap.add_argument("target", help="검사 대상 디렉토리")
@@ -208,6 +217,8 @@ def main():
     else:
         findings = run_fallback(args.target)
 
+    warnings = build_warnings(stacks, engine, len(findings))
+
     result = {
         "target": args.target,
         "detected_stacks": stacks,
@@ -221,6 +232,8 @@ def main():
             "저장 경로가 웹루트 밖인지를 코드+설정 파일로 추적해야 합니다."
         ),
     }
+    if warnings:
+        result["warnings"] = warnings
 
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -231,6 +244,10 @@ def main():
         for c in findings:
             print(f"  [{c['stack']}] {c['rule_id']}  {c['file']}:{c['line']}")
             print(f"      {c['snippet']}")
+        if warnings:
+            print("\n[!] 미탐 경고:")
+            for wmsg in warnings:
+                print(f"  - {wmsg}")
         print(
             "\n※ 후보일 뿐입니다. 2단계 AI 컨텍스트 검증 필요.\n"
             "  안전 패턴(validateFile/FileValidator 선행 + 웹루트 밖 저장)은 오탐 처리하세요."

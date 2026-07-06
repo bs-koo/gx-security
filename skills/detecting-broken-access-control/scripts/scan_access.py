@@ -47,7 +47,7 @@ def detect_stacks(target):
                    (".git", "node_modules", "build", "target", "dist", ".gradle",
                     ".dev", ".omc", ".humanize", ".idea", ".vscode")]
         for f in files:
-            if f in ("build.gradle.kts", "settings.gradle.kts", "build.gradle"):
+            if f in ("build.gradle.kts", "settings.gradle.kts", "build.gradle", "pom.xml"):
                 stacks.add("spring-modern")
             if f == "web.xml" and "WEB-INF" in root.replace("\\", "/"):
                 stacks.add("jsp-legacy")
@@ -98,13 +98,17 @@ FALLBACK_PATTERNS = [
      re.compile(r'@RequestMapping\s*\(\s*"(?:/adm|/admin)[^"]*"')),
 
     # spring-modern: @PathVariable로 id/seq 계열 파라미터를 받는 엔드포인트
+    # FR-7: camelCase 접미(Id/Seq/No, 대소문자 구분) 또는 whole-word id/seq/no만 매칭 →
+    # avoid("id" 부분포함) 과탐 배제. all-lowercase 접미(boardid)는 미탐 손실 허용(D1, Java 관례).
+    # 케이싱: 폴백 whole-word는 첫글자만 case-무관([Ss]eq), semgrep(access-control.yml)은 전체 case-무관(^(?i:...)$).
     ("spring-pathvariable-id", "spring-modern", (".java", ".kt"),
-     re.compile(r'@PathVariable\s+(?:\w+\s+)?(\w*[Ii][Dd]\w*|\w*[Ss]eq\w*|\w*[Nn]o\b)')),
+     re.compile(r'@PathVariable\s+(?:\w+\s+)?([A-Za-z_]\w*(?:Id|Seq|No)\b|\b(?:[Ii][Dd]|[Ss]eq|[Nn]o)\b)')),
 
     # spring-modern: @PathVariable("id")/@PathVariable(name="userId") 어노테이션 값 지정형
-    # value= 및 name= 별칭 모두 처리 + id/seq/no 부분매칭 (변수명이 아닌 어노테이션 값)
+    # value= 및 name= 별칭 모두 처리. 값 전체가 camelCase 접미(userId/boardSeq/certiNo)이거나
+    # whole-word id/seq/no 일 때만 후보화(bare 룰과 동일 D1 스타일). avoid/boardid 과탐 배제.
     ("spring-pathvariable-annotated-id", "spring-modern", (".java", ".kt"),
-     re.compile(r'@PathVariable\s*\(\s*(?:(?:value|name)\s*=\s*)?"[^"]*(?:[Ii][Dd]|[Ss]eq|[Nn]o)\b[^"]*"')),
+     re.compile(r'@PathVariable\s*\(\s*(?:(?:value|name)\s*=\s*)?"(?:[A-Za-z_]\w*(?:Id|Seq|No)|(?i:id|seq|no))"')),
 
     # spring-modern: anyRequest().permitAll() — 사각지대 위험
     ("spring-anyrequestpermitall", "spring-modern", (".java", ".kt"),
@@ -214,6 +218,15 @@ def summarize(findings):
     return counts
 
 
+def build_warnings(detected_stacks, engine, candidate_count):
+    w = []
+    if detected_stacks == ["unknown"]:
+        w.append("프로젝트 구조를 인식하지 못했습니다. 0건이 스캔 대상 인식 실패 때문일 수 있습니다.")
+    if candidate_count == 0 and engine == "grep-fallback":
+        w.append("정규식 폴백 엔진은 재현율이 낮습니다. 0건이 안전을 보장하지 않습니다.")
+    return w
+
+
 def main():
     ap = argparse.ArgumentParser(description="SQIsoft 접근통제 1차 스캐너")
     ap.add_argument("target", help="검사 대상 디렉토리")
@@ -245,6 +258,8 @@ def main():
             if (e["file"], e["line"]) not in existing_keys:
                 findings.append(e)
 
+    warnings = build_warnings(stacks, engine, len(findings))
+
     result = {
         "target": args.target,
         "detected_stacks": stacks,
@@ -258,6 +273,8 @@ def main():
             "AuthInterceptor mode 설정을 코드로 직접 확인하세요."
         ),
     }
+    if warnings:
+        result["warnings"] = warnings
 
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -268,6 +285,10 @@ def main():
         for c in findings:
             print(f"  [{c['stack']}] {c['rule_id']}  {c['file']}:{c['line']}")
             print(f"      {c['snippet']}")
+        if warnings:
+            print("\n[!] 미탐 경고:")
+            for wmsg in warnings:
+                print(f"  - {wmsg}")
         print(
             "\n※ 후보일 뿐입니다. 2단계 AI 컨텍스트 검증 필요"
             " (소유권 검증, AuthInterceptor mode, DB 룰 테이블 유무)."
