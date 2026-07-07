@@ -80,9 +80,9 @@ rules:
       confidence: needs-context
     patterns:
       - pattern-either:
-          - pattern: "@PathVariable($NAME) $TYPE $VAR"
-          - pattern: "@PathVariable(value=$NAME) $TYPE $VAR"
-          - pattern: "@PathVariable(name=$NAME) $TYPE $VAR"
+          - pattern: "$RET $M(..., @PathVariable($NAME) $TYPE $VAR, ...) { ... }"
+          - pattern: "$RET $M(..., @PathVariable(value=$NAME) $TYPE $VAR, ...) { ... }"
+          - pattern: "$RET $M(..., @PathVariable(name=$NAME) $TYPE $VAR, ...) { ... }"
       - metavariable-regex:
           metavariable: $NAME
           regex: '^"(?:[A-Za-z_]\w*(?:Id|Seq|No)|(?i:id|seq|no))"$'

@@ -26,7 +26,9 @@ rules:
           - pattern: new File($BASE + $PARAM)
           - pattern: Paths.get($BASE).resolve($PARAM)
       - pattern-not-inside: |
-          ... getCanonicalPath() ...
+          ...
+          $X.getCanonicalPath();
+          ...
 
   - id: sqisoft-spring-filesystemresource-requestparam
     languages: [java]
@@ -44,7 +46,9 @@ rules:
           - pattern: new FileSystemResource($PATH)
           - pattern: new UrlResource($PATH)
       - pattern-not-inside: |
-          ... getCanonicalPath() ...
+          ...
+          $X.getCanonicalPath();
+          ...
 
   - id: sqisoft-spring-normalize-without-startswith
     languages: [java]
@@ -60,9 +64,14 @@ rules:
       confidence: needs-context
     patterns:
       - pattern: $PATH.normalize()
+      # 체이닝 한 줄(path.normalize().startsWith(base))도 안전 — 오탐 방지
+      - pattern-not-inside: $PATH.normalize().startsWith(...)
       - pattern-not-inside: |
-          ... $PATH.normalize() ...
-          ... startsWith(...) ...
+          ...
+          $PATH.normalize();
+          ...
+          $Y.startsWith(...);
+          ...
 
   - id: sqisoft-zipslip-no-canonical-check
     languages: [java]
@@ -79,7 +88,9 @@ rules:
     patterns:
       - pattern: new File($DEST, $ENTRY.getName())
       - pattern-not-inside: |
-          ... getCanonicalPath() ...
+          ...
+          $X.getCanonicalPath();
+          ...
 
   # ───────────────────────── jsp-legacy ─────────────────────────
 
@@ -101,7 +112,9 @@ rules:
           - pattern: $PARAM.contains("..")
           - pattern: $PARAM.indexOf("../") != -1
       - pattern-not-inside: |
-          ... getCanonicalPath() ...
+          ...
+          $X.getCanonicalPath();
+          ...
 
   - id: sqisoft-jsp-requestparam-new-file
     languages: [java]
@@ -118,7 +131,9 @@ rules:
     patterns:
       - pattern: new File($REQ.getParameter($KEY))
       - pattern-not-inside: |
-          ... getCanonicalPath() ...
+          ...
+          $X.getCanonicalPath();
+          ...
 
   - id: sqisoft-jsp-startswith-without-canonical
     languages: [java]
@@ -134,6 +149,11 @@ rules:
       confidence: needs-context
     patterns:
       - pattern: $PARAM.startsWith($BASE)
+      # 체이닝 한 줄(file.getCanonicalPath().startsWith(base))도 안전 — 오탐 방지
+      - pattern-not: $X.getCanonicalPath().startsWith($BASE)
       - pattern-not-inside: |
-          ... getCanonicalPath() ...
-          ... startsWith($BASE) ...
+          ...
+          $X.getCanonicalPath();
+          ...
+          $Y.startsWith($BASE);
+          ...

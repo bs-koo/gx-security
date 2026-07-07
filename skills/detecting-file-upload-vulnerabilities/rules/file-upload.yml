@@ -63,7 +63,9 @@ rules:
     patterns:
       - pattern: new File($BASE, $FILE.getOriginalFilename())
       - pattern-not-inside: |
-          ... Paths.get($FILE.getOriginalFilename()).getFileName() ...
+          ...
+          Paths.get($FILE.getOriginalFilename()).getFileName();
+          ...
 
   - id: sqisoft-spring-contenttype-only-check
     languages: [java]
@@ -82,7 +84,10 @@ rules:
           ...
           $FILE.transferTo($DEST);
       - pattern-not-inside: |
-          ... ALLOWED_EXTENSIONS ... $FILE.transferTo($DEST);
+          ...
+          ALLOWED_EXTENSIONS.contains(...);
+          ...
+          $FILE.transferTo($DEST);
 
   # ───────────────────────── jsp-legacy ─────────────────────────
 
@@ -154,8 +159,11 @@ rules:
       stack: spring-modern
       confidence: needs-context
     patterns:
-      - pattern: |
+      - pattern: new File($BASE, $E.getName())
+      - pattern-inside: |
           ZipEntry $E = ...;
-          ... new File($BASE, $E.getName()) ...
+          ...
       - pattern-not-inside: |
-          ... getCanonicalPath() ...
+          ...
+          $X.getCanonicalPath();
+          ...

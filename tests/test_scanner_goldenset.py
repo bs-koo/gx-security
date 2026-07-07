@@ -92,23 +92,57 @@ class TestGoldensetAllScanners(unittest.TestCase):
                     f"{key}: 안전 픽스처는 후보 0 이어야 한다")
 
 
-@unittest.skipUnless(shutil.which("semgrep"), "semgrep 미설치 → 스킵(CI에서 관측)")
-class TestSemgrepDiscovery(unittest.TestCase):
-    """semgrep 경로 비차단 발견 리포트 — 룰 전역 파탄을 관측하되 job 을 red 로 만들지 않는다.
+def _scan_fixture_semgrep(scanner_key, kind):
+    """semgrep 경로 검증용: 픽스처를 tests/ 밖 임시 디렉토리로 복사한 뒤 스캔한다.
 
-    M5 CI 실측상 semgrep 룰이 repo 전역 비작동(로드실패 폴백강등 또는 detect-0)이다. 룰 수정은
-    별도 대형 과제(로컬 semgrep 환경 필요)이므로, 여기서는 9스캐너 semgrep 경로(force_fallback=False)
-    의 engine·candidate_count 를 [SEMGREP-DISCOVERY] 로그로 남기고 trivial 단언만 둔다.
-    폴백 재현율은 TestGoldensetAllScanners 가 하드 가드한다.
+    semgrep 은 기본 .semgrepignore 로 tests/ 를 스킵하므로 tests/fixtures 를 그대로 스캔하면
+    'Ran N rules on 0 files' 로 항상 0건이 된다(M5 CI 'detect-0' 의 정체). 실제 소스처럼
+    tests/ 밖에서 스캔해야 semgrep 룰의 재현율이 측정된다. force_fallback=False 로 semgrep 강제.
+    """
+    src = os.path.join(_ROOT, "tests", "fixtures", scanner_key, kind)
+    tmp = tempfile.mkdtemp(prefix=f"gxsec_sg_{scanner_key}_{kind}_")
+    try:
+        for name in os.listdir(src):
+            sp = os.path.join(src, name)
+            if os.path.isfile(sp):
+                shutil.copy(sp, os.path.join(tmp, name))
+        return _scan_abs(tmp, SCANNERS[scanner_key], force_fallback=False)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@unittest.skipUnless(shutil.which("semgrep"), "semgrep 미설치 → 스킵(CI semgrep-tests job에서 검증)")
+class TestSemgrepGoldenset(unittest.TestCase):
+    """semgrep 경로 재현율/정밀도 하드 가드 — 룰이 로드+검출됨을 semgrep 설치 job 에서 강제한다.
+
+    M5 이전에는 semgrep 룰이 전역 파탄(로드실패 폴백강등 3파일 + access @PathVariable 파라미터
+    미검출)이라 이 검증이 비차단 관측(구 TestSemgrepDiscovery)에 머물렀다. M5 에서 룰을 수정해
+    양엔진(grep-fallback·semgrep)이 모두 vuln>=1 / safe==0 을 만족하므로 하드 게이트로 승격한다.
+    폴백 재현율은 TestGoldensetAllScanners 가 별도로 하드 가드한다(dual-engine).
     """
 
-    def test_semgrep_paths_report(self):
+    def test_semgrep_engine_selected(self):
+        # 이 클래스가 도는데 grep-fallback 이면 엔진 선택 로직이 깨진 것 → 명시 실패.
+        r = _scan_fixture_semgrep("sqli", "vuln")
+        self.assertEqual(r["engine"], "semgrep",
+                         "semgrep 설치 환경인데 engine 이 semgrep 이 아니다")
+
+    def test_vuln_detected_by_semgrep(self):
         for key in SCANNERS:
             with self.subTest(scanner=key):
-                r = _scan_fixture(key, "vuln", force_fallback=False)
-                print(f"[SEMGREP-DISCOVERY] {key}: engine={r['engine']} "
-                      f"count={r['candidate_count']}")
-                self.assertGreaterEqual(r["candidate_count"], 0)  # 비차단 — 관측만
+                r = _scan_fixture_semgrep(key, "vuln")
+                self.assertEqual(r["engine"], "semgrep", f"{key}: semgrep 엔진이어야 한다")
+                self.assertGreaterEqual(
+                    r["candidate_count"], 1,
+                    f"{key}: semgrep 룰이 취약 픽스처를 검출해야 한다(재현율)")
+
+    def test_safe_clean_by_semgrep(self):
+        for key in SCANNERS:
+            with self.subTest(scanner=key):
+                r = _scan_fixture_semgrep(key, "safe")
+                self.assertEqual(
+                    r["candidate_count"], 0,
+                    f"{key}: semgrep 룰이 안전 픽스처를 오탐하면 안 된다(정밀도)")
 
 
 @unittest.skipUnless(shutil.which("semgrep"), "semgrep 미설치 → 스킵(CI에서 관측)")
