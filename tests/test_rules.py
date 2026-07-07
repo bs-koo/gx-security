@@ -133,6 +133,11 @@ class TestRuleFilesSemgrepLoadable(unittest.TestCase):
                         ["semgrep", "--config", path, "--json", "--quiet", tmp],
                         capture_output=True, text=True,
                         encoding="utf-8", errors="replace", timeout=180)
+                    # semgrep --json: valid=0, findings=0(--json 은 findings 로 rc 안 올림), 룰/설정에러=2.
+                    # 비정상 종료 시 stdout 이 비어 'or "{}"' 로 파싱 통과→위양성이 되는 사각지대 차단.
+                    if proc.returncode != 0:
+                        self.fail(f"semgrep 실행 실패 (rc={proc.returncode}): "
+                                  f"{proc.stderr[:500]}")
                     try:
                         data = json.loads(proc.stdout or "{}")
                     except json.JSONDecodeError:

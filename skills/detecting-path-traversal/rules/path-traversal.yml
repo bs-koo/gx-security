@@ -64,6 +64,8 @@ rules:
       confidence: needs-context
     patterns:
       - pattern: $PATH.normalize()
+      # 체이닝 한 줄(path.normalize().startsWith(base))도 안전 — 오탐 방지
+      - pattern-not-inside: $PATH.normalize().startsWith(...)
       - pattern-not-inside: |
           ...
           $PATH.normalize();
@@ -147,6 +149,8 @@ rules:
       confidence: needs-context
     patterns:
       - pattern: $PARAM.startsWith($BASE)
+      # 체이닝 한 줄(file.getCanonicalPath().startsWith(base))도 안전 — 오탐 방지
+      - pattern-not: $X.getCanonicalPath().startsWith($BASE)
       - pattern-not-inside: |
           ...
           $X.getCanonicalPath();
