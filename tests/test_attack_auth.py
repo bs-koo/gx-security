@@ -51,6 +51,32 @@ class TestTamperJwt(unittest.TestCase):
         self.assertEqual(attack_auth.tamper_jwt(tok), {})
 
 
+class TestIsJwt(unittest.TestCase):
+    """무상태 게이트용 구조적 JWT 판정 — opaque/JWE/손상은 안전측 False(D2)."""
+
+    def test_valid_jwt_true(self):
+        tok = _make_jwt({"alg": "HS256"}, {"sub": "u", "exp": 9999999999})
+        self.assertTrue(attack_auth._is_jwt(tok))
+
+    def test_opaque_token_false(self):
+        self.assertFalse(attack_auth._is_jwt("T"))
+        self.assertFalse(attack_auth._is_jwt("opaque-session-id-123"))
+
+    def test_two_segments_false(self):
+        self.assertFalse(attack_auth._is_jwt("a.b"))
+
+    def test_header_without_alg_false(self):
+        tok = _make_jwt({"typ": "JWT"}, {"sub": "u"})  # header에 alg 없음
+        self.assertFalse(attack_auth._is_jwt(tok))
+
+    def test_non_dict_payload_false(self):
+        tok = _make_jwt({"alg": "HS256"}, 123)  # payload가 dict 아님
+        self.assertFalse(attack_auth._is_jwt(tok))
+
+    def test_none_token_false(self):
+        self.assertFalse(attack_auth._is_jwt(None))
+
+
 class TestRunJwtTamper(unittest.TestCase):
     @patch("tools.dyn_session.request")
     def test_2xx_variant_is_vulnerable(self, mock_req):
@@ -107,6 +133,24 @@ class TestTokenReuse(unittest.TestCase):
         ]
         out = attack_auth.run_token_reuse("http://h", "/api/v1/users/me", "T", "/api/v1/auth/logout")
         self.assertTrue(out["vulnerable"])
+        self.assertNotIn("undetermined", out)  # opaque 토큰은 무상태 게이트 미해당(회귀)
+
+    @patch("tools.dyn_session.request")
+    def test_stateless_jwt_reuse_is_undetermined(self, mock_req):
+        # 재발사 2xx여도 토큰이 구조적 JWT(무상태)면 서버측 즉시 폐기 원천 불가 → 미확정(취약 단정 X).
+        mock_req.side_effect = [
+            {"status": 200, "body": "", "elapsed": 0.0, "headers": {}},  # before
+            {"status": 401, "body": "", "elapsed": 0.0, "headers": {}},  # anon(인증 적용)
+            {"status": 200, "body": "", "elapsed": 0.0, "headers": {}},  # logout
+            {"status": 200, "body": "", "elapsed": 0.0, "headers": {}},  # after
+        ]
+        jwt = _make_jwt({"alg": "HS256"}, {"sub": "u", "exp": 9999999999})
+        out = attack_auth.run_token_reuse("http://h", "/api/v1/users/me", jwt,
+                                          "/api/v1/auth/logout")
+        self.assertFalse(out["vulnerable"])
+        self.assertTrue(out["undetermined"])
+        self.assertTrue(out["stateless"])
+        self.assertIn("note", out)
 
     @patch("tools.dyn_session.request")
     def test_reuse_after_logout_revoked(self, mock_req):

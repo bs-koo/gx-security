@@ -6,7 +6,11 @@ on:
 jobs:
   test:
     # 폴백(grep-fallback) 경로 — 항상 green 주 게이트. semgrep 미설치 환경 동작 보장.
-    runs-on: ubuntu-latest
+    # 크로스플랫폼(ubuntu+windows) 매트릭스 — 경로/인코딩 회귀 방지. 스텝은 크로스플랫폼 유지.
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

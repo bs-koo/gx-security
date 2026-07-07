@@ -1,6 +1,7 @@
 import importlib.util
 import os
 import unittest
+from unittest.mock import MagicMock, patch
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 _MOD = os.path.join(_ROOT, "skills", "exploiting-sql-injection",
@@ -30,6 +31,25 @@ class TestSqlmapVerdict(unittest.TestCase):
         # 대소문자 무관 판정(입력은 대문자 DBMS)
         out = "the back-end DBMS is PostgreSQL"
         self.assertTrue(attack_sqli._classify_sqlmap(out))
+
+
+class TestSendNoRedirect(unittest.TestCase):
+    """FR-4 — _send는 리다이렉트를 추종하지 않고 원응답으로 판정한다(추종 시 미탐 방지)."""
+
+    @patch("requests.get")
+    def test_get_no_follow_redirect(self, mock_get):
+        mock_get.return_value = MagicMock(status_code=200, text="", content=b"")
+        attack_sqli._send("http://app.local/board?id=1", "id", "1' OR '1'='1", "get", {})
+        _, kwargs = mock_get.call_args
+        self.assertFalse(kwargs["allow_redirects"])
+
+    @patch("requests.post")
+    def test_post_no_follow_redirect(self, mock_post):
+        mock_post.return_value = MagicMock(status_code=200, text="", content=b"")
+        attack_sqli._send("http://app.local/login", "username", "admin'--",
+                          "post", {"password": "x"})
+        _, kwargs = mock_post.call_args
+        self.assertFalse(kwargs["allow_redirects"])
 
 
 if __name__ == "__main__":

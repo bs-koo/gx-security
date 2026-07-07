@@ -62,11 +62,23 @@ python skills/auditing-web-application-security/scripts/audit.py "<소스경로>
 - **접근통제(IDOR/BFLA)**는 정적 후보(`by_skill`)를 받아 연계하며, **테스트 계정(권한 교차용) 유무**로 판정 수준이 갈린다 — `run_access_dynamic`이 계정이 없으면 정적 후보만 남기는 `static-only`, 계정이 있으면 실제 권한 교차 호출로 확정하는 `dynamic`으로 구분한다.
 - **인증·세션·JWT**도 마찬가지로 `run_auth_dynamic`이 **계정과 보호 엔드포인트(`--probe`) 유무**로 판정 수준이 갈린다 — probe와 로그인 계정이 모두 있으면 JWT 변조·토큰 재사용·쿠키 속성을 실제 발사하는 `dynamic`, **로그인 계정(`--user-a-id/pw`)만 있고 probe가 없으면** 로그인 응답 쿠키 속성만 발사하는 `partial`(JWT·재사용은 정적 추정), 계정이 전무하면 발사하지 않는 `static-only`로 구분한다. **`--token-a`(토큰 직접 주입)는 로그인을 생략해 Set-Cookie가 없으므로 쿠키 검사도 건너뛴다** — probe가 없으면 발사 0건인 `static-only`이고(probe가 있으면 JWT·재사용은 발사되어 `dynamic`), 따라서 `partial`은 실제 로그인(`--user-a-id/pw`)일 때만 성립한다.
 - **SSRF/오픈 리다이렉트**도 `run_ssrf_dynamic`이 **표적과 계정 유무**로 판정 수준이 갈린다 — 표적(`--redirect-target`/`--ssrf-target`)과 계정(`--token-a` 또는 `--user-a-id/pw`)이 **모두** 있으면 리다이렉트 파라미터·SSRF 주입점에 실제 발사하는 `dynamic`, 표적이나 계정이 하나라도 없으면 발사하지 않는 `static-only`로 구분한다(표적을 우선 판정한다). 확정은 `Location`이 외부 호스트면 오픈 리다이렉트, OOB canary 콜백 수신이면 블라인드 SSRF까지 잡는다(비파괴 GET).
-- **경로조작/파일업로드**도 `run_pathupload_dynamic`이 **표적과 계정 유무**로 판정 수준이 갈린다 — 표적(`--traversal-target`/`--upload-target`)과 계정(`--token-a` 또는 `--user-a-id/pw`)이 **모두** 있으면 실제 발사하는 `dynamic`, 표적이나 계정이 하나라도 없으면 발사하지 않는 `static-only`로 구분한다(표적을 우선 판정한다). 경로조작은 응답 본문에 파일 내용 시그니처(`root:.*:0:0` 등)가 나오면 취약(비파괴 GET), 미도달(non-2xx)은 방어가 아닌 미확정으로 구분한다. **파일업로드는 서버에 파일을 실제로 기록하는 파괴적 검사이므로 `--allow-destructive` 옵트인 게이트가 없으면 발사하지 않으며**(오케스트레이터·익스플로잇터 이중 게이트), 위험 확장자(.jsp) 마커가 2xx 수용되면 취약(Medium)·회수(웹루트 저장)까지 확인되면 가중(High)으로 확정하고 남은 마커 파일 정리 안내를 노출한다.
+- **경로조작/파일업로드**도 `run_pathupload_dynamic`이 **표적과 계정 유무**로 판정 수준이 갈린다 — 표적(`--traversal-target`/`--upload-target`)과 계정(`--token-a` 또는 `--user-a-id/pw`)이 **모두** 있으면 실제 발사하는 `dynamic`, 표적이나 계정이 하나라도 없으면 발사하지 않는 `static-only`로 구분한다(표적을 우선 판정한다). 경로조작은 응답 본문에 파일 내용 시그니처(`root:.*:0:0` 등)가 나오면 취약(비파괴 GET), 미도달(non-2xx)은 방어가 아닌 미확정으로 구분한다. **파일업로드는 서버에 파일을 실제로 기록하는 파괴적 검사이므로 `--allow-destructive` 옵트인 게이트가 없으면 발사하지 않으며**(오케스트레이터·익스플로잇터 이중 게이트), 위험 확장자(.jsp) 마커가 2xx 수용됐으나 회수(웹루트 저장)가 확인되지 않으면 **미확정**(서버측 후처리 — 격리·개명·스캔 가능성으로 취약 단정 불가), 회수까지 확인되면 **취약(High)**으로 확정하고 남은 마커 파일 정리 안내를 노출한다.
 - XSS는 저장·DOM형이면 Playwright MCP로 브라우저 실제 실행까지 확인한다.
 
 ### 4단계 — 통합 리포트 작성·저장
 모든 취약점 클래스를 **하나의 리포트**로 통합한다. `reports/audit-<프로젝트>.md`에 저장.
+
+## 프리셋 자동 점검 미커버 범위
+
+`audit.py` 기본 프리셋 실행만으로는 아래 항목이 **자동으로 확정되지 않는다**. 리포트에 "미커버/미확정"으로 명시하고, 필요 시 수동 보강한다. **자동 점검 0건이 안전을 의미하지 않는다.**
+
+| 항목 | 미커버 사유 | 수동 보강 |
+|---|---|---|
+| 저장형·DOM XSS 브라우저 실행 | `attack_xss.py`는 HTTP 응답 반사만 검사 — 저장 후 조회 시 실행·클라이언트 DOM 조작은 서버 응답에 반사되지 않아 미확인 | `exploiting-xss` 2단계-b의 Playwright MCP로 브라우저 실제 실행 확인 |
+| 접근통제/인증 교차검증 | 권한 교차용 테스트 계정(A/B)이 없으면 실제 교차 호출 불가 → `static-only`(정적 후보만) | `--user-a-id/pw`·`--user-b-id/pw` 또는 `--token-a/-b`로 계정 제공해 `dynamic` 판정 |
+| 파괴적 파일업로드 | `--allow-destructive` 게이트가 없으면 미발사, 있어도 `--retrieve-base`가 없으면 회수(웹루트 저장) 미확인 → **미확정** | 격리 스테이징에서 `--allow-destructive` + `--retrieve-base` 지정(전용 테스트 계정) |
+| 비-sef 로그인 흐름 | 프리셋 로그인 시퀀스는 sef-2026 기준 — 비표준 로그인 앱은 자동 로그인이 실패해 인증·접근통제 동적이 `login-failed`/`static-only`로 남음 | `--login-path`·`--login-body`·`--token-path` 등으로 앱별 로그인 오버라이드 지정 |
+| grep-폴백 낮은 탐지율 | `semgrep` 미설치 시 정규식 폴백 — recall(탐지율)이 낮아 미탐 위험이 큼 | `pip install semgrep` 설치 후 재실행(**후보 0건 ≠ 안전**) |
 
 ## Output Format
 

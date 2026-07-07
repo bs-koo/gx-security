@@ -101,11 +101,14 @@ class TestMarkerUpload(unittest.TestCase):
 
 class TestRunUpload(unittest.TestCase):
     @patch("tools.dyn_session.request")
-    def test_accepted_vulnerable(self, mock_req):
+    def test_accepted_without_retrieve_is_undetermined(self, mock_req):
+        # retrieve_base 없이 2xx 수용만으로는 취약 확정 아님 → 미확정(undetermined) + note.
         mock_req.return_value = {"status": 200, "body": "ok", "elapsed": 0.0, "headers": {}}
         out = A.run_upload("http://app.local", "/api/upload")
         self.assertTrue(out["accepted"])
-        self.assertTrue(out["vulnerable"])
+        self.assertFalse(out["vulnerable"])
+        self.assertTrue(out["undetermined"])
+        self.assertIn("note", out)
         self.assertEqual(out["kind"], "file-upload")
 
     @patch("tools.dyn_session.request")
@@ -126,6 +129,8 @@ class TestRunUpload(unittest.TestCase):
             out = A.run_upload("http://app.local", "/api/upload",
                                retrieve_base="http://app.local/files/")
         self.assertTrue(out["retrievable"])
+        self.assertTrue(out["vulnerable"])         # 회수 확인 → 취약 확정(High)
+        self.assertFalse(out["undetermined"])
 
     @patch("tools.dyn_session.request")
     def test_partial_marker_not_retrievable(self, mock_req):

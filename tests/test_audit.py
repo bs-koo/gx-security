@@ -526,19 +526,23 @@ class TestPathuploadRender(unittest.TestCase):
         self.assertIn("🔴", text)
         self.assertIn("High", text)
 
-    def test_render_upload_medium_accepted(self):
-        # AC-11: 2xx 수용·회수 실패 → 위험확장자 수용(Medium)
+    def test_render_upload_undetermined_accepted(self):
+        # FR-2/AC-3: 2xx 수용·재조회 미확인 → 실제 자식 계약(vulnerable=False, undetermined=True) →
+        # '미확정'으로 렌더(더는 '방어'로 오표기하지 않음). 합성 vulnerable=True로 통과하던 사각지대 제거.
         text = "\n".join(audit.render_pathupload(self._dynamic(
-            [{"kind": "file-upload", "vulnerable": True, "accepted": True,
-              "retrievable": False, "leftover": "gxmarker_x.jsp", "status": 200}])))
-        self.assertIn("Medium", text)
+            [{"kind": "file-upload", "vulnerable": False, "accepted": True,
+              "retrievable": False, "undetermined": True, "leftover": "gxmarker_x.jsp",
+              "note": "2xx 수용됐으나 재조회 미확인 — 후처리 가능성, 취약 미확정", "status": 200}])))
+        self.assertIn("미확정", text)
         self.assertNotIn("High", text)
+        self.assertNotIn("방어(거부)", text)
 
     def test_leftover_notice_only_when_accepted(self):
-        # AC-12: accepted된 업로드 leftover → '정리 필요' 안내 노출
+        # AC-12: accepted된 업로드 leftover → '정리 필요' 안내 노출(accepted 기준, verdict 무관)
         text = "\n".join(audit.render_pathupload(self._dynamic(
-            [{"kind": "file-upload", "vulnerable": True, "accepted": True,
-              "retrievable": False, "leftover": "gxmarker_x.jsp", "status": 200}])))
+            [{"kind": "file-upload", "vulnerable": False, "accepted": True,
+              "retrievable": False, "undetermined": True, "leftover": "gxmarker_x.jsp",
+              "status": 200}])))
         self.assertIn("정리 필요", text)
         self.assertIn("gxmarker_x.jsp", text)
 
@@ -630,6 +634,21 @@ class TestSsrfFindingLine(unittest.TestCase):
     def test_error_and_skipped_priority(self):
         self.assertIn("오류", audit._ssrf_finding_line({"kind": "ssrf", "error": "boom"}))
         self.assertIn("미발사", audit._ssrf_finding_line({"kind": "ssrf", "skipped": "표적 없음"}))
+
+
+class TestVerdictLabel(unittest.TestCase):
+    """FR-2/FR-3 미확정 3상태 라벨 — 취약>미확정>방어 우선순위(무상태 JWT·업로드 수용-미회수 렌더 회귀)."""
+
+    def test_vulnerable_wins(self):
+        self.assertIn("취약", audit._verdict_label({"vulnerable": True, "undetermined": True}))
+
+    def test_undetermined_when_not_vulnerable(self):
+        # 무상태 JWT 재사용/업로드 2xx 수용-미회수: vulnerable=False + undetermined=True → 미확정
+        self.assertIn("미확정", audit._verdict_label(
+            {"vulnerable": False, "undetermined": True, "stateless": True}))
+
+    def test_defended_when_neither(self):
+        self.assertEqual("방어", audit._verdict_label({"vulnerable": False}))
 
 
 if __name__ == "__main__":

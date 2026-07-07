@@ -466,6 +466,20 @@ def run_pathupload_dynamic(target, creds, traversal_target, upload_target, uploa
         return {"error": str(e)[:120], "upload_target": bool(upload_target)}
 
 
+def _verdict_label(f):
+    """finding 1건의 판정 3상태 라벨을 반환한다(취약 > 미확정 > 방어 우선순위).
+
+    vulnerable=True → 🔴 취약, vulnerable=False+undetermined=True → 🟡 미확정,
+    둘 다 아니면 방어. undetermined(업로드 2xx 수용-미회수·무상태 JWT 재사용 등
+    증거 불충분 케이스)를 '방어'로 오표기하지 않기 위한 공통 렌더 헬퍼(FR-2/3 미확정 3상태).
+    """
+    if f.get("vulnerable"):
+        return "🔴 취약"
+    if f.get("undetermined"):
+        return "🟡 미확정"
+    return "방어"
+
+
 def _ssrf_unreached(f):
     """SSRF/오픈리다이렉트 finding이 '프로브 미도달'(전변형 오류/status None)인지 판정한다.
 
@@ -583,14 +597,19 @@ def render_pathupload(res):
                 else:
                     lines.append(f"    - [{kind}] ⚠ 미확정 — 미도달/차단 추정(엔드포인트·주입점 확인)")
             elif kind == "file-upload":
+                # FR-2 미확정 3상태: 재조회 확인=취약(High), 2xx 수용-미회수=미확정(방어 아님), 그 외=방어.
                 if f.get("retrievable"):
                     lines.append(f"    - [{kind}] 🔴 취약(High·웹루트 저장 확인)")
-                elif f.get("vulnerable"):
-                    lines.append(f"    - [{kind}] 🔴 취약(Medium·위험확장자 2xx 수용)")
+                elif f.get("undetermined"):
+                    lines.append(f"    - [{kind}] 🟡 미확정(2xx 수용·재조회 미확인 — 서버측 후처리 가능성, 확인 필요)")
                 else:
                     lines.append(f"    - [{kind}] 방어(거부)")
             else:
-                lines.append(f"    - [{kind}] {'🔴 취약' if f.get('vulnerable') else '방어'}")
+                # FR-3 등 미확정(무상태 JWT 재사용 등)을 '방어'로 오표기하지 않도록 3상태 라벨 사용.
+                _line = f"    - [{kind}] {_verdict_label(f)}"
+                if f.get("undetermined") and f.get("note"):
+                    _line += f" — {str(f.get('note')).split('.')[0]}"
+                lines.append(_line)
         # MUST#3: 종류별 표적 미지정 개별 표기(targets 소비, SSRF 동형). 미지정 표적을
         # '검사됨·방어'로 오추론하지 않게 '미검사'로 명시한다.
         tg = res.get("targets", {})
@@ -790,7 +809,11 @@ def main():
             elif f.get("error"):
                 print(f"    - [{f.get('kind')}] ⚠ 오류: {f.get('error')}")
             else:
-                print(f"    - [{f.get('kind')}] {'🔴 취약' if f.get('vulnerable') else '방어'}")
+                # FR-3: 무상태 JWT 토큰 재사용 등 undetermined는 '방어'가 아니라 '미확정'으로 표기.
+                _lbl = _verdict_label(f)
+                print(f"    - [{f.get('kind')}] {_lbl}")
+                if f.get("undetermined") and f.get("note"):
+                    print(f"        · {str(f.get('note')).split('.')[0]}")
                 # jwt-tamper 4변형(alg_none/sig_strip/payload_role/exp_past) variant별 세분 노출(FR-4)
                 if f.get("kind") == "jwt-tamper" and isinstance(f.get("findings"), list):
                     for v in f["findings"]:
