@@ -115,18 +115,58 @@ class TestBfla(unittest.TestCase):
 
 
 class TestIdor(unittest.TestCase):
+    # run_idor는 공개리소스 대조 도입 후 anon→B 순으로 request를 2회 호출한다.
     @patch("tools.dyn_session.request")
-    def test_idor_2xx_is_vulnerable(self, mock_req):
-        mock_req.return_value = {"status": 200, "body": "{타인데이터}", "elapsed": 0.01}
+    def test_idor_anon_denied_b_2xx_is_vulnerable(self, mock_req):
+        # anon(무토큰) 401 + B(타인) 토큰 200 → IDOR 취약.
+        mock_req.side_effect = [
+            {"status": 401, "body": "", "elapsed": 0.01},              # anon
+            {"status": 200, "body": "{타인데이터}", "elapsed": 0.01},  # B
+        ]
         t = {"kind": "idor", "method": "GET", "path": "/api/v1/users/{id}"}
         out = attack_access.run_idor("http://localhost:7171", t, "BTOK", "A-USER-1")
         self.assertTrue(out["vulnerable"])
-        url_arg = mock_req.call_args[0][1]  # positional ("GET", url)
+        self.assertEqual(out["anon_status"], 401)
+        self.assertIsNone(out["note"])
+        url_arg = mock_req.call_args[0][1]  # 마지막(B) 호출 url
         self.assertIn("/api/v1/users/A-USER-1", url_arg)
 
     @patch("tools.dyn_session.request")
+    def test_idor_anon_leg_is_fresh_token_session_none(self, mock_req):
+        # 익명 레그는 항상 token=None, session=None 강제 — 쿠키 모드 세션 미승계(오탐/미탐 방지).
+        mock_req.side_effect = [
+            {"status": 401, "body": "", "elapsed": 0.01},   # anon
+            {"status": 200, "body": "x", "elapsed": 0.01},  # B
+        ]
+        t = {"kind": "idor", "method": "GET", "path": "/api/v1/users/{id}"}
+        attack_access.run_idor("http://localhost:7171", t, "BTOK", "7", session="SESS_B")
+        anon_call = mock_req.call_args_list[0]
+        self.assertIsNone(anon_call.kwargs["token"])
+        self.assertIsNone(anon_call.kwargs["session"])
+        b_call = mock_req.call_args_list[1]   # B 레그는 토큰·세션 그대로 발사
+        self.assertEqual(b_call.kwargs["token"], "BTOK")
+        self.assertEqual(b_call.kwargs["session"], "SESS_B")
+
+    @patch("tools.dyn_session.request")
+    def test_idor_public_resource_anon_2xx_not_reported(self, mock_req):
+        # anon도 2xx(공개 리소스) → IDOR 아님(거짓양성 방지), note 세팅.
+        mock_req.side_effect = [
+            {"status": 200, "body": "public", "elapsed": 0.01},  # anon
+            {"status": 200, "body": "public", "elapsed": 0.01},  # B
+        ]
+        t = {"kind": "idor", "method": "GET", "path": "/api/v1/notices/{id}"}
+        out = attack_access.run_idor("http://localhost:7171", t, "BTOK", "1")
+        self.assertFalse(out["vulnerable"])
+        self.assertEqual(out["anon_status"], 200)
+        self.assertIsNotNone(out["note"])
+
+    @patch("tools.dyn_session.request")
     def test_idor_403_is_defended_falsepositive(self, mock_req):
-        mock_req.return_value = {"status": 403, "body": "FORBIDDEN", "elapsed": 0.01}
+        # anon 401 + B 403 → 방어(오탐 확정).
+        mock_req.side_effect = [
+            {"status": 401, "body": "", "elapsed": 0.01},           # anon
+            {"status": 403, "body": "FORBIDDEN", "elapsed": 0.01},  # B
+        ]
         t = {"kind": "idor", "method": "GET", "path": "/api/v1/comments/{id}"}
         out = attack_access.run_idor("http://localhost:7171", t, "BTOK", "99")
         self.assertFalse(out["vulnerable"])
