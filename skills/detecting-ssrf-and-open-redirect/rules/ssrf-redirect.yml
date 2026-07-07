@@ -85,14 +85,11 @@ rules:
       confidence: needs-context
     patterns:
       - pattern-either:
-          - pattern: |
-              URL $URL = new URL($STR);
-              ...
-              $URL.openStream()
-          - pattern: |
-              URL $URL = new URL($STR);
-              ...
-              $URL.openConnection()
+          - pattern: $URL.openStream(...)
+          - pattern: $URL.openConnection(...)
+      - pattern-inside: |
+          URL $URL = new URL($STR);
+          ...
       - pattern-inside: |
           $RET $METHOD(HttpServletRequest $REQ, ...) { ... }
 
@@ -158,7 +155,7 @@ rules:
       stack: spring-modern
       confidence: high
     patterns:
-      - pattern: return "redirect:" + $PARAM
+      - pattern: return "redirect:" + $PARAM;
       - pattern-inside: |
           @$MAPPING(...)
           $RET $METHOD(..., @RequestParam $TYPE $PARAM, ...) { ... }

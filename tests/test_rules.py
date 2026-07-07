@@ -8,7 +8,11 @@ CI/로컬에서 선제 차단한다. (PyYAML만 사용, semgrep 불필요)
 semgrep 패턴의 의미(메타변수 바인딩·실제 매칭 여부)는 검증하지 않는다(semgrep 필요).
 """
 import glob
+import json
 import os
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -103,6 +107,46 @@ class TestRuleIdUniqueness(unittest.TestCase):
                 else:
                     seen[rid] = rel
         self.assertEqual(collisions, [], "교차파일 중복 id:\n" + "\n".join(collisions))
+
+
+@unittest.skipUnless(shutil.which("semgrep"), "semgrep 미설치 → 스킵(CI semgrep-tests job에서 검증)")
+class TestRuleFilesSemgrepLoadable(unittest.TestCase):
+    """semgrep 실제 로드 검증 — YAML 구조는 통과해도 semgrep 패턴 파서에서 깨지는 룰을 잡는다.
+
+    TestRuleFileStructure 는 PyYAML 구조만 본다. semgrep 의 Java/generic 패턴 파서는 별개라
+    세미콜론 누락·잘못된 ellipsis(`... expr ...`) 같은 결함은 semgrep 실행으로만 드러난다.
+    (M5: 룰 3파일이 이 사각지대로 파일 전체가 무효화→grep-폴백 강등돼 있었다.)
+
+    semgrep --json 의 errors[] 배열에서 '...parse error' 타입을 기계가독으로 검증한다.
+    단일 룰의 파싱 에러 하나가 파일 전체를 무효화하므로, 이 게이트가 전역 파탄 재발을 막는다.
+    """
+
+    def test_each_file_loads_without_parse_error(self):
+        tmp = tempfile.mkdtemp(prefix="gxsec_ruleload_")
+        try:
+            # 룰 파싱 에러는 config 로드 시점에 드러나므로 최소 타깃 하나면 충분하다.
+            with open(os.path.join(tmp, "D.java"), "w", encoding="utf-8") as fh:
+                fh.write("class D {}\n")
+            for path in _RULE_FILES:
+                with self.subTest(file=os.path.relpath(path, _ROOT)):
+                    proc = subprocess.run(
+                        ["semgrep", "--config", path, "--json", "--quiet", tmp],
+                        capture_output=True, text=True,
+                        encoding="utf-8", errors="replace", timeout=180)
+                    try:
+                        data = json.loads(proc.stdout or "{}")
+                    except json.JSONDecodeError:
+                        self.fail(f"semgrep JSON 파싱 실패 (rc={proc.returncode}): "
+                                  f"{proc.stderr[:300]}")
+                    parse_errs = [e for e in data.get("errors", [])
+                                  if "parse" in (e.get("type", "") or "").lower()]
+                    self.assertEqual(
+                        parse_errs, [],
+                        f"{os.path.relpath(path, _ROOT)}: semgrep 룰 파싱 에러 → "
+                        f"파일 전체 무효화(폴백강등). "
+                        f"{[e.get('message', '')[:100] for e in parse_errs]}")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":
