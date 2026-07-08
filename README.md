@@ -138,7 +138,7 @@ CLI로 단독 실행도 됩니다 — `python scan_all.py <소스>` (Claude 없�
 
 | 스킬 | 설명 | 스크립트 |
 |---|---|---|
-| `auditing-web-application-security` | 진단 9종 + AI 검증 + (대상 URL이 있으면) 침투까지 한 번에 수행하는 오케스트레이터. `gx-audit` 커맨드가 사용 | `scripts/audit.py` |
+| `auditing-web-application-security` | 진단 9종 + AI 검증 + (대상 URL이 있으면) 침투까지 한 번에 수행하는 오케스트레이터. `gx-audit` 커맨드가 사용 | `skills/auditing-web-application-security/scripts/audit.py` |
 
 ### 진단 — `detecting-*` (9개, 정적/SAST — 소스만 읽음, 완전 안전)
 
