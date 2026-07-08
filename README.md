@@ -154,7 +154,7 @@ CLI로 단독 실행도 됩니다 — `python scan_all.py <소스>` (Claude 없�
 | `detecting-sensitive-data-exposure` | `secrets` | 하드코딩 시크릿(DB·API 키·JWT), 개인정보 평문 저장·로그 출력, DTO 과다 필드 노출, 예외 스택트레이스 노출 | CWE-200 / CWE-798 |
 | `detecting-ssrf-and-open-redirect` | `ssrf` | 검증 없는 서버측 요청(`RestTemplate`/`WebClient`/`HttpURLConnection`), 미검증 리다이렉트(`sendRedirect`, `returnUrl`) | CWE-918 / CWE-601 |
 
-각 스킬은 `python skills/detecting-<종류>/scripts/scan_*.py <소스>` 로 단독 실행할 수도 있습니다(`references/stack-patterns.md`가 AI 검증 기준).
+각 스킬은 `python skills/detecting-<종류>/scripts/scan_*.py <소스>` 로 단독 실행할 수도 있습니다(`skills/detecting-<종류>/references/stack-patterns.md`가 AI 검증 기준).
 
 ### 침투 — `exploiting-*` (6개, 동적/DAST — 실행 중인 대상에 실제 발사, `scope_guard` fail-closed 강제)
 
