@@ -160,12 +160,12 @@ CLI로 단독 실행도 됩니다 — `python scan_all.py <소스>` (Claude 없�
 
 | 스킬 | 확정 방식 | 스크립트 |
 |---|---|---|
-| `exploiting-sql-injection` | Error-based → Boolean-based Blind → Time-based Blind 순차 시도. sqlmap 설치 시 우선 사용, 없으면 수동 PoC 폴백 | `scripts/attack_sqli.py` |
-| `exploiting-xss-vulnerabilities` | 고유 마커 페이로드 주입 → HTTP 응답 반사 확인 + Playwright로 브라우저 실제 실행 확인(저장형·DOM) | `scripts/attack_xss.py` |
-| `exploiting-broken-access-control` | 타 계정 토큰으로 관리자 API 호출(BFLA)·타인 리소스 조회(IDOR) → `2xx`=취약, `401/403`=방어(즉시 오탐 확정) | `scripts/attack_access.py` |
-| `exploiting-auth-session` | JWT 변조(`alg=none`·서명 제거·역할 변조·만료) 발사, 로그아웃 후 토큰 재사용, 쿠키 보안속성(Secure/HttpOnly/SameSite) 점검 | `scripts/attack_auth.py` |
-| `exploiting-ssrf-and-open-redirect` | 루프백 OOB canary 리스너로 콜백 수신 시 블라인드 SSRF 확정, `Location` 헤더가 외부 호스트면 오픈 리다이렉트 확정(모두 비파괴 GET) | `scripts/attack_ssrf.py` (+ `oob_canary.py`) |
-| `exploiting-path-traversal-upload` | 경로조작은 응답 본문 파일 시그니처로 인밴드 확정(읽기전용). 업로드는 `--allow-destructive`일 때만 무해 마커(.jsp, 코드 없음)로 위험확장자 수용·웹루트 회수 확인 | `scripts/attack_pathupload.py` |
+| `exploiting-sql-injection` | Error-based → Boolean-based Blind → Time-based Blind 순차 시도. sqlmap 설치 시 우선 사용, 없으면 수동 PoC 폴백 | `skills/exploiting-sql-injection/scripts/attack_sqli.py` |
+| `exploiting-xss-vulnerabilities` | 고유 마커 페이로드 주입 → HTTP 응답 반사 확인 + Playwright로 브라우저 실제 실행 확인(저장형·DOM) | `skills/exploiting-xss-vulnerabilities/scripts/attack_xss.py` |
+| `exploiting-broken-access-control` | 타 계정 토큰으로 관리자 API 호출(BFLA)·타인 리소스 조회(IDOR) → `2xx`=취약, `401/403`=방어(즉시 오탐 확정) | `skills/exploiting-broken-access-control/scripts/attack_access.py` |
+| `exploiting-auth-session` | JWT 변조(`alg=none`·서명 제거·역할 변조·만료) 발사, 로그아웃 후 토큰 재사용, 쿠키 보안속성(Secure/HttpOnly/SameSite) 점검 | `skills/exploiting-auth-session/scripts/attack_auth.py` |
+| `exploiting-ssrf-and-open-redirect` | 루프백 OOB canary 리스너로 콜백 수신 시 블라인드 SSRF 확정, `Location` 헤더가 외부 호스트면 오픈 리다이렉트 확정(모두 비파괴 GET) | `skills/exploiting-ssrf-and-open-redirect/scripts/attack_ssrf.py` (+ `oob_canary.py`) |
+| `exploiting-path-traversal-upload` | 경로조작은 응답 본문 파일 시그니처로 인밴드 확정(읽기전용). 업로드는 `--allow-destructive`일 때만 무해 마커(.jsp, 코드 없음)로 위험확장자 수용·웹루트 회수 확인 | `skills/exploiting-path-traversal-upload/scripts/attack_pathupload.py` |
 
 각 스킬은 `python skills/exploiting-<종류>/scripts/attack_*.py <URL> --param p` 로 단독 실행할 수 있습니다(`ATTACK_SAFETY.md`의 안전 게이트가 모든 발사 전에 강제됨).
 
