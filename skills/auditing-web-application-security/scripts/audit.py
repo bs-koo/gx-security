@@ -29,11 +29,22 @@ except (AttributeError, ValueError):
 
 # audit.py 위치: skills/auditing-web-application-security/scripts/audit.py → 3단계 상위가 플러그인 루트
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+from tools import dyn_session  # noqa: E402  (자격증명 env/stdin 해석 + 로그인 프로파일 로더, Task 1·2)
 
 # 동적 공격 스크립트 (현재 구현된 exploiting-*)
 DYNAMIC = {
     "sql-injection": os.path.join(ROOT, "skills", "exploiting-sql-injection", "scripts", "attack_sqli.py"),
     "xss": os.path.join(ROOT, "skills", "exploiting-xss-vulnerabilities", "scripts", "attack_xss.py"),
+}
+
+# 비밀(pw·token)만 자식에 env로 전달한다 — id/resource-id는 비밀이 아니므로 기존대로 cmd 평문(무해).
+_SECRET_ENV_VARS = {
+    "user_a_pw": "GXSEC_USER_A_PW",
+    "token_a": "GXSEC_TOKEN_A",
+    "user_b_pw": "GXSEC_USER_B_PW",
+    "token_b": "GXSEC_TOKEN_B",
 }
 
 
@@ -142,9 +153,51 @@ def _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path, login_pa
     return cmd
 
 
+def _resolve_secret_source(direct, env_var, stdin_creds, stdin_key):
+    """dyn_session.resolve_secret과 동일한 우선순위(stdin>env>direct)로 값을 해석하되,
+    어느 소스로 해석됐는지도 함께 반환한다(값 해석 자체는 resolve_secret에 위임해 우선순위·
+    다중소스 경고 로직을 이원화하지 않는다 — 아래 소스 판정 조건은 resolve_secret 내부와 동형).
+
+    자식 포워딩 결정에 소스 구분이 필요한 이유: stdin/env로 들어온 비밀은 audit 자신의
+    argv에도 노출되지 않으므로, 자식 cmd도 평문을 피해야 그 보장이 끝까지 유지된다. 반면
+    direct(예: --token-a <값>)는 이미 audit 자신의 argv에 평문 노출돼 있어 자식 cmd를 env로
+    바꿔도 노출 수준이 개선되지 않는다 — 그래서 기존 동작(평문 cmd)을 그대로 둔다(하위호환).
+    """
+    value = dyn_session.resolve_secret(
+        direct=direct, env_var=env_var, stdin_creds=stdin_creds, stdin_key=stdin_key)
+    if stdin_creds and stdin_creds.get(stdin_key) is not None:
+        source = "stdin"
+    elif env_var and os.environ.get(env_var) is not None:
+        source = "env"
+    elif direct is not None:
+        source = "direct"
+    else:
+        source = None
+    return value, source
+
+
+def _add_secret_arg(cmd, child_env, flag, key, value, secret_env_names):
+    """비밀 인자 1개를 자식 cmd에 추가한다(자식 cmd 평문 노출 회피의 핵심 헬퍼).
+
+    secret_env_names[key]가 있으면(자격증명이 --creds-stdin/--*-env로 들어와 audit 자신의
+    argv에도 노출되지 않은 출처) 값은 child_env에만 넣고 cmd에는 `--<flag>-env <VAR>`만 실어
+    자식 cmd 평문 노출을 피한다. 없으면(기존 --<flag> 직접 인자 — 이미 audit 자신의 argv에
+    노출돼 있어 자식 cmd 평문화가 노출 수준을 악화시키지 않음) 기존과 바이트 동일하게
+    `--<flag> <value>`를 cmd에 싣는다(신규 인자 미사용 시 하위호환 불변).
+    """
+    if not value:
+        return
+    var_name = (secret_env_names or {}).get(key)
+    if var_name:
+        cmd += [f"--{flag}-env", var_name]
+        child_env[var_name] = value
+    else:
+        cmd += [f"--{flag}", value]
+
+
 def run_access_dynamic(target, static_result, creds, authorized, *,
                        auth_mode="bearer", id_field=None, pw_field=None, success_path=None, login_path=None,
-                       body_template=None, token_path=None):
+                       body_template=None, token_path=None, secret_env_names=None):
     """정적 access-control 후보를 attack_access로 동적 확정한다(개선 D).
 
     계정/토큰 미제공 시 발사하지 않고 'static-only'(정적 추정·동적 미확정)로 표기한다(개선 E).
@@ -173,20 +226,24 @@ def run_access_dynamic(target, static_result, creds, authorized, *,
         json.dump({"candidates": candidates}, tmp, ensure_ascii=False)
         tmp.close()
         cmd = [sys.executable, _ACCESS_SCRIPT, target, "--scan", tmp.name, "--json"]
-        for flag, key in [("--token-a", "token_a"), ("--token-b", "token_b"),
-                          ("--resource-id", "resource_id")]:
-            if creds.get(key):
-                cmd += [flag, creds[key]]
+        child_env = {}
+        _add_secret_arg(cmd, child_env, "token-a", "token_a", creds.get("token_a"), secret_env_names)
+        _add_secret_arg(cmd, child_env, "token-b", "token_b", creds.get("token_b"), secret_env_names)
+        if creds.get("resource_id"):  # 비밀 아님(IDOR 대상 리소스 ID) — 항상 평문
+            cmd += ["--resource-id", creds["resource_id"]]
         if creds.get("user_a_id") and creds.get("user_a_pw"):
-            cmd += ["--user-a-id", creds["user_a_id"], "--user-a-pw", creds["user_a_pw"]]
+            cmd += ["--user-a-id", creds["user_a_id"]]  # id는 비밀 아님 — 평문
+            _add_secret_arg(cmd, child_env, "user-a-pw", "user_a_pw", creds["user_a_pw"], secret_env_names)
         if creds.get("user_b_id") and creds.get("user_b_pw"):
-            cmd += ["--user-b-id", creds["user_b_id"], "--user-b-pw", creds["user_b_pw"]]
+            cmd += ["--user-b-id", creds["user_b_id"]]
+            _add_secret_arg(cmd, child_env, "user-b-pw", "user_b_pw", creds["user_b_pw"], secret_env_names)
         if authorized:
             cmd += ["--authorized"]
         _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path, login_path,
                           body_template, token_path)
         out = subprocess.run(cmd, capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=600)
+                             encoding="utf-8", errors="replace", timeout=600,
+                             env={**os.environ, **child_env})
         try:
             data = json.loads(out.stdout or "{}")
             if not isinstance(data, dict):  # dict 아닌 JSON(list 등) 반환 시 data.get() 크래시 방어 (PR 리뷰 반영)
@@ -230,7 +287,7 @@ def run_access_dynamic(target, static_result, creds, authorized, *,
 
 def run_auth_dynamic(target, creds, probe, authorized, *,
                      auth_mode="bearer", id_field=None, pw_field=None, success_path=None, login_path=None,
-                     body_template=None, token_path=None):
+                     body_template=None, token_path=None, secret_env_names=None):
     """정적 추정된 인증/세션/JWT를 attack_auth로 동적 확정한다(FR-2/3).
 
     계정/토큰 미제공 시 발사하지 않고 'static-only'(정적 추정·동적 미확정)로 표기한다(AC-2).
@@ -247,19 +304,22 @@ def run_auth_dynamic(target, creds, probe, authorized, *,
                      "--user-a-id/pw 또는 --token-a 제공 시 발사"),
         }
     cmd = [sys.executable, _AUTH_SCRIPT, target, "--json"]
+    child_env = {}
     if probe:
         cmd += ["--probe", probe]
     if creds.get("token_a"):
-        cmd += ["--token-a", creds["token_a"]]
+        _add_secret_arg(cmd, child_env, "token-a", "token_a", creds["token_a"], secret_env_names)
     elif creds.get("user_a_id") and creds.get("user_a_pw"):
-        cmd += ["--user-a-id", creds["user_a_id"], "--user-a-pw", creds["user_a_pw"]]
+        cmd += ["--user-a-id", creds["user_a_id"]]  # id는 비밀 아님 — 평문
+        _add_secret_arg(cmd, child_env, "user-a-pw", "user_a_pw", creds["user_a_pw"], secret_env_names)
     if authorized:
         cmd += ["--authorized"]
     _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path, login_path,
                       body_template, token_path)
     try:
         out = subprocess.run(cmd, capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=600)
+                             encoding="utf-8", errors="replace", timeout=600,
+                             env={**os.environ, **child_env})
         try:
             data = json.loads(out.stdout or "{}")
             if not isinstance(data, dict):  # dict 아닌 JSON(list 등) 반환 시 data.get() 크래시 방어 (PR 리뷰 반영)
@@ -297,7 +357,7 @@ def run_auth_dynamic(target, creds, probe, authorized, *,
 
 def run_ssrf_dynamic(target, creds, redirect_target, ssrf_target, authorized, *,
                      auth_mode="bearer", id_field=None, pw_field=None, success_path=None, login_path=None,
-                     body_template=None, token_path=None):
+                     body_template=None, token_path=None, secret_env_names=None):
     """정적 추정된 SSRF/오픈리다이렉트를 attack_ssrf로 동적 확정한다(FR-2/3).
 
     표적(--redirect-target/--ssrf-target)과 계정/토큰이 '모두' 있어야 발사한다(PRD1).
@@ -323,21 +383,24 @@ def run_ssrf_dynamic(target, creds, redirect_target, ssrf_target, authorized, *,
                      "--user-a-id/pw 또는 --token-a 제공 시 발사."),
         }
     cmd = [sys.executable, _SSRF_SCRIPT, target, "--json"]
+    child_env = {}
     if redirect_target:
         cmd += ["--redirect-target", redirect_target]
     if ssrf_target:
         cmd += ["--ssrf-target", ssrf_target]
     if creds.get("token_a"):
-        cmd += ["--token-a", creds["token_a"]]
+        _add_secret_arg(cmd, child_env, "token-a", "token_a", creds["token_a"], secret_env_names)
     elif creds.get("user_a_id") and creds.get("user_a_pw"):
-        cmd += ["--user-a-id", creds["user_a_id"], "--user-a-pw", creds["user_a_pw"]]
+        cmd += ["--user-a-id", creds["user_a_id"]]  # id는 비밀 아님 — 평문
+        _add_secret_arg(cmd, child_env, "user-a-pw", "user_a_pw", creds["user_a_pw"], secret_env_names)
     if authorized:
         cmd += ["--authorized"]
     _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path, login_path,
                       body_template, token_path)
     try:
         out = subprocess.run(cmd, capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=600)
+                             encoding="utf-8", errors="replace", timeout=600,
+                             env={**os.environ, **child_env})
         try:
             data = json.loads(out.stdout or "{}")
             if not isinstance(data, dict):  # dict 아닌 JSON(list 등) 반환 시 data.get() 크래시 방어
@@ -373,7 +436,7 @@ def run_ssrf_dynamic(target, creds, redirect_target, ssrf_target, authorized, *,
 def run_pathupload_dynamic(target, creds, traversal_target, upload_target, upload_field,
                            retrieve_base, allow_destructive, authorized, *,
                            auth_mode="bearer", id_field=None, pw_field=None, success_path=None, login_path=None,
-                       body_template=None, token_path=None):
+                       body_template=None, token_path=None, secret_env_names=None):
     """정적 추정된 경로조작·파일업로드를 attack_pathupload로 동적 확정한다(FR-1~5).
 
     표적(--traversal-target/--upload-target)과 계정/토큰이 '모두' 있어야 발사한다(PRD1).
@@ -410,6 +473,7 @@ def run_pathupload_dynamic(target, creds, traversal_target, upload_target, uploa
                      "서버에 파일을 기록하는 파괴적 검사라 명시적 옵트인이 필요하다."),
         }
     cmd = [sys.executable, _PATHUP_SCRIPT, target, "--json"]
+    child_env = {}
     if traversal_target:
         cmd += ["--traversal-target", traversal_target]
     # audit이 --allow-destructive 없이는 --upload-target 자체를 넘기지 않는다(자식 게이트와 독립 이중방어).
@@ -420,16 +484,18 @@ def run_pathupload_dynamic(target, creds, traversal_target, upload_target, uploa
     if retrieve_base:
         cmd += ["--retrieve-base", retrieve_base]
     if creds.get("token_a"):
-        cmd += ["--token-a", creds["token_a"]]
+        _add_secret_arg(cmd, child_env, "token-a", "token_a", creds["token_a"], secret_env_names)
     elif creds.get("user_a_id") and creds.get("user_a_pw"):
-        cmd += ["--user-a-id", creds["user_a_id"], "--user-a-pw", creds["user_a_pw"]]
+        cmd += ["--user-a-id", creds["user_a_id"]]  # id는 비밀 아님 — 평문
+        _add_secret_arg(cmd, child_env, "user-a-pw", "user_a_pw", creds["user_a_pw"], secret_env_names)
     if authorized:
         cmd += ["--authorized"]
     _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path, login_path,
                       body_template, token_path)
     try:
         out = subprocess.run(cmd, capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=600)
+                             encoding="utf-8", errors="replace", timeout=600,
+                             env={**os.environ, **child_env})
         try:
             data = json.loads(out.stdout or "{}")
             if not isinstance(data, dict):  # dict 아닌 JSON(list 등) 반환 시 data.get() 크래시 방어
@@ -637,6 +703,49 @@ def render_pathupload(res):
     return lines
 
 
+def _apply_login_profile(args, prof):
+    """로그인 프로파일 값을 args에 채운다(개별 CLI 인자가 이미 있으면 건드리지 않음 — 우선순위
+    개별 인자 > 프로파일 > 코드 기본값). attack_*.py _apply_creds_and_profile과 동일 규칙.
+
+    login_path/token_path/auth_mode는 파서 default가 None이므로(하위호환을 위해 여기서 코드
+    기본값으로 최종 폴백) "사용자 명시" 여부를 프로파일 병합 시점까지 구분할 수 있다.
+    """
+    for k in ("login_path", "body_template", "token_path", "id_field", "pw_field", "auth_mode"):
+        if getattr(args, k) is None and k in prof:
+            setattr(args, k, prof[k])
+    args.login_path = args.login_path or "/api/v1/auth/login"
+    args.token_path = args.token_path or "data.accessToken"
+    args.auth_mode = args.auth_mode or "bearer"
+
+
+def _resolve_all_secrets(args, stdin_creds):
+    """4개 비밀(user_a_pw/token_a/user_b_pw/token_b)을 stdin>env>direct 우선순위로 해석해
+    args에 채우고, stdin/env 출처인 키만 담은 secret_env_names(자식 env 포워딩 대상 — 값이
+    아니라 '이 키는 자식에 --*-env로 넘겨야 한다'는 표시)를 반환한다.
+    """
+    secret_env_names = {}
+    for key, env_var_name in _SECRET_ENV_VARS.items():
+        value, source = _resolve_secret_source(
+            getattr(args, key), getattr(args, key + "_env"), stdin_creds, key)
+        setattr(args, key, value)
+        if source in ("stdin", "env"):
+            secret_env_names[key] = env_var_name
+    return secret_env_names
+
+
+def _fatal_input_error(as_json, error_key, detail):
+    """자격증명 stdin/로그인 프로파일 파싱 실패 등 치명적 CLI 입력 오류를 friendly하게 표기하고
+    종료한다(exit 2 — os.path.isdir 체크와 동일 계약). dyn_session.read_stdin_creds()·
+    load_login_profile()의 RuntimeError를 raw traceback으로 흘리지 않기 위한 헬퍼(Task 3의
+    attack들은 이 지점에서 raw traceback을 냈다 — audit은 반복하지 않는다). scope_blocked/
+    login_failed와 동일한 {"error","detail"} JSON 계약을 --json 모드에서 유지한다."""
+    if as_json:
+        print(json.dumps({"error": error_key, "detail": detail}, ensure_ascii=False))
+    else:
+        print(f"오류: {detail}", file=sys.stderr)
+    sys.exit(2)
+
+
 def main():
     ap = argparse.ArgumentParser(description="SQIsoft 보안 통합 점검 오케스트레이터")
     ap.add_argument("source", help="검사 대상 소스 디렉토리")
@@ -648,6 +757,15 @@ def main():
     ap.add_argument("--user-b-id"); ap.add_argument("--user-b-pw")
     ap.add_argument("--token-a"); ap.add_argument("--token-b")
     ap.add_argument("--resource-id", help="IDOR: A가 소유한 리소스 ID")
+    # 자격증명 프로세스 노출 회피(P2/D1) — 직접 값 대신 stdin/env로 비밀 전달.
+    # 지정 시 audit도 자식 subprocess에 값을 cmd 평문이 아닌 env로 전달한다(P2 핵심).
+    ap.add_argument("--user-a-pw-env", help="--user-a-pw 대신 환경변수명으로 비밀번호 전달")
+    ap.add_argument("--token-a-env", help="--token-a 대신 환경변수명으로 토큰 전달")
+    ap.add_argument("--user-b-pw-env", help="--user-b-pw 대신 환경변수명으로 비밀번호 전달")
+    ap.add_argument("--token-b-env", help="--token-b 대신 환경변수명으로 토큰 전달")
+    ap.add_argument("--creds-stdin", action="store_true",
+                    help='자격증명을 stdin JSON으로 전달(예: {"user_a_pw":"..","token_a":".."}) — '
+                         "프로세스 인자에 비노출(가장 안전)")
     ap.add_argument("--probe", help="인증 동적: 보호 엔드포인트 직접 지정(예: /api/v1/users/me). "
                                     "미지정 시 JWT·재사용 정적 추정")
     # SSRF/오픈리다이렉트 동적 연계용 주입점 (계정/토큰 플래그 재사용)
@@ -665,7 +783,9 @@ def main():
     ap.add_argument("--allow-destructive", action="store_true",
                     help="파일업로드(서버에 파일 기록) 허용 — 명시해야 업로드 검사 발사")
     # 인증 방식(cookie=form 로그인+세션쿠키). attack 4종에 패스스루된다.
-    ap.add_argument("--auth-mode", choices=["bearer", "cookie"], default="bearer",
+    # default=None(과거 "bearer"에서 변경): --login-profile 미지정 시 아래서 "bearer"로 폴백해
+    # 최종값은 기존과 동일(하위호환) — None이어야 "사용자가 명시했는지"를 프로파일 병합에서 구분 가능.
+    ap.add_argument("--auth-mode", choices=["bearer", "cookie"], default=None,
                     help="인증 방식(기본 bearer). cookie=form 로그인+세션쿠키")
     ap.add_argument("--id-field", help="cookie 모드 form 로그인 아이디 필드명(기본 username)")
     ap.add_argument("--pw-field", help="cookie 모드 form 로그인 비밀번호 필드명(기본 password)")
@@ -675,6 +795,9 @@ def main():
     ap.add_argument("--body-template", help="로그인 요청 바디 템플릿(JSON, {id}/{pw} 치환). "
                                             "비-sef 로그인 폼(bearer)")
     ap.add_argument("--token-path", help="로그인 응답의 토큰 추출 경로(기본 data.accessToken)")
+    ap.add_argument("--login-profile", help="로그인 프로파일 이름(profiles/<name>.json) 또는 경로 — "
+                                            "login-path/body-template/token-path/auth-mode/id-field/"
+                                            "pw-field 기본값을 채운다(개별 인자가 우선)")
     ap.add_argument("--json", action="store_true", help="통합 JSON 출력")
     args = ap.parse_args()
 
@@ -690,6 +813,27 @@ def main():
 
     # 2) 동적 (대상 URL 있을 때만)
     if args.target:
+        # 신규(P2/D1·D2): 자격증명 stdin 수집 + 로그인 프로파일 로드. run_dynamic 등 실제
+        # 발사 전에 조기 검증한다(friendly 에러 — RuntimeError를 raw traceback으로 흘리지 않음).
+        stdin_creds = None
+        if args.creds_stdin:
+            try:
+                stdin_creds = dyn_session.read_stdin_creds()
+            except RuntimeError as e:
+                _fatal_input_error(args.json, "creds_stdin_failed", str(e))
+        prof = {}
+        if args.login_profile:
+            try:
+                prof = dyn_session.load_login_profile(args.login_profile)
+            except RuntimeError as e:
+                _fatal_input_error(args.json, "login_profile_failed", str(e))
+        _apply_login_profile(args, prof)
+
+        # 자격증명 해석(stdin>env>direct) + 자식 env 포워딩 대상 판정. stdin/env 출처만
+        # secret_env_names에 표시되고, 그 키만 자식 cmd에서 평문 대신 --*-env로 전달된다
+        # (direct 출처는 이미 audit 자신의 argv에 노출돼 있어 기존 평문 cmd 그대로 — 하위호환).
+        secret_env_names = _resolve_all_secrets(args, stdin_creds)
+
         # [H3] 빈/공백 토큰 제거: "id,,q, " → ["id", "q"]
         # 모두 비면 None으로 처리해 빈 파라미터 공격 유발 방지
         params = (
@@ -702,6 +846,7 @@ def main():
                  "token_a": args.token_a, "token_b": args.token_b,
                  "resource_id": args.resource_id}
         # N2: 한쪽만 지정된 계정(id 또는 pw) 경고 — audit 레이어가 조용히 drop하지 않도록
+        # (resolve 이후 평가 — --user-a-pw-env로 지정했으나 실제 환경에 없는 경우도 정직하게 잡는다)
         for _who in ("a", "b"):
             _uid = getattr(args, f"user_{_who}_id")
             _upw = getattr(args, f"user_{_who}_pw")
@@ -712,23 +857,26 @@ def main():
                    "login_path": args.login_path,
                    "body_template": args.body_template, "token_path": args.token_path}
         report["phases"]["access_dynamic"] = run_access_dynamic(
-            args.target, report["phases"]["static"], creds, args.authorized, **_cookie)
+            args.target, report["phases"]["static"], creds, args.authorized,
+            secret_env_names=secret_env_names, **_cookie)
         report["phases"]["auth_dynamic"] = run_auth_dynamic(
             args.target,
             {"user_a_id": args.user_a_id, "user_a_pw": args.user_a_pw,
              "token_a": args.token_a},
-            args.probe, args.authorized, **_cookie)
+            args.probe, args.authorized, secret_env_names=secret_env_names, **_cookie)
         report["phases"]["ssrf_dynamic"] = run_ssrf_dynamic(
             args.target,
             {"user_a_id": args.user_a_id, "user_a_pw": args.user_a_pw,
              "token_a": args.token_a},
-            args.redirect_target, args.ssrf_target, args.authorized, **_cookie)
+            args.redirect_target, args.ssrf_target, args.authorized,
+            secret_env_names=secret_env_names, **_cookie)
         report["phases"]["pathupload_dynamic"] = run_pathupload_dynamic(
             args.target,
             {"user_a_id": args.user_a_id, "user_a_pw": args.user_a_pw,
              "token_a": args.token_a},
             args.traversal_target, args.upload_target, args.upload_field,
-            args.retrieve_base, args.allow_destructive, args.authorized, **_cookie)
+            args.retrieve_base, args.allow_destructive, args.authorized,
+            secret_env_names=secret_env_names, **_cookie)
     else:
         report["phases"]["dynamic"] = {"skipped": "대상 URL(--target) 미지정 — 정적만 수행"}
         report["phases"]["access_dynamic"] = {"skipped": "대상 URL 미지정"}
