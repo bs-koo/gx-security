@@ -22,9 +22,16 @@ jobs:
         run: python -m unittest discover -s tests -p "test_*.py" -v
 
   semgrep-tests:
-    # semgrep 경로(required, D3) — 골든셋 dual-catch·엔진 테스트·FR-4 실측을 semgrep 엔진으로 확정.
-    # 버전 핀(D5): 재현성 — FR-4 실측값·룰 동작 드리프트 방지. 필요시 B3에서 조정.
-    runs-on: ubuntu-latest
+    # semgrep 경로(required on ubuntu, best-effort on windows).
+    # 버전 핀(재현성): FR-4 실측값·룰 동작 드리프트 방지.
+    # windows는 continue-on-error로 비차단 관측: semgrep==1.95.0은 PyPI에 Windows 네이티브 휠이 없어
+    # (Task 2 실측) 설치는 되어도 semgrep-core 미탑재로 `semgrep --version`이 rc=2로 실패한다.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,5 +39,6 @@ jobs:
           python-version: "3.11"
       - name: Install deps (semgrep 핀)
         run: for i in 1 2 3; do pip install requests PyYAML "semgrep==1.95.0" && break || sleep 5; done
+        shell: bash
       - name: Run unittest suite (semgrep 경로)
         run: python -m unittest discover -s tests -p "test_*.py" -v
