@@ -44,6 +44,23 @@ def extract_by_path(obj, path):
     return cur
 
 
+def set_by_path(obj, path, value):
+    """'data.query' 점 표기 경로에 value 설정(중간 dict 자동 생성). obj를 반환.
+
+    extract_by_path의 setter 대응 — D4 JSON 바디 주입 지점 지정(attack_sqli/xss)에 쓰인다.
+    """
+    keys = path.split(".")
+    cur = obj
+    for key in keys[:-1]:
+        nxt = cur.get(key)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[key] = nxt
+        cur = nxt
+    cur[keys[-1]] = value
+    return obj
+
+
 def login(base_url, login_path, cred, *, body_template=None,
           token_json_path="data.accessToken", timeout=10):
     """테스트 계정으로 로그인해 토큰 문자열을 반환. 실패 시 RuntimeError."""
