@@ -4,6 +4,17 @@
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르며,
 버전 체계는 [Semantic Versioning](https://semver.org/lang/ko/)을 준수합니다.
 
+## [0.4.0] - 2026-07-20
+
+### Added
+- 정적 정밀도 표준화 — `requirements-dev.txt`(semgrep 1.95.0 핀)와 설치 스크립트, semgrep 미설치 시 grep 폴백 경고를 도입 문서에서 필수 설치로 승격.
+- Windows semgrep CI — `semgrep-tests` 잡에 windows 매트릭스 추가(비차단 관측 폴백 포함).
+- 운영정책 문서 `docs/OPERATIONS.md` — 스테이징 허용 등록·자격증명 취급·격리 호스트 규정.
+- 버전 일치 회귀 테스트 `tests/test_version_consistency.py`.
+
+### Changed
+- 0.3.0 이후 누적분 반영: SAST 미탐 9패턴 보강, semgrep 골든셋 CI(semgrep 1.95.0), semgrep 룰 전역 파탄 복구, 동적 판정 정밀화, dyn_session 레거시(form/cookie) 이식성.
+
 ## [0.3.0] - 2026-07-02
 
 ### Added
@@ -18,4 +29,5 @@
 - 이번 릴리스는 코드 로직 변경 없는 정합·릴리스 작업입니다. 버전 표기·문서 정합·CHANGELOG 신설에 한정됩니다.
 - 구성: 커맨드 3(`gx-audit`·`gx-diagnose`·`gx-pentest`)·스킬 16(통합 1·진단 9·침투 6).
 
+[0.4.0]: https://github.com/bs-koo/gx-security/releases/tag/v0.4.0
 [0.3.0]: https://github.com/bs-koo/gx-security/releases/tag/v0.3.0
