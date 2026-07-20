@@ -1,4 +1,5 @@
-﻿# gx-security 개발/정밀 스캔 의존성
+﻿# 주의: 이 파일 선두의 UTF-8 BOM은 의도적 — 제거 금지(cp949 Windows pip UnicodeDecodeError 방지, 커밋 bc38f85)
+# gx-security 개발/정밀 스캔 의존성
 # 런타임은 requests·PyYAML만 필요하나, 정적 정밀도(recall)를 위해 semgrep 설치를 표준으로 한다.
 requests
 PyYAML

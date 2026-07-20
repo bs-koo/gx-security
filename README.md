@@ -56,10 +56,12 @@
 # Linux/macOS
 bash scripts/install-dev.sh
 # Windows PowerShell
-scripts/install-dev.ps1
+powershell -ExecutionPolicy Bypass -File scripts\install-dev.ps1
 # 또는 직접
 pip install -r requirements-dev.txt
 ```
+
+> Windows 기본 실행정책(Restricted)에서는 `scripts\install-dev.ps1`을 직접 실행하면 `PSSecurityException`으로 막힙니다. 위처럼 `-ExecutionPolicy Bypass`를 붙이거나, `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`로 계정 실행정책을 변경한 뒤 실행하세요.
 
 ## 빠른 시작
 
