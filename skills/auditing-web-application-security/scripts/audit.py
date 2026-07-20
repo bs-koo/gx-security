@@ -707,14 +707,18 @@ def _apply_login_profile(args, prof):
     """로그인 프로파일 값을 args에 채운다(개별 CLI 인자가 이미 있으면 건드리지 않음 — 우선순위
     개별 인자 > 프로파일 > 코드 기본값). attack_*.py _apply_creds_and_profile과 동일 규칙.
 
-    login_path/token_path/auth_mode는 파서 default가 None이므로(하위호환을 위해 여기서 코드
-    기본값으로 최종 폴백) "사용자 명시" 여부를 프로파일 병합 시점까지 구분할 수 있다.
+    login_path/token_path/auth_mode는 파서 default가 None이므로 "사용자 명시" 여부를 프로파일
+    병합 시점까지 구분할 수 있다. auth_mode만 여기서 코드 기본값("bearer")으로 최종 폴백한다
+    (byte-neutral — _append_auth_mode는 cookie 모드에서만 --auth-mode를 emit하므로 bearer는
+    자식 cmd에 아무것도 추가하지 않는다). login_path/token_path는 None으로 남겨 자식
+    (attack_*.py)이 자체 기본값을 적용하도록 위임한다 — 여기서 강제하면 신규 인자를 전혀 쓰지
+    않는 direct 경로(--login-profile 미사용)에서도 자식 cmd에 --login-path/--token-path가
+    추가돼 P2 이전 baseline과 byte-identical하지 않게 된다(리뷰 지적 — 기능 영향은 없으나
+    명시된 하위호환 제약 위반).
     """
     for k in ("login_path", "body_template", "token_path", "id_field", "pw_field", "auth_mode"):
         if getattr(args, k) is None and k in prof:
             setattr(args, k, prof[k])
-    args.login_path = args.login_path or "/api/v1/auth/login"
-    args.token_path = args.token_path or "data.accessToken"
     args.auth_mode = args.auth_mode or "bearer"
 
 

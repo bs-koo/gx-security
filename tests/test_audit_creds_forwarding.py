@@ -134,10 +134,14 @@ class TestApplyLoginProfile(unittest.TestCase):
         self.assertEqual(a.token_path, "custom.path")
 
     def test_defaults_when_no_profile(self):
+        # login_path/token_path는 강제 기본값으로 채우지 않고 None으로 남겨 자식(attack_*.py)이
+        # 자체 기본값을 적용하도록 위임해야 한다(byte-identity 리뷰 수정 — 여기서 강제하면 신규
+        # 인자를 안 쓴 direct 경로에서도 자식 cmd에 --login-path/--token-path가 추가돼 P2 이전
+        # baseline과 달라진다). auth_mode만 byte-neutral하게 "bearer"로 폴백된다.
         a = self._args()
         audit._apply_login_profile(a, {})
-        self.assertEqual(a.login_path, "/api/v1/auth/login")
-        self.assertEqual(a.token_path, "data.accessToken")
+        self.assertIsNone(a.login_path)
+        self.assertIsNone(a.token_path)
         self.assertEqual(a.auth_mode, "bearer")
 
 
@@ -231,6 +235,10 @@ class TestMainCredsWiring(unittest.TestCase):
         self.assertIn("--token-a", cmd)
         self.assertIn("SECRET", cmd)
         self.assertNotIn("--token-a-env", cmd)
+        # byte-identity: --login-profile 미사용 direct 경로는 --login-path/--token-path도
+        # 자식 cmd에 실리면 안 된다(P2 이전 baseline과 동일해야 함 — 리뷰 수정).
+        self.assertNotIn("--login-path", cmd)
+        self.assertNotIn("--token-path", cmd)
 
     def test_bad_creds_stdin_json_is_friendly_error_not_traceback(self):
         # Task 3 attack들은 이 지점에서 raw traceback을 냈다(RuntimeError 미포착) — audit은
