@@ -48,6 +48,19 @@
 /plugin install gx-security@gx-security
 ```
 
+### 정적 정밀도 표준 (권장)
+
+정적 진단은 semgrep이 있을 때 정밀도(recall)가 크게 오릅니다. **사업부 공통 도입 시 semgrep 설치를 표준으로 합니다.** semgrep이 없으면 grep 폴백으로 동작하되 미탐 위험이 커지며, 스캐너가 `[!] 폴백 경고`를 출력합니다.
+
+```bash
+# Linux/macOS
+bash scripts/install-dev.sh
+# Windows PowerShell
+scripts/install-dev.ps1
+# 또는 직접
+pip install -r requirements-dev.txt
+```
+
 ## 빠른 시작
 
 커맨드 세 개로 정적 진단과 동적 모의 침투를 수행합니다. 자연어로 말해도 의도에 맞는 스킬이 발동됩니다.

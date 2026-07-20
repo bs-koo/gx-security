@@ -34,7 +34,7 @@ cd D:\SQ\security-plugin
 python scan_all.py <소스경로>          # 정적 통합
 python skills/auditing-web-application-security/scripts/audit.py <소스> --target <URL>
 ```
-> (선택) `pip install semgrep` 하면 정적 정밀도가 올라간다. 없으면 grep 폴백으로 동작.
+> **semgrep 설치를 표준으로 한다**(`pip install -r requirements-dev.txt`). 없으면 grep 폴백으로 동작하나 recall이 낮아 미탐 위험이 크다.
 
 ---
 

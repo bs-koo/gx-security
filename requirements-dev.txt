@@ -1,0 +1,5 @@
+﻿# gx-security 개발/정밀 스캔 의존성
+# 런타임은 requests·PyYAML만 필요하나, 정적 정밀도(recall)를 위해 semgrep 설치를 표준으로 한다.
+requests
+PyYAML
+semgrep==1.95.0
