@@ -227,3 +227,38 @@ def emit(result, as_json):
         print(f"  {verdict} {f.get('kind')} {f.get('method')} {f.get('path')} "
               f"→ HTTP {f.get('status')}")
     print(f"{'=' * 60}\n")
+
+
+def read_stdin_creds():
+    """--creds-stdin 시 sys.stdin에서 JSON 1회 읽어 dict 반환.
+    TTY(파이프 없음)·빈 입력·비-JSON은 RuntimeError."""
+    if getattr(sys.stdin, "isatty", lambda: False)():
+        raise RuntimeError("--creds-stdin은 stdin 파이프가 필요합니다(TTY 감지)")
+    raw = sys.stdin.read()
+    if not raw.strip():
+        raise RuntimeError("--creds-stdin: stdin이 비어 있습니다")
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        raise RuntimeError("--creds-stdin: stdin JSON 파싱 실패")
+    if not isinstance(data, dict):
+        raise RuntimeError("--creds-stdin: JSON 객체(dict)여야 합니다")
+    return data
+
+
+def resolve_secret(*, direct=None, env_var=None, stdin_creds=None, stdin_key=None):
+    """자격증명 한 개를 우선순위 stdin > env > direct 로 해석. 없으면 None.
+    둘 이상 소스가 값을 주면 stderr 경고."""
+    vals = {}
+    if stdin_creds and stdin_key and stdin_creds.get(stdin_key) is not None:
+        vals["stdin"] = str(stdin_creds[stdin_key])
+    if env_var and os.environ.get(env_var) is not None:
+        vals["env"] = os.environ[env_var]
+    if direct is not None:
+        vals["direct"] = direct
+    if len(vals) > 1:
+        print("[!] 자격증명 다중 소스 — 우선순위(stdin>env>direct) 적용", file=sys.stderr)
+    for src in ("stdin", "env", "direct"):
+        if src in vals:
+            return vals[src]
+    return None
