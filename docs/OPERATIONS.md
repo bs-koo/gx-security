@@ -56,23 +56,29 @@ python skills/exploiting-sql-injection/scripts/attack_sqli.py "https://api.compa
 
 ## 4. 자격증명 취급 규정 (MUST)
 
-`attack_*.py`는 계정 자격증명을 CLI 인자로만 받는다(`--token-a`, `--user-a-pw`, `--user-a-id` 등). 이 방식은 아래 경로로 **평문 노출**된다:
+`attack_*.py`·`audit.py`는 계정 자격증명(비밀번호·토큰)을 세 경로로 받으며, 동시에 지정하면 **stdin > 환경변수 > 직접 인자** 순으로 우선한다. 경로마다 노출 정도가 다르다:
 
-- 프로세스 목록 — 리눅스/macOS `ps aux`·`ps -ef`, Windows 작업관리자/`tasklist`
-- 리눅스 `/proc/<pid>/cmdline`
-- 셸 히스토리 — `~/.bash_history`, `~/.zsh_history`, PowerShell `PSReadLine` 히스토리 파일
+- **직접 인자**(`--token-a`, `--user-a-pw`, `--user-a-id` 등, 하위호환용)는 아래 경로로 **평문 노출**된다:
+  - 프로세스 목록 — 리눅스/macOS `ps aux`·`ps -ef`, Windows 작업관리자/`tasklist`
+  - 리눅스 `/proc/<pid>/cmdline`
+  - 셸 히스토리 — `~/.bash_history`, `~/.zsh_history`, PowerShell `PSReadLine` 히스토리 파일
 
-같은 호스트를 쓰는 다른 사용자나 이후 세션이 그대로 읽을 수 있다.
+  같은 호스트를 쓰는 다른 사용자나 이후 세션이 그대로 읽을 수 있다.
 
-**현재 유효한 완화책(필수)**:
+- **환경변수 이름 전달**(`--user-a-pw-env <VAR>`·`--token-a-env <VAR>` 등)은 인자로 변수 **이름**만 넘기므로 위 프로세스 목록·`cmdline` 노출은 없다. 다만 비밀값은 여전히 프로세스의 환경변수 블록에 실제로 존재해 환경변수 조회 경로(리눅스 `/proc/<pid>/environ` 등)로는 노출될 수 있고, 값을 최초로 설정하는 `export`/`$env:` 명령 자체가 히스토리에 남을 수 있다 — **프로세스 노출이 잔존**한다.
+
+- **`--creds-stdin`**은 stdin에서 JSON을 1회 읽어 처리하므로 프로세스 인자·환경변수 어디에도 비밀이 남지 않는다 — 세 경로 중 **프로세스 노출을 완전히 없애는 유일한 방식**이다. 다만 입력 시 `echo`로 비밀을 직접 타이핑하면 그 명령 자체가 셸 히스토리에는 남을 수 있다(프로세스 노출과는 별개 채널) — 완전히 피하려면 임시 파일 리다이렉트 등을 쓴다. 구체적 명령은 [RUNBOOK-dynamic.md](RUNBOOK-dynamic.md) §2를 참고한다.
+
+**v0.5.0부터 지원됨**: 위 환경변수 이름 전달(`--user-a-pw-env`/`--token-a-env` 등)과 `--creds-stdin` 경로는 attack 4종(`exploiting-auth-session`·`exploiting-broken-access-control`·`exploiting-ssrf-and-open-redirect`·`exploiting-path-traversal-upload`)과 `audit.py`에 모두 배선되어 있다. `audit.py`는 이 경로로 받은 비밀을 내부에서 발사하는 자식 프로세스에도 cmd 인자 평문이 아닌 환경변수로 전달한다. **`--creds-stdin`을 기본으로 쓰고**, 자동화 스크립트 등에서 stdin 파이프 연결이 어려운 경우에만 `--*-env`로 대체한다(위 잔존 노출 한계를 감수하는 선택). 스택별 로그인 프로파일(`--login-profile`)을 포함한 전체 사용 절차는 [RUNBOOK-dynamic.md](RUNBOOK-dynamic.md)를 참고한다.
+
+**현재 유효한 완화책(필수 — 입력 경로와 무관하게 적용)**:
 - **단일 운영자 전용 격리 호스트**에서만 실행한다 — 공유·멀티유저 호스트에서는 절대 실행하지 않는다.
 - 운영 계정과 분리된 **전용 테스트 계정**만 사용한다(실사용자 계정·운영 자격증명은 절대 사용 금지).
-- 가능하면 히스토리를 남기지 않는 세션(예: `HISTFILE=` 비움, PowerShell 히스토리 비활성화)에서 실행해 셸 히스토리 노출만이라도 줄인다.
+- 가능하면 히스토리를 남기지 않는 세션(예: `HISTFILE=` 비움, PowerShell 히스토리 비활성화)에서 실행한다.
+- 가능하면 **`--creds-stdin`을 우선 사용**한다 — 프로세스 노출이 없는 유일한 입력 경로다.
 
-**무효한 완화책(현재 코드 기준 — 착각하지 말 것)**:
-- 환경변수 참조(`--token-a "$TOKEN"`)는 프로세스 목록 노출을 막지 **못한다**. 셸이 실행(execve) 전에 `$TOKEN`을 실제 값으로 확장하므로 `/proc/<pid>/cmdline`에는 결국 평문이 그대로 실린다. 셸 히스토리 노출만 일부 완화될 뿐이다.
-
-**현재 미지원 — 로드맵**: 자격증명을 환경변수/stdin으로 넘기는 입력 경로(`--token-a-env <VAR>`, `--creds-stdin` 등)는 **현재 코드에 구현돼 있지 않다**. 이 경로는 **v0.5.0(Phase 2, 작업 D1)에서 제공 예정**이다. 그 전까지는 위 두 가지 필수 완화책(단일 운영자 격리 호스트 + 전용 테스트 계정)을 반드시 지켜야 한다.
+**무효한 완화책(직접 인자에서 착각하지 말 것)**:
+- 직접 인자에 셸 변수를 대입하는 방식(`--token-a "$TOKEN"`)은 프로세스 목록 노출을 막지 **못한다**. 셸이 실행(execve) 전에 `$TOKEN`을 실제 값으로 확장하므로 `/proc/<pid>/cmdline`에는 결국 평문이 그대로 실린다. 셸 히스토리 노출만 일부 완화될 뿐이다. 이 패턴 대신 **`--token-a-env TOKEN`**(값이 아니라 변수 **이름**을 전달)을 쓰면 최소한 `cmdline` 노출은 막을 수 있다 — 위 "환경변수 이름 전달" 항목을 따른다.
 
 ## 5. 파괴적 작업
 
@@ -104,4 +110,4 @@ python skills/exploiting-path-traversal-upload/scripts/attack_pathupload.py \
 
 ---
 
-관련 문서: [README.md](../README.md)(개요·설정) · [ATTACK_SAFETY.md](../ATTACK_SAFETY.md)(공격형 스킬 안전 수칙 원문) · [severity-rubric.md](severity-rubric.md)(심각도 판정 기준)
+관련 문서: [README.md](../README.md)(개요·설정) · [RUNBOOK-dynamic.md](RUNBOOK-dynamic.md)(동적 점검 실전 런북 — 이 정책을 실제 명령으로 구체화) · [ATTACK_SAFETY.md](../ATTACK_SAFETY.md)(공격형 스킬 안전 수칙 원문) · [severity-rubric.md](severity-rubric.md)(심각도 판정 기준)

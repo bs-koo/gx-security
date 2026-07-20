@@ -256,6 +256,7 @@ pytest tests/
 | [USAGE.md](USAGE.md) | 실전 사용 가이드 — 시나리오별 명령, 옵션 조합별 동적 발동 조건, FAQ |
 | [ATTACK_SAFETY.md](ATTACK_SAFETY.md) | 공격형(`exploiting-*`) 스킬 안전 수칙 — scope_guard, 자격증명 노출, 법적 고지 |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | 운영정책 — 스테이징 허용 등록·자격증명 취급·격리 호스트 규정 |
+| [docs/RUNBOOK-dynamic.md](docs/RUNBOOK-dynamic.md) | 동적 점검 실전 런북 — 자격증명 안전 입력·로그인 프로파일·클래스별 점검 사이클·판정 해석 |
 | [docs/severity-rubric.md](docs/severity-rubric.md) | 심각도(Critical/High/Medium/Low) 판정 기준 |
 | [CHANGELOG.md](CHANGELOG.md) | 버전별 변경 이력 |
 
