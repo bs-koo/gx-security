@@ -262,3 +262,28 @@ def resolve_secret(*, direct=None, env_var=None, stdin_creds=None, stdin_key=Non
         if src in vals:
             return vals[src]
     return None
+
+
+_PROFILE_KEYS = {"login_path", "body_template", "token_path", "id_field", "pw_field", "auth_mode"}
+
+
+def load_login_profile(name_or_path):
+    """로그인 프로파일(dict) 로드. name이면 profiles/<name>.json, 경로면 그 파일.
+    허용 키 외/파일없음/비-JSON은 RuntimeError."""
+    if any(c in name_or_path for c in ("/", "\\")) or name_or_path.endswith(".json"):
+        path = name_or_path
+    else:
+        path = os.path.join(_PLUGIN_ROOT, "profiles", name_or_path + ".json")
+    if not os.path.isfile(path):
+        raise RuntimeError(f"로그인 프로파일을 찾을 수 없음: {path}")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (ValueError, OSError):
+        raise RuntimeError(f"로그인 프로파일 로드 실패(JSON 확인): {path}")
+    if not isinstance(data, dict):
+        raise RuntimeError(f"로그인 프로파일은 JSON 객체여야 함: {path}")
+    bad = set(data) - _PROFILE_KEYS
+    if bad:
+        raise RuntimeError(f"로그인 프로파일에 허용되지 않은 키: {sorted(bad)}")
+    return data
