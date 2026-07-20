@@ -38,7 +38,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install deps (semgrep 핀)
-        run: for i in 1 2 3; do pip install requests PyYAML "semgrep==1.95.0" && break || sleep 5; done
+        run: for i in 1 2 3; do pip install -r requirements-dev.txt && break || { [ "$i" -eq 3 ] && exit 1; sleep 5; }; done
         shell: bash
       - name: Run unittest suite (semgrep 경로)
         run: python -m unittest discover -s tests -p "test_*.py" -v
