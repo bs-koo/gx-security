@@ -4,6 +4,16 @@
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르며,
 버전 체계는 [Semantic Versioning](https://semver.org/lang/ko/)을 준수합니다.
 
+## [0.5.0] - 2026-07-20
+
+### Added
+- 자격증명 안전 입력(D1) — `--creds-stdin`(stdin JSON, 프로세스 미노출·권장)과 `--user-a-pw-env`/`--token-a-env`(환경변수 이름 참조)를 attack 4종·`audit.py`에 추가. `audit.py`는 자식 subprocess에 비밀을 환경변수로 전달해 cmd 평문 노출을 제거한다.
+- 로그인 프로파일 이식성(D2) — `--login-profile <name|path>`로 로그인 형식(경로·바디·토큰경로·필드·모드)을 외부화. 동봉 프로파일 `profiles/sef-2026.json`(Spring)·`profiles/jsp-form.json`(JSP form).
+- 동적 점검 런북(O2) — `docs/RUNBOOK-dynamic.md`. `docs/OPERATIONS.md`·`ATTACK_SAFETY.md`의 자격증명 취급 서술을 지원 사실에 맞게 정합.
+
+### Changed
+- 자격증명 우선순위 stdin>env>direct 해석(`dyn_session.resolve_secret`). 기존 CLI 인자·동작은 100% 하위호환.
+
 ## [0.4.0] - 2026-07-20
 
 ### Added
@@ -29,5 +39,6 @@
 - 이번 릴리스는 코드 로직 변경 없는 정합·릴리스 작업입니다. 버전 표기·문서 정합·CHANGELOG 신설에 한정됩니다.
 - 구성: 커맨드 3(`gx-audit`·`gx-diagnose`·`gx-pentest`)·스킬 16(통합 1·진단 9·침투 6).
 
+[0.5.0]: https://github.com/bs-koo/gx-security/releases/tag/v0.5.0
 [0.4.0]: https://github.com/bs-koo/gx-security/releases/tag/v0.4.0
 [0.3.0]: https://github.com/bs-koo/gx-security/releases/tag/v0.3.0
