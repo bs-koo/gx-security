@@ -10,10 +10,10 @@ description: >-
   dangerouslySetInnerHTML·DOM innerHTML 할당(DOM XSS) 등을 찾는다.
 domain: cybersecurity
 subdomain: web-application-security
-tags: [xss, cross-site-scripting, cwe-79, owasp-a03, jsp, spring, thymeleaf, react, mybatis, sqisoft]
+tags: [xss, cross-site-scripting, cwe-79, owasp-a03, jsp, spring, thymeleaf, react, vue, nuxt, mybatis, sqisoft]
 cwe: [CWE-79]
 owasp: [A03:2021-Injection]
-stacks: [spring-modern, jsp-legacy]
+stacks: [spring-modern, jsp-legacy, frontend]
 version: "0.5.0"
 author: sqisoft-security
 license: Proprietary
@@ -49,12 +49,29 @@ license: Proprietary
 |---|---|---|
 | `spring-modern` | `build.gradle.kts`/`settings.gradle*`, `src/main/java/**`, `@Controller`/`@RestController` | `rules/xss.yml`의 spring 룰 |
 | `jsp-legacy` | `**/WEB-INF/web.xml`, `*.jsp`, `pom.xml`, `src/main/webapp/**` | `rules/xss.yml`의 jsp 룰 |
+| `frontend` | `*.vue`, `nuxt.config.*`/`vite.config.*`, `pages/`·`components/` | `rules/xss-frontend.yml`(v-html 등) |
 
 ```bash
 # 스택 신호 빠른 확인
 ls "$TARGET"/build.gradle.kts "$TARGET"/settings.gradle.kts 2>/dev/null   # → spring-modern
 find "$TARGET" -name web.xml -path '*WEB-INF*' -o -name '*.jsp' | head    # → jsp-legacy
 ```
+
+### 0.5단계 — 프론트엔드(SPA) 폴더 탐색·확인 (frontend XSS 커버)
+
+XSS의 실제 표면은 서버 템플릿만이 아니라 **Vue/Nuxt 프론트엔드**에 있다(예: 게시판 본문을 `v-html`로 렌더). 백엔드만 스캔하면 이 표면을 100% 놓친다. 프론트를 반드시 함께 스캔한다.
+
+1. **프론트 루트 자동 탐색** — `nuxt.config.*` / `vite.config.*` 또는 프레임워크 의존 `package.json`을 찾되 **`node_modules`·`dist`·`.nuxt`·`.output`은 제외**한다(빌드 산출물엔 수백 개의 서드파티 `.vue`가 있어 그대로 스캔하면 노이즈에 파묻힌다).
+   ```bash
+   find "$TARGET" -name 'nuxt.config.*' -o -name 'vite.config.*' 2>/dev/null \
+     | grep -viE 'node_modules|/dist/|/\.nuxt/|/\.output/'
+   ```
+   - sef-2026 예: 모노레포라 `public/frontend`, `private/frontend` **두 개**가 나온다.
+2. **사용자 확인(AskUserQuestion)** — 발견한 루트들을 제시하고 **"이 폴더들이 스캔할 프론트엔드가 맞나요?"** 로 묻는다. 옵션은 발견된 루트(복수 선택) + **항상 자유서술("직접 입력") 칸**을 노출해 경로를 추가·수정할 수 있게 한다(모듈이 여러 개거나 비표준 배치일 수 있다).
+3. **확정된 각 프론트 루트를 스캔** — `scan_xss.py`가 `frontend` 스택을 감지해 `v-html`·`innerHTML`·`insertAdjacentHTML`·`eval` 등을 후보화한다(`sanitize()`/`DOMPurify` 래핑은 제외).
+   ```bash
+   python skills/detecting-xss-vulnerabilities/scripts/scan_xss.py "<프론트루트>" --json
+   ```
 
 ### 1단계 — 스캐너 1차 탐지 (재현 가능)
 
@@ -85,6 +102,19 @@ python skills/detecting-xss-vulnerabilities/scripts/scan_xss.py "$TARGET" --json
 4. `element.innerHTML = value` — 백엔드 API 응답의 사용자 데이터를 innerHTML에 할당 시 DOM XSS.
 5. `document.write(location.search)` / `eval(userInput)` — URL 파라미터를 DOM에 직접 쓰는 패턴.
 6. 텍스트 노드 조작(`textContent`, `innerText`) — **안전**. 오탐으로 처리.
+
+**frontend(Vue/Nuxt) 검증 포인트**
+
+1. `v-html="expr"` — 바인딩된 `expr`의 **데이터 출처를 추적**한다:
+   - 서버 API 응답(예: `post.content`, `useFetch('/api/...')`) → 백엔드가 저장 시 sanitize하지 않으면 **저장형 XSS 확정 경로**. 반드시 백엔드 스캔과 교차 확인(게시판 본문 저장 로직).
+   - 라우트/쿼리 파라미터(`route.params`, `route.query`) → 반사/DOM XSS.
+   - 상수·i18n 키 → 안전(오탐 제외).
+2. `v-html="DOMPurify.sanitize(expr)"` / `sanitize(expr)` — **안전**(클라이언트 정화). 단 정화 정책(허용 태그)이 스크립트 실행을 막는지 확인.
+3. `innerHTML`/`insertAdjacentHTML`/`outerHTML` 할당, `document.write`, `eval`/`new Function` — 사용자 제어 값이 흐르면 DOM/코드 인젝션.
+4. 텍스트 보간 `{{ expr }}` — Vue가 자동 이스케이프 → **안전**.
+5. **확정은 브라우저 실행으로**: 저장형/DOM 후보는 "후보"이며 실제 확정은 `exploiting-xss-vulnerabilities`의 Playwright 실행(④ 사람확인)으로 넘긴다.
+
+- sef-2026 실사례: `public/frontend/pages/board/[id].vue`의 `v-html="post.content"`(게시판 본문) → `BoardController` 저장 로직의 sanitize 유무 확인 → 저장형 XSS 후보.
 
 **공통 — 누락 보강 (스캐너가 못 잡는 것)**
 
@@ -169,6 +199,8 @@ python skills/detecting-xss-vulnerabilities/scripts/scan_xss.py "$TARGET" --json
 - [ ] 게시판 저장 시 입력 필터링(AntiSamy 등) 유무를 서비스 레이어에서 확인했는가
 - [ ] 각 확정 취약점에 재현 근거(파일:라인 + 출력 컨텍스트)가 붙어 있는가
 - [ ] CSP 헤더 설정 여부를 보조 방어로 함께 기록했는가
+- [ ] 프론트엔드(Vue/Nuxt) 루트를 탐색·확인(AskUserQuestion)해 함께 스캔했는가(node_modules/dist/.nuxt 제외)
+- [ ] 각 `v-html` 후보의 데이터 출처(서버 응답/라우트 파라미터/상수)를 추적하고 백엔드 sanitize와 교차 확인했는가
 
 ## Key Concepts
 
