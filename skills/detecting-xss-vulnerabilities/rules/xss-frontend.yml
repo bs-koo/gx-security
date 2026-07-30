@@ -29,6 +29,7 @@ rules:
     metadata:
       stack: frontend
       cwe: CWE-79
+      owasp: A03:2021
       confidence: needs-context
     paths:
       include: ["*.vue", "*.js", "*.ts", "*.jsx", "*.tsx"]
@@ -43,6 +44,7 @@ rules:
     metadata:
       stack: frontend
       cwe: CWE-95
+      owasp: A03:2021
       confidence: needs-context
     paths:
       include: ["*.vue", "*.js", "*.ts", "*.jsx", "*.tsx"]

@@ -121,5 +121,26 @@ class TestFrontendXss(unittest.TestCase):
             self.assertEqual(scan_xss.run_fallback(tmp), [])
 
 
+class TestVHtmlAttributeScope(unittest.TestCase):
+    """코드리뷰 finding — v-html sanitize 판정을 '속성값' 스코프로. 같은 줄의 다른 속성/주석의
+    sanitize에 오도돼 미새니타이즈 v-html을 놓치면 안 된다."""
+
+    def test_mixed_sanitized_and_raw_same_line_flagged(self):
+        line = '<span v-html="sanitize(title)"></span><span v-html="rawBody"></span>\n'
+        self.assertIn("vue-v-html-unsanitized", _scan("C.vue", line))
+
+    def test_sibling_attr_sanitize_still_flagged(self):
+        line = '<div v-html="rawUserContent" :title="sanitize(tooltip)"></div>\n'
+        self.assertIn("vue-v-html-unsanitized", _scan("C.vue", line))
+
+    def test_comment_purify_still_flagged(self):
+        line = '<div v-html="rawComment"></div><!-- TODO purify later -->\n'
+        self.assertIn("vue-v-html-unsanitized", _scan("C.vue", line))
+
+    def test_all_sanitized_not_flagged(self):
+        line = '<span v-html="sanitize(a)"></span><span v-html="DOMPurify.sanitize(b)"></span>\n'
+        self.assertNotIn("vue-v-html-unsanitized", _scan("C.vue", line))
+
+
 if __name__ == "__main__":
     unittest.main()

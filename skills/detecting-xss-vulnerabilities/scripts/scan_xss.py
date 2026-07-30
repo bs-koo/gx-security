@@ -170,6 +170,11 @@ _EXCLUDE_FILE_PATTERNS = re.compile(
     r'(\.min\.js|\.min\.css|highcharts.*\.js|jquery.*\.js|bootstrap.*\.js|'
     r'datatables.*\.js|tinymce.*\.js|codemirror.*\.js)$', re.I)
 
+# frontend v-html 새니타이즈 판정은 '해당 속성값' 안에서만 한다 — 같은 줄의 다른 속성(:title 등)이나
+# 주석의 sanitize에 오도돼 미새니타이즈 v-html을 놓치지 않도록(코드리뷰 finding). 값을 추출해 검사.
+_VHTML_ATTR = re.compile(r'v-html\s*=\s*(["\'])(.*?)\1')
+_VHTML_SANITIZER = re.compile(r'DOMPurify|\bsanitize\b|\bpurify\b|escapeHtml', re.I)
+
 
 def run_fallback(target):
     findings = []
@@ -195,10 +200,13 @@ def run_fallback(target):
                                 if rule_id == "jsp-el-unescaped-model" and \
                                         re.search(r'escapeXml|<c:out', line):
                                     continue
-                                # frontend — v-html 값이 sanitize/DOMPurify 래핑이면 방어 → 후보 제외.
-                                if rule_id == "vue-v-html-unsanitized" and \
-                                        re.search(r'DOMPurify|\bsanitize\b|\bpurify\b|escapeHtml', line, re.I):
-                                    continue
+                                # frontend — v-html '속성값'이 전부 sanitize/DOMPurify 래핑일 때만
+                                # 방어로 제외. 같은 줄에 미새니타이즈 v-html이 하나라도 있으면 후보
+                                # 유지(줄 전체가 아니라 속성값 스코프로 판정 — 코드리뷰 finding).
+                                if rule_id == "vue-v-html-unsanitized":
+                                    _vals = [v for _q, v in _VHTML_ATTR.findall(line)]
+                                    if _vals and all(_VHTML_SANITIZER.search(v) for v in _vals):
+                                        continue
                                 findings.append({
                                     "file": path, "line": i, "rule_id": rule_id,
                                     "stack": stack, "confidence": "needs-context",

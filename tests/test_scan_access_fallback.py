@@ -152,20 +152,20 @@ class TestPathVariableBareId(unittest.TestCase):
 class TestOwnershipSuppression(unittest.TestCase):
     """P4 Task 2 (결정 2): 접근통제 전용 소유권/권한 집행 신호로 오탐 억제.
 
-    같은 메서드 창에 강한 집행 신호(@Pre/PostAuthorize 소유권 표현·소유자 스코핑 조회)가
-    있으면 id 계열 후보를 제외하되, 신호가 '다른 메서드'에 있으면 억제하지 않는다(FN 회피).
+    같은 메서드 창에 집행 신호(@Pre/PostAuthorize 소유권 표현·결합형 소유자 스코핑 조회)가
+    있으면 id 계열 후보를 '삭제'하지 않고 confidence='enforcement-detected-verify'로 태그해
+    AI 2단계로 넘긴다(silent FN 방지 — 코드리뷰). 주석/문자열/도달불가/공격자 파라미터는 태그하지 않거나
+    태그돼도 후보로 남아야 한다 — 어느 경우든 '삭제'는 절대 없다.
     """
 
-    def _findings(self, filename, body):
+    def _cands(self, filename, body, rule_id):
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, filename), "w", encoding="utf-8") as fh:
                 fh.write(body)
-            return scan_access.run_fallback(d)
+            return [c for c in scan_access.run_fallback(d) if c["rule_id"] == rule_id]
 
-    def _rule_ids(self, filename, body):
-        return {c["rule_id"] for c in self._findings(filename, body)}
-
-    def test_preauthorize_owns_suppresses_pathvariable(self):
+    # ── 집행 신호 → 삭제하지 않고 태그(가시성 유지) ─────────────────────────────
+    def test_preauthorize_owns_tags_not_deletes(self):
         body = (
             "public class Foo {\n"
             '    @PreAuthorize("@auth.owns(#id)")\n'
@@ -175,9 +175,11 @@ class TestOwnershipSuppression(unittest.TestCase):
             "    }\n"
             "}\n"
         )
-        self.assertNotIn("spring-pathvariable-id", self._rule_ids("Foo.java", body))
+        cands = self._cands("Foo.java", body, "spring-pathvariable-id")
+        self.assertEqual(len(cands), 1, "삭제되면 안 됨 — 태그만")
+        self.assertEqual(cands[0]["confidence"], "enforcement-detected-verify")
 
-    def test_owner_scoped_query_suppresses_getparameter(self):
+    def test_owner_scoped_query_tags_not_deletes(self):
         body = (
             "public class Bar {\n"
             "    public String view(HttpServletRequest req) {\n"
@@ -186,69 +188,112 @@ class TestOwnershipSuppression(unittest.TestCase):
             "    }\n"
             "}\n"
         )
-        self.assertNotIn("jsp-getparameter-id", self._rule_ids("Bar.java", body))
+        cands = self._cands("Bar.java", body, "jsp-getparameter-id")
+        self.assertEqual(len(cands), 1)
+        self.assertEqual(cands[0]["confidence"], "enforcement-detected-verify")
 
-    def test_unprotected_method_still_flagged(self):
-        # 보호 메서드(other) + 비보호 메서드(get)가 한 파일에. get 은 소유권 스코핑이 없으므로
-        # 다른 메서드의 @PreAuthorize 에 억제되지 않고 여전히 후보로 남아야 한다(FN 가드).
+    # ── silent FN 방지: 아래 케이스는 모두 후보가 '반드시' 남아야 한다(삭제 금지) ──
+    def test_unprotected_present_and_not_tagged(self):
         body = (
             "public class Baz {\n"
             '    @PreAuthorize("@auth.owns(#other)")\n'
-            "    public Post other(@PathVariable Long other) {\n"
-            "        return svc.get(other);\n"
-            "    }\n"
-            "\n"
-            "    public Post get(@PathVariable Long id) {\n"
-            "        return repo.findById(id);\n"
-            "    }\n"
-            "}\n"
-        )
-        self.assertIn("spring-pathvariable-id", self._rule_ids("Baz.java", body))
-
-    def test_commented_out_check_still_flagged(self):
-        # 최종 리뷰 I-1: 주석처리된 소유권 체크로 억제되면 안 된다(코드는 오히려 취약해진 상태).
-        body = (
-            "public class C {\n"
-            "    public Post get(@PathVariable Long id) {\n"
-            "        // checkOwnership(id);  // temporarily disabled\n"
-            "        return repo.findById(id);\n"
-            "    }\n"
-            "}\n"
-        )
-        self.assertIn("spring-pathvariable-id", self._rule_ids("C.java", body))
-
-    def test_comment_mentioning_owns_still_flagged(self):
-        body = (
-            "public class C {\n"
-            "    public Post get(@PathVariable Long id) {\n"
-            "        // TODO: should call service.owns(id) here\n"
-            "        return repo.findById(id);\n"
-            "    }\n"
-            "}\n"
-        )
-        self.assertIn("spring-pathvariable-id", self._rule_ids("C.java", body))
-
-    def test_brace_bleed_neighbor_preauthorize_not_suppressed(self):
-        # 최종 리뷰 I-1: 시그니처가 40줄 위(sig 미발견)라 본문 중간에서 시작해도, brace-walk가
-        # 다음 메서드의 @PreAuthorize로 새어 억제하면 안 된다.
-        filler = "\n".join(f"        int x{k} = {k};" for k in range(45))
-        body = (
-            "public class C {\n"
-            "    public String view(HttpServletRequest req) {\n"
-            + filler + "\n"
-            '        String id = req.getParameter("id");\n'
-            "        return repo.findById(id);\n"
-            "    }\n"
-            "\n"
-            '    @PreAuthorize("@auth.owns(#other)")\n'
             "    public Post other(@PathVariable Long other) { return svc.get(other); }\n"
+            "\n"
+            "    public Post get(@PathVariable Long id) {\n"
+            "        return repo.findById(id);\n"
+            "    }\n"
             "}\n"
         )
-        self.assertIn("jsp-getparameter-id", self._rule_ids("C.java", body))
+        # 'other'는 변수명이 id/seq/no 형태가 아니라 규칙 미매치 → 후보는 get()의 id 1건.
+        # 그 1건이 옆 메서드 other()의 @PreAuthorize에 태그되지 않고 needs-context로 남아야 한다.
+        cands = self._cands("Baz.java", body, "spring-pathvariable-id")
+        self.assertEqual(len(cands), 1)
+        self.assertEqual(cands[0]["confidence"], "needs-context")
 
-    def test_bare_findbyuserid_still_flagged(self):
-        # 최종 리뷰 I-1: 단일 인자 findByUserId(id)는 공격자 제어 id를 소유자 키로 쓰는 IDOR 싱크 →
-        # 결합형(id AND owner) 아니므로 억제하지 않는다.
+    def test_multiline_block_comment_not_tagged(self):
+        body = (
+            "public class C {\n"
+            '    @GetMapping("/r/{id}")\n'
+            "    public Object get(@PathVariable Long id) {\n"
+            "        /*\n"
+            "         * Historical: checkOwnership(id) was verified upstream.\n"
+            "         */\n"
+            "        return repo.findById(id);\n"
+            "    }\n"
+            "}\n"
+        )
+        cands = self._cands("C.java", body, "spring-pathvariable-id")
+        self.assertEqual(len(cands), 1)
+        self.assertEqual(cands[0]["confidence"], "needs-context")
+
+    def test_string_literal_not_tagged(self):
+        body = (
+            "public class C {\n"
+            "    public Object get(@PathVariable Long id) {\n"
+            '        logger.warn("Missing checkOwnership(id) call");\n'
+            "        return repo.findById(id);\n"
+            "    }\n"
+            "}\n"
+        )
+        cands = self._cands("C.java", body, "spring-pathvariable-id")
+        self.assertEqual(len(cands), 1)
+        self.assertEqual(cands[0]["confidence"], "needs-context")
+
+    def test_unrelated_feature_flag_bean_not_tagged(self):
+        body = (
+            "public class C {\n"
+            "    @PreAuthorize(\"@featureFlags.isEnabled('newApi')\")\n"
+            '    @GetMapping("/r/{id}")\n'
+            "    public Object get(@PathVariable Long id) {\n"
+            "        return repo.findById(id);\n"
+            "    }\n"
+            "}\n"
+        )
+        cands = self._cands("C.java", body, "spring-pathvariable-id")
+        self.assertEqual(len(cands), 1)
+        self.assertEqual(cands[0]["confidence"], "needs-context")
+
+    def test_kotlin_fun_no_brace_bleed(self):
+        body = (
+            "class BoardController(private val boardService: BoardService) {\n"
+            '    @GetMapping("/api/boards/{id}")\n'
+            "    fun getBoard(@PathVariable id: Long): BoardDto {\n"
+            "        return boardService.findById(id)\n"
+            "    }\n"
+            '    @PreAuthorize("#id == authentication.principal.id")\n'
+            '    @PutMapping("/api/boards/{id}")\n'
+            "    fun updateBoard(@PathVariable id: Long): BoardDto {\n"
+            "        return boardService.save(id)\n"
+            "    }\n"
+            "}\n"
+        )
+        cands = self._cands("BoardController.kt", body, "spring-pathvariable-id")
+        # getBoard 후보가 updateBoard의 @PreAuthorize를 흡수해 태그되면 안 됨(brace-bleed 차단).
+        self.assertTrue([c for c in cands if c["confidence"] == "needs-context"],
+                        "getBoard()가 needs-context로 남아야 함(옆 메서드 신호 미흡수)")
+
+    def test_dead_code_and_attacker_param_still_present(self):
+        # 도달 불가 익명 클래스 안 checkOwnership, 공격자 통제 결합 파라미터 — 정적으로 완벽히
+        # 가려낼 수 없지만 '삭제되지 않고' 후보로 남아 AI가 봐야 한다(핵심 안전 불변식).
+        dead = (
+            "public class C {\n"
+            "    public Object get(@PathVariable Long id) {\n"
+            "        Runnable r = new Runnable() { public void run() { checkOwnership(id); } };\n"
+            "        return repo.findById(id);\n"
+            "    }\n"
+            "}\n"
+        )
+        self.assertEqual(len(self._cands("C.java", dead, "spring-pathvariable-id")), 1)
+        attacker = (
+            "public class C {\n"
+            "    public Object get(@PathVariable Long id, @RequestParam Long userId) {\n"
+            "        return repo.findByIdAndUserId(id, userId);\n"
+            "    }\n"
+            "}\n"
+        )
+        self.assertEqual(len(self._cands("C.java", attacker, "spring-pathvariable-id")), 1)
+
+    def test_bare_findbyuserid_not_tagged(self):
         body = (
             "public class C {\n"
             "    public Post get(@PathVariable Long id) {\n"
@@ -256,9 +301,11 @@ class TestOwnershipSuppression(unittest.TestCase):
             "    }\n"
             "}\n"
         )
-        self.assertIn("spring-pathvariable-id", self._rule_ids("C.java", body))
+        cands = self._cands("C.java", body, "spring-pathvariable-id")
+        self.assertEqual(len(cands), 1)
+        self.assertEqual(cands[0]["confidence"], "needs-context")
 
-    def test_context_block_attached_to_flagged(self):
+    def test_context_block_attached(self):
         body = (
             "public class Q {\n"
             "    public Post get(@PathVariable Long id) {\n"
@@ -266,12 +313,10 @@ class TestOwnershipSuppression(unittest.TestCase):
             "    }\n"
             "}\n"
         )
-        cands = [c for c in self._findings("Q.java", body)
-                 if c["rule_id"] == "spring-pathvariable-id"]
+        cands = self._cands("Q.java", body, "spring-pathvariable-id")
         self.assertEqual(len(cands), 1)
         ctx = cands[0].get("context")
         self.assertIsInstance(ctx, dict)
-        self.assertIn("delegates_to", ctx)
         self.assertIn("postService.findById", ctx["delegates_to"])
 
 

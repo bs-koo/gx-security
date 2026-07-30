@@ -12,7 +12,9 @@ configure(): sys.stdout/stderr를 UTF-8·errors=replace로 강제한다. reconfi
 emit_json(): JSON을 sys.stdout.buffer에 UTF-8 바이트로 직접 기록해 콘솔 코덱과
 완전히 무관하게 만든다(텍스트 인코더를 우회). 기존
 print(json.dumps(obj, ensure_ascii=False, indent=2))와 ASCII-safe 페이로드에 대해
-바이트 동일(하위호환 — 기존 stdout 캡처 테스트가 그대로 통과해야 한다).
+POSIX에서는 바이트 동일하다. Windows에서는 텍스트 래퍼의 개행 번역(\\n→\\r\\n)을 우회하므로
+JSON 내부 개행이 LF로 나온다 — 기능 영향은 없다(소비자는 모두 json.loads 또는 universal-newline
+캡처라 개행 스타일 무관). 즉 "콘텐츠 동일, 개행 스타일은 POSIX 기준"이 정확한 서술이다.
 """
 import io
 import json
