@@ -22,14 +22,13 @@ import shutil
 import subprocess
 import sys
 
-# Windows 콘솔(cp949)에서도 한글이 깨지지 않도록 UTF-8 고정
-try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-except (AttributeError, ValueError):
-    pass
-
 HERE = os.path.dirname(os.path.abspath(__file__))
+_PLUGIN_ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+if _PLUGIN_ROOT not in sys.path:
+    sys.path.insert(0, _PLUGIN_ROOT)
+from tools import io_utf8  # noqa: E402  (UTF-8 콘솔 강제 — Windows cp949 크래시 방지, Task 1)
+io_utf8.configure()
+
 RULES = os.path.join(os.path.dirname(HERE), "rules", "xss.yml")
 
 # 초대형 단일 라인(minified 등)에 폴백 정규식을 적용하면 O(n²) 백트래킹으로
@@ -245,7 +244,7 @@ def main():
         result["warnings"] = warnings
 
     if args.json:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        io_utf8.emit_json(result)
     else:
         print(f"대상: {args.target}")
         print(f"감지 스택: {', '.join(stacks)}   엔진: {engine}")

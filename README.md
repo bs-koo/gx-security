@@ -65,6 +65,8 @@ pip install -r requirements-dev.txt
 
 > Windows는 semgrep 네이티브 휠 부재로 `semgrep --version`에서 설치 스크립트가 비정상 종료하는 것이 정상이며, 정적 진단은 grep 폴백으로 계속 동작합니다(정밀도는 낮아집니다).
 
+> **Windows(cp949) 환경 권장**: 모든 스크립트는 `tools/io_utf8.py`로 콘솔 인코딩을 UTF-8로 강제하지만, 벨트앤서스펜더로 환경변수 `PYTHONUTF8=1`도 함께 설정해두면 파이프·리다이렉션·CI 캡처에서 한글·특수문자(em-dash 등) 출력이 더 안전해집니다(`setx PYTHONUTF8 1` 또는 셸 세션에서 `$env:PYTHONUTF8=1`).
+
 ## 빠른 시작
 
 커맨드 세 개로 정적 진단과 동적 모의 침투를 수행합니다. 자연어로 말해도 의도에 맞는 스킬이 발동됩니다.

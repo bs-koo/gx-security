@@ -20,18 +20,13 @@ import os
 import subprocess
 import sys
 
-try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    # [L3] stderr도 UTF-8로 고정 (scope_guard 등 다른 스크립트와 일관성)
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-except (AttributeError, ValueError):
-    pass
-
 # audit.py 위치: skills/auditing-web-application-security/scripts/audit.py → 3단계 상위가 플러그인 루트
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 from tools import dyn_session  # noqa: E402  (자격증명 env/stdin 해석 + 로그인 프로파일 로더, Task 1·2)
+from tools import io_utf8  # noqa: E402  (UTF-8 콘솔 강제 — Windows cp949 크래시 방지, Task 1)
+io_utf8.configure()
 
 # 동적 공격 스크립트 (현재 구현된 exploiting-*)
 DYNAMIC = {
@@ -892,7 +887,7 @@ def main():
                       "오탐 제거·컨텍스트 검증·4요소 통합 리포트를 완성하세요.")
 
     if args.json:
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+        io_utf8.emit_json(report)
         return
 
     # 사람이 읽는 요약

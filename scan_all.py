@@ -30,12 +30,12 @@ import os
 import subprocess
 import sys
 
-try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-except (AttributeError, ValueError):
-    pass
-
 ROOT = os.path.dirname(os.path.abspath(__file__))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+from tools import io_utf8  # noqa: E402
+io_utf8.configure()
+
 SKILLS_DIR = os.path.join(ROOT, "skills")
 
 # 스킬 디렉토리명 → 사람이 읽는 라벨
@@ -186,7 +186,7 @@ def main():
         ]
 
     if args.json:
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        io_utf8.emit_json(summary)
         return
 
     engine_label = ", ".join(engines_sorted) if engines_sorted else "?"

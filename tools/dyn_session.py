@@ -9,18 +9,15 @@ import os
 import json
 import time
 
-try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-except (AttributeError, ValueError):
-    pass
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _PLUGIN_ROOT = os.path.normpath(os.path.join(_HERE, ".."))
 if _PLUGIN_ROOT not in sys.path:
     sys.path.insert(0, _PLUGIN_ROOT)
 
 from tools.scope_guard import assert_in_scope, ScopeError  # noqa: F401  (재노출)
+from tools import io_utf8  # noqa: F401  (emit()의 JSON 출력 계약 — Task 1)
+
+io_utf8.configure()
 
 
 def mask_token(tok):
@@ -226,7 +223,7 @@ def request(method, url, *, token=None, json_body=None, files=None, data=None,
 def emit(result, as_json):
     """표준 결과 출력. as_json이면 JSON, 아니면 사람용 요약."""
     if as_json:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        io_utf8.emit_json(result)
         return
     print(f"\n{'=' * 60}")
     print(f"  동적 점검 결과: {result.get('skill', 'dyn')}")
