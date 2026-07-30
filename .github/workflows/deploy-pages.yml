@@ -1,0 +1,41 @@
+name: Deploy docs site to GitHub Pages
+
+# docs-site/ 를 gh-pages 브랜치로 발행한다(main 병합 시 자동). first-party 액션만 사용 —
+# actions/checkout + git(GITHUB_TOKEN). Pages source는 gh-pages 브랜치 그대로라
+# 소스 전환·다운타임이 없다. 서드파티 액션 미사용.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs-site/**'
+      - '.github/workflows/deploy-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gh-pages-deploy
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish docs-site → gh-pages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          cp docs-site/index.html "$work/index.html"
+          touch "$work/.nojekyll"
+          cd "$work"
+          git init -q
+          git checkout -q -b gh-pages
+          git add -A
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -q -m "deploy: docs site @ ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
