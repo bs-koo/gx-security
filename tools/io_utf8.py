@@ -39,6 +39,12 @@ def emit_json(obj, *, indent=2):
 
     buffer가 없는 극단적 환경(예: buffer 속성이 없는 커스텀 stdout 대체)에서만
     print() 폴백을 사용한다 — 이 폴백 경로는 콘솔 코덱에 여전히 의존한다.
+
+    주의(순서 위험): sys.stdout.buffer에 직접 쓰기 때문에 sys.stdout(텍스트
+    래퍼)의 내부 버퍼를 우회한다. 이 함수 호출 "직전"에 flush 안 된
+    print()/sys.stdout.write()가 남아있으면 출력 순서가 뒤바뀔 수 있다 —
+    이 분기 앞에 버퍼링된 print()를 추가하지 말 것(추가한다면 먼저
+    sys.stdout.flush()할 것).
     """
     data = json.dumps(obj, ensure_ascii=False, indent=indent)
     buf = getattr(sys.stdout, "buffer", None)

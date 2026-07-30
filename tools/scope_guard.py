@@ -24,11 +24,18 @@ import re
 import sys
 from urllib.parse import urlparse
 
-try:  # Windows 콘솔(cp949)에서도 안전하게 출력
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-except (AttributeError, ValueError):
-    pass
+# 플러그인 루트를 sys.path에 추가 — tools/ 안에서 절대 임포트(from tools import io_utf8)를
+# 가능하게 한다. 단독 실행(python tools/scope_guard.py <url>) 시에는 인터프리터가
+# tools/ 자신만 sys.path에 넣어주므로 이 부트스트랩이 없으면 `tools` 패키지를 찾지
+# 못한다(dyn_session.py와 동일 패턴 — 1단계 상위가 플러그인 루트).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_PLUGIN_ROOT = os.path.normpath(os.path.join(_HERE, ".."))
+if _PLUGIN_ROOT not in sys.path:
+    sys.path.insert(0, _PLUGIN_ROOT)
+
+from tools import io_utf8  # noqa: E402  (UTF-8 콘솔 강제 — Windows cp949 크래시 방지, Task 1 Round 1)
+
+io_utf8.configure()
 
 # 자동 허용 TLD — RFC 6761/2606 예약(라우팅 불가). 공개 TLD(.dev/.qa 등)는 제외.
 _ALLOW_TLDS = (".localhost", ".local", ".test", ".example", ".invalid")

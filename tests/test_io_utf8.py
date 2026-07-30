@@ -36,6 +36,7 @@ from tools import io_utf8
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCAN_SECRETS = os.path.join(
     ROOT, "skills", "detecting-sensitive-data-exposure", "scripts", "scan_secrets.py")
+SCOPE_GUARD = os.path.join(ROOT, "tools", "scope_guard.py")
 
 
 class _NoReconfigureStream:
@@ -167,9 +168,29 @@ class _NoReconfigureStream:
 sys.stdout = _NoReconfigureStream(sys.stdout.buffer)
 sys.stderr = _NoReconfigureStream(sys.stderr.buffer)
 
-sys.argv = [$script_repr, $target_repr, "--json"]
+sys.argv = $argv_repr
 runpy.run_path($script_repr, run_name="__main__")
 ''')
+
+
+def _run_sabotaged_subprocess(script_path, argv, *, extra_env=None, timeout=30):
+    """script_path를 하위 프로세스에서 실행하되, 그 프로세스 안의 sys.stdout/stderr를
+    "reconfigure() 불가 + cp949 strict" 스트림으로 먼저 바꿔치기한다(Task 1 Round 1
+    공용 헬퍼 — scan_secrets.py·scope_guard.py 회귀 테스트가 공유)."""
+    bootstrap_src = _BOOTSTRAP_SRC.substitute(
+        script_repr=repr(script_path), argv_repr=repr([script_path] + list(argv)))
+    fd, bootstrap_path = tempfile.mkstemp(suffix=".py")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as bf:
+            bf.write(bootstrap_src)
+        env = dict(os.environ)
+        env.update(extra_env or {})
+        return subprocess.run(
+            [sys.executable, bootstrap_path],
+            capture_output=True, timeout=timeout, env=env,
+        )
+    finally:
+        os.unlink(bootstrap_path)
 
 
 class TestScanSecretsCP949Regression(unittest.TestCase):
@@ -194,24 +215,10 @@ class TestScanSecretsCP949Regression(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _run_sabotaged_subprocess(self):
-        bootstrap_src = _BOOTSTRAP_SRC.substitute(
-            script_repr=repr(SCAN_SECRETS), target_repr=repr(self.fixture_dir))
-        fd, bootstrap_path = tempfile.mkstemp(suffix=".py")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as bf:
-                bf.write(bootstrap_src)
-            env = dict(os.environ)
-            env["GXSEC_NO_SEMGREP"] = "1"   # 폴백 경로 강제 — semgrep 설치 여부와 무관한 결정적 테스트
-            return subprocess.run(
-                [sys.executable, bootstrap_path],
-                capture_output=True, timeout=30, env=env,
-            )
-        finally:
-            os.unlink(bootstrap_path)
-
     def test_scan_secrets_survives_broken_console_codec(self):
-        out = self._run_sabotaged_subprocess()
+        out = _run_sabotaged_subprocess(
+            SCAN_SECRETS, [self.fixture_dir, "--json"],
+            extra_env={"GXSEC_NO_SEMGREP": "1"})   # 폴백 경로 강제 — semgrep 설치 여부와 무관한 결정적 테스트
         self.assertEqual(
             out.returncode, 0,
             msg=(f"scan_secrets.py가 콘솔 코덱이 깨진 환경(reconfigure 불가)에서 "
@@ -222,6 +229,42 @@ class TestScanSecretsCP949Regression(unittest.TestCase):
         snippets = " ".join(c.get("snippet", "") for c in data.get("candidates", []))
         self.assertIn("—", snippets)   # em-dash 원문 보존(치환/삭제되지 않음)
         self.assertIn("한글", snippets)  # 한글("한글") 원문 보존
+
+
+class TestScopeGuardCP949Regression(unittest.TestCase):
+    """Task 1 Round 1 회귀 테스트: tools/scope_guard.py 단독 CLI 경로.
+
+    commands/gx-pentest.md Step 0이 사용자에게 직접 실행시키는 실경로
+    (`python tools/scope_guard.py <URL>`)다. deny 판정 메시지
+    (assert_in_scope의 "[차단] ... — 운영/위험 대상으로 보입니다. 공격 중단.")에
+    em-dash가 들어있고 __main__ 블록이 이를 print(e)로 출력하므로, 콘솔 코덱이
+    깨진 환경에서는 io_utf8 도입 전 UnicodeEncodeError로 죽었어야 한다.
+    """
+
+    def test_scope_guard_deny_message_survives_broken_console_codec(self):
+        # prod.example.com은 _DENY_HOST_PATTERNS(운영 의심)에 매치 → ScopeError →
+        # __main__이 print(e); sys.exit(1) — 크래시가 아니라 "정상적인 차단"이 rc=1이다.
+        out = _run_sabotaged_subprocess(SCOPE_GUARD, ["http://prod.example.com"])
+        self.assertEqual(
+            out.returncode, 1,
+            msg=(f"scope_guard.py CLI가 예상과 다르게 종료됨(rc={out.returncode}). "
+                 f"stderr={out.stderr.decode('utf-8', errors='replace')!r}"))
+        stderr_text = out.stderr.decode("utf-8", errors="replace")
+        self.assertNotIn("UnicodeEncodeError", stderr_text)
+        self.assertNotIn("Traceback", stderr_text)
+        stdout_text = out.stdout.decode("utf-8")   # 디코드 자체가 크래시하지 않아야 함
+        self.assertIn("차단", stdout_text)
+        self.assertIn("—", stdout_text)   # em-dash 원문 보존(deny 메시지 " — 운영/위험 대상으로...")
+
+    def test_scope_guard_importable_as_tools_package(self):
+        """from tools import scope_guard 경로(dyn_session.py가 쓰는 경로)가 여전히 동작."""
+        out = subprocess.run(
+            [sys.executable, "-c",
+             "from tools import scope_guard; print(scope_guard.classify('http://localhost')[0])"],
+            capture_output=True, text=True, cwd=ROOT, timeout=10,
+        )
+        self.assertEqual(out.returncode, 0, msg=out.stderr)
+        self.assertEqual(out.stdout.strip(), "allow")
 
 
 if __name__ == "__main__":
