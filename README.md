@@ -8,7 +8,7 @@
 
 `커맨드 3` · `스킬 16` (통합 1 · 진단 9 · 침투 6) · `v0.7.0` · Proprietary
 
-[![온라인 문서 · GitHub Pages](https://img.shields.io/badge/온라인_문서-GitHub_Pages-141413?style=flat&logo=github&logoColor=white)](https://bs-koo.github.io/gx-security/)
+[![GitHub Pages · 온라인 문서](https://img.shields.io/badge/온라인_문서-GitHub_Pages-141413?style=flat&logo=github&logoColor=white)](https://bs-koo.github.io/gx-security/)
 
 </div>
 
