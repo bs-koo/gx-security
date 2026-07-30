@@ -86,6 +86,22 @@ python skills/auditing-web-application-security/scripts/audit.py "<소스경로>
 - **경로조작/파일업로드**도 `run_pathupload_dynamic`이 **표적과 계정 유무**로 판정 수준이 갈린다 — 표적(`--traversal-target`/`--upload-target`)과 계정(`--token-a` 또는 `--user-a-id/pw`)이 **모두** 있으면 실제 발사하는 `dynamic`, 표적이나 계정이 하나라도 없으면 발사하지 않는 `static-only`로 구분한다(표적을 우선 판정한다). 경로조작은 응답 본문에 파일 내용 시그니처(`root:.*:0:0` 등)가 나오면 취약(비파괴 GET), 미도달(non-2xx)은 방어가 아닌 미확정으로 구분한다. **파일업로드는 서버에 파일을 실제로 기록하는 파괴적 검사이므로 `--allow-destructive` 옵트인 게이트가 없으면 발사하지 않으며**(오케스트레이터·익스플로잇터 이중 게이트), 위험 확장자(.jsp) 마커가 2xx 수용됐으나 회수(웹루트 저장)가 확인되지 않으면 **미확정**(서버측 후처리 — 격리·개명·스캔 가능성으로 취약 단정 불가), 회수까지 확인되면 **취약(High)**으로 확정하고 남은 마커 파일 정리 안내를 노출한다.
 - XSS는 저장·DOM형이면 Playwright MCP로 브라우저 실제 실행까지 확인한다.
 
+#### 미확정 사람 확인 프로토콜 (④ — evidence_expectation 카드)
+
+자동 판정이 상태코드·반사만으로는 확정 못 하는 finding(`undetermined` · `verdict: needs-confirmation` · 접근통제 soft-200)에는 스크립트가 `evidence_expectation` 카드(`poc`·`expected_vulnerable`·`expected_safe`·`contrast`)를 실어 보낸다. 이때 **사람이 실행하고 결과를 확인**해 최종 판정한다.
+
+1. 카드의 `poc`를 사람이 실행(브라우저/터미널)하도록 제시한다.
+2. **AskUserQuestion** — "아래 PoC를 실행하면 결과가 어느 쪽인가요?"
+   - 정형 옵션: `취약 신호 관찰(alert 실행 / 지연 / 실제 데이터 노출)` / `방어(차단·이스케이프·거부)` / `판단 불가`
+   - **자유서술("직접 입력") 칸을 주 채널로** 둔다 — 사람이 관찰한 것을 그대로 적게 한다(예: "alert는 안 떴는데 응답 본문에 A의 이메일이 그대로 보임").
+3. 사람 답이 최종 판정을 결정한다: `취약 신호` → 확정(심각도 산정), `방어` → 오탐 제외, `판단 불가` → 미확정 유지.
+
+| 클래스 | 예상 증거 카드(요지) |
+|---|---|
+| XSS(저장/DOM) | `board/[id]`에 `<img src=x onerror=alert(document.domain)>` 저장 후 조회 → alert 뜨면 저장형 XSS 확정 |
+| 접근통제 soft-200 | B 토큰으로 A 리소스 GET → 본문이 A의 실제 데이터면 취약 / '권한없음' 응답이면 방어(HTTP 200이어도) |
+| 파일 업로드 | 마커 `.jsp` 업로드 후 회수 URL 조회 → 마커 원문 그대로 노출이면 웹루트 저장 확정(High) |
+
 ### 4단계 — 통합 리포트 작성·저장
 모든 취약점 클래스를 **하나의 리포트**로 통합한다. `reports/audit-<프로젝트>.md`에 저장.
 
