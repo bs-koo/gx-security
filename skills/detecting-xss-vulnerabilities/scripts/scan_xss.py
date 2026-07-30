@@ -40,10 +40,11 @@ def detect_stacks(target):
     """리포에 섞일 수 있으므로 발견된 스택들의 집합을 반환."""
     stacks = set()
     for root, dirs, files in os.walk(target):
-        # 잡음 디렉토리 제외
+        # 잡음 디렉토리 제외 (프론트 빌드 산출물 .nuxt/.output/coverage 포함)
         dirs[:] = [d for d in dirs if d not in
                    (".git", "node_modules", "build", "target", "dist", ".gradle",
-                    ".dev", ".omc", ".humanize", ".idea", ".vscode")]
+                    ".dev", ".omc", ".humanize", ".idea", ".vscode",
+                    ".nuxt", ".output", "coverage")]
         base = os.path.basename(root)
         for f in files:
             if f in ("build.gradle.kts", "settings.gradle.kts", "build.gradle", "pom.xml"):
@@ -52,6 +53,9 @@ def detect_stacks(target):
                 stacks.add("jsp-legacy")
             if f.endswith(".jsp"):
                 stacks.add("jsp-legacy")
+            # frontend(SPA) — Vue/Nuxt/Vite. .vue 소스 또는 프레임워크 설정 파일(P4 Task 4).
+            if f.endswith(".vue") or re.match(r'(?:nuxt|vite)\.config\.(?:ts|js|mjs|cjs)$', f):
+                stacks.add("frontend")
         if base == "webapp":
             stacks.add("jsp-legacy")
     if not stacks:
@@ -136,6 +140,20 @@ FALLBACK_PATTERNS = [
     # 이스케이프 래핑(print(Encode.forHtml(...)))은 사이에 함수호출이 끼어 미검출.
     ("servlet-getwriter-reflected-xss", "spring-modern", (".java",),
      re.compile(r'\.getWriter\s*\(\s*\)\s*\.\s*(?:print|println|write)\s*\(\s*request\.getParameter', re.I)),
+
+    # ── frontend (Vue/Nuxt SPA) XSS 싱크 (P4 Task 4) ──
+    # frontend — v-html 미새니타이즈 (Vue 저장형/DOM XSS 핵심 싱크).
+    # run_fallback 후처리에서 sanitize()/DOMPurify 래핑 라인은 후보에서 제외한다.
+    ("vue-v-html-unsanitized", "frontend", (".vue",),
+     re.compile(r'v-html\s*=')),
+
+    # frontend — insertAdjacentHTML / outerHTML 할당(DOM 직접 주입)
+    ("dom-insertadjacenthtml-outerhtml", "frontend", (".vue", ".js", ".ts", ".jsx", ".tsx"),
+     re.compile(r'\.insertAdjacentHTML\s*\(|\.outerHTML\s*=')),
+
+    # frontend — eval / new Function (동적 코드 실행 싱크)
+    ("js-eval-dynamic-code", "frontend", (".vue", ".js", ".ts", ".jsx", ".tsx"),
+     re.compile(r'\beval\s*\(|\bnew\s+Function\s*\(')),
 ]
 
 
@@ -143,6 +161,7 @@ FALLBACK_PATTERNS = [
 _EXCLUDE_DIRS = {
     ".git", "node_modules", "build", "target", "dist", ".gradle",
     ".dev", ".omc", ".humanize", ".idea", ".vscode",
+    ".nuxt", ".output", "coverage",  # 프론트 빌드 산출물(P4 Task 4)
     "fullcalendar", "jquery", "bootstrap", "datatables", "tinymce",
     "ckeditor", "codemirror", "ace", "lib", "vendor", "assets",
     "pubRes",  # Gseed_Web_Renew 정적 리소스(서드파티 JS 포함)
@@ -175,6 +194,10 @@ def run_fallback(target):
                                 # FR-4 — 저장형 모델 EL은 c:out/escapeXml로 래핑되면 안전 → 후보 제외.
                                 if rule_id == "jsp-el-unescaped-model" and \
                                         re.search(r'escapeXml|<c:out', line):
+                                    continue
+                                # frontend — v-html 값이 sanitize/DOMPurify 래핑이면 방어 → 후보 제외.
+                                if rule_id == "vue-v-html-unsanitized" and \
+                                        re.search(r'DOMPurify|\bsanitize\b|\bpurify\b|escapeHtml', line, re.I):
                                     continue
                                 findings.append({
                                     "file": path, "line": i, "rule_id": rule_id,

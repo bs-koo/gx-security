@@ -1,0 +1,49 @@
+# 프론트엔드(Vue/Nuxt SPA) XSS 룰 (P4 Task 4).
+#
+# .vue SFC 는 semgrep 의 네이티브 언어 파서가 없어 languages: [generic] + pattern-regex 로
+# 처리한다(AST 대신 텍스트 정규식). 따라서 이 룰들은 grep 폴백(scan_xss.py FALLBACK_PATTERNS)과
+# 사실상 동일한 신호이며, 정밀도(이스케이프/sanitize 래핑 판별)는 SKILL.md 2단계 AI 검증이
+# 담당한다. semgrep 설치 환경(CI)에서 로드 검증되고, Windows/미설치 환경은 폴백이 주 경로다.
+rules:
+  - id: sqisoft-vue-v-html-unsanitized
+    languages: [generic]
+    severity: WARNING
+    message: >-
+      Vue v-html 바인딩에 미새니타이즈 값이 들어가면 저장형/DOM XSS가 된다.
+      DOMPurify.sanitize() 등으로 감싸거나 텍스트 보간({{ }})으로 바꿔라.
+    metadata:
+      stack: frontend
+      cwe: CWE-79
+      owasp: A03:2021
+      confidence: needs-context
+    paths:
+      include: ["*.vue"]
+    pattern-regex: 'v-html\s*='
+
+  - id: sqisoft-dom-insertadjacenthtml-outerhtml
+    languages: [generic]
+    severity: WARNING
+    message: >-
+      insertAdjacentHTML()/outerHTML 할당에 사용자 입력이 들어가면 DOM XSS가 된다.
+      textContent 사용 또는 sanitize 후 삽입하라.
+    metadata:
+      stack: frontend
+      cwe: CWE-79
+      confidence: needs-context
+    paths:
+      include: ["*.vue", "*.js", "*.ts", "*.jsx", "*.tsx"]
+    pattern-regex: '\.insertAdjacentHTML\s*\(|\.outerHTML\s*='
+
+  - id: sqisoft-js-eval-dynamic-code
+    languages: [generic]
+    severity: WARNING
+    message: >-
+      eval()/new Function() 에 사용자 입력이 들어가면 임의 코드 실행(코드 인젝션)이 된다.
+      동적 코드 실행을 제거하거나 안전한 파서로 대체하라.
+    metadata:
+      stack: frontend
+      cwe: CWE-95
+      confidence: needs-context
+    paths:
+      include: ["*.vue", "*.js", "*.ts", "*.jsx", "*.tsx"]
+    pattern-regex: '\beval\s*\(|\bnew\s+Function\s*\('

@@ -67,5 +67,59 @@ class TestJspElUnescapedModel(unittest.TestCase):
         self.assertNotIn("jsp-el-unescaped-model", _scan("board.jsp", jsp))
 
 
+class TestFrontendXss(unittest.TestCase):
+    """P4 Task 4 — 프론트엔드(Vue/Nuxt) XSS frontend 모드.
+
+    v-html 미새니타이즈(핵심 저장형 XSS 싱크)·insertAdjacentHTML/outerHTML·eval을 잡되,
+    sanitize/DOMPurify 래핑은 제외. node_modules 오염 배제. frontend 스택 감지.
+    """
+
+    _FX = os.path.join(_ROOT, "tests", "fixtures", "xss", "frontend")
+
+    def _scan_dir(self, d):
+        return scan_xss.run_fallback(d)
+
+    def test_fixture_vuln_detected(self):
+        cands = self._scan_dir(os.path.join(self._FX, "vuln"))
+        rule_ids = {c["rule_id"] for c in cands}
+        self.assertIn("vue-v-html-unsanitized", rule_ids)
+        self.assertGreaterEqual(len(cands), 1)
+        # frontend 스택으로 태깅됐는지
+        self.assertTrue(any(c["stack"] == "frontend" for c in cands))
+
+    def test_fixture_safe_clean(self):
+        # DOMPurify.sanitize 래핑 v-html + 텍스트 보간 → 후보 0
+        cands = self._scan_dir(os.path.join(self._FX, "safe"))
+        self.assertEqual(cands, [], f"안전 픽스처 오탐: {[c['rule_id'] for c in cands]}")
+
+    def test_v_html_unsanitized_flagged(self):
+        self.assertIn("vue-v-html-unsanitized",
+                      _scan("C.vue", '<div v-html="post.content"></div>\n'))
+
+    def test_v_html_sanitized_not_flagged(self):
+        self.assertNotIn("vue-v-html-unsanitized",
+                         _scan("C.vue", '<div v-html="DOMPurify.sanitize(post.content)"></div>\n'))
+
+    def test_insertadjacenthtml_flagged(self):
+        self.assertIn("dom-insertadjacenthtml-outerhtml",
+                      _scan("c.ts", 'el.insertAdjacentHTML("beforeend", userInput)\n'))
+
+    def test_eval_flagged(self):
+        self.assertIn("js-eval-dynamic-code",
+                      _scan("c.js", 'const r = eval(userInput)\n'))
+
+    def test_detect_stacks_frontend(self):
+        self.assertIn("frontend", scan_xss.detect_stacks(os.path.join(self._FX, "vuln")))
+
+    def test_node_modules_not_scanned(self):
+        # node_modules 하위 .vue 는 절대 후보에 들어가지 않는다(766개 노이즈 배제)
+        with tempfile.TemporaryDirectory() as tmp:
+            nm = os.path.join(tmp, "node_modules", "pkg")
+            os.makedirs(nm)
+            with open(os.path.join(nm, "Bad.vue"), "w", encoding="utf-8") as fh:
+                fh.write('<div v-html="x"></div>\n')
+            self.assertEqual(scan_xss.run_fallback(tmp), [])
+
+
 if __name__ == "__main__":
     unittest.main()
