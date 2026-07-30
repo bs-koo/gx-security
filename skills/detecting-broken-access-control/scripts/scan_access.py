@@ -150,14 +150,24 @@ FALLBACK_PATTERNS = [
 _OWNERSHIP_RULES = {
     "spring-pathvariable-id", "spring-pathvariable-annotated-id", "jsp-getparameter-id",
 }
+# 소유자 스코핑 조회는 '결합' 형태(id AND owner 동시 조건)만 집행으로 인정한다. bare
+# findByUserId(id)는 공격자 제어 id를 그대로 소유자 키로 쓰는 IDOR 싱크일 수 있어 억제하지
+# 않는다(FN 회피 — 최종 리뷰 I-1). 두 lookahead로 'And'와 소유자 용어가 함께 있을 때만 매치.
 _OWNERSHIP_ENFORCE = re.compile(
     r'@(?:Pre|Post)Authorize\s*\(\s*"[^"]*(?:#\w+|\bowns\b|hasPermission|returnObject|@\w+\.\w+)'
-    r'|findBy\w*(?:Owner|User|Member|Writer|Creator|Author)\w*'
-    r'|existsBy\w*(?:Owner|User|Member)\w*'
+    r'|(?:findBy|existsBy)(?=\w*And)(?=\w*(?:Owner|User|Member|Writer|Creator|Author))\w+'
     r'|\b(?:check|assert|verify|validate|ensure)\w*(?:Owner|Ownership|Access|Permission)\s*\('
     r'|\.owns\s*\(',
     re.I,
 )
+
+
+def _strip_comments(line):
+    """라인의 주석(// … , 인라인 /* … */)을 제거한다 — 주석/주석처리된 코드에 담긴
+    집행 토큰이 억제를 유발하는 FN을 막는다(최종 리뷰 I-1: `// checkOwnership(id);` 케이스)."""
+    line = re.sub(r'/\*.*?\*/', '', line)
+    line = re.sub(r'//.*$', '', line)
+    return line
 _METHOD_DECL = re.compile(r'\b(?:public|private|protected)\b[\w<>\[\],.\s]*\s+\w+\s*\(')
 _DELEGATE = re.compile(r'\b(\w+(?:Service|Repository|Mapper|Dao|DAO|Manager|Store))\.(\w+)\s*\(')
 _ANNOTATION = re.compile(r'^\s*@\w+')
@@ -193,13 +203,21 @@ def _enclosing_method(lines, i):
         if "{" in ln:
             seen_open = True
         end = j
-        if seen_open and depth <= 0:
+        if sig is None:
+            # 시그니처 미발견(본문 중간에서 시작) — 현재 메서드의 닫는 }로 depth가 음수가 되는
+            # 순간 멈춘다. 다음 메서드의 @PreAuthorize를 창에 끌어들여 오억제(FN)하는 것을 막는다
+            # (최종 리뷰 I-1 brace-bleed).
+            if depth < 0:
+                break
+        elif seen_open and depth <= 0:
             break
     return start, max(end, i)
 
 
 def _has_enforcement(lines, start, end):
-    return any(_OWNERSHIP_ENFORCE.search(lines[j - 1]) for j in range(start, end + 1))
+    # 주석 제거 후 매치 — 주석/주석처리된 코드의 집행 토큰이 억제를 유발하지 않게(FN 회피).
+    return any(_OWNERSHIP_ENFORCE.search(_strip_comments(lines[j - 1]))
+               for j in range(start, end + 1))
 
 
 def _build_context(lines, i, start, end):

@@ -205,6 +205,59 @@ class TestOwnershipSuppression(unittest.TestCase):
         )
         self.assertIn("spring-pathvariable-id", self._rule_ids("Baz.java", body))
 
+    def test_commented_out_check_still_flagged(self):
+        # 최종 리뷰 I-1: 주석처리된 소유권 체크로 억제되면 안 된다(코드는 오히려 취약해진 상태).
+        body = (
+            "public class C {\n"
+            "    public Post get(@PathVariable Long id) {\n"
+            "        // checkOwnership(id);  // temporarily disabled\n"
+            "        return repo.findById(id);\n"
+            "    }\n"
+            "}\n"
+        )
+        self.assertIn("spring-pathvariable-id", self._rule_ids("C.java", body))
+
+    def test_comment_mentioning_owns_still_flagged(self):
+        body = (
+            "public class C {\n"
+            "    public Post get(@PathVariable Long id) {\n"
+            "        // TODO: should call service.owns(id) here\n"
+            "        return repo.findById(id);\n"
+            "    }\n"
+            "}\n"
+        )
+        self.assertIn("spring-pathvariable-id", self._rule_ids("C.java", body))
+
+    def test_brace_bleed_neighbor_preauthorize_not_suppressed(self):
+        # 최종 리뷰 I-1: 시그니처가 40줄 위(sig 미발견)라 본문 중간에서 시작해도, brace-walk가
+        # 다음 메서드의 @PreAuthorize로 새어 억제하면 안 된다.
+        filler = "\n".join(f"        int x{k} = {k};" for k in range(45))
+        body = (
+            "public class C {\n"
+            "    public String view(HttpServletRequest req) {\n"
+            + filler + "\n"
+            '        String id = req.getParameter("id");\n'
+            "        return repo.findById(id);\n"
+            "    }\n"
+            "\n"
+            '    @PreAuthorize("@auth.owns(#other)")\n'
+            "    public Post other(@PathVariable Long other) { return svc.get(other); }\n"
+            "}\n"
+        )
+        self.assertIn("jsp-getparameter-id", self._rule_ids("C.java", body))
+
+    def test_bare_findbyuserid_still_flagged(self):
+        # 최종 리뷰 I-1: 단일 인자 findByUserId(id)는 공격자 제어 id를 소유자 키로 쓰는 IDOR 싱크 →
+        # 결합형(id AND owner) 아니므로 억제하지 않는다.
+        body = (
+            "public class C {\n"
+            "    public Post get(@PathVariable Long id) {\n"
+            "        return orderRepo.findByUserId(id);\n"
+            "    }\n"
+            "}\n"
+        )
+        self.assertIn("spring-pathvariable-id", self._rule_ids("C.java", body))
+
     def test_context_block_attached_to_flagged(self):
         body = (
             "public class Q {\n"
