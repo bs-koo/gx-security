@@ -609,6 +609,10 @@ def render_dynamic_line(d):
         return f"{prefix}{res.get('raw','')[:80]}"
     if d.get("returncode") not in (0, None):
         return f"{prefix}⚠ 발사 실패 rc={d.get('returncode')}"
+    # XSS 등: 반사(needs-confirmation)는 '후보'로 표기 — 반사만으로 악용 확정하지 않는다(감사 #7).
+    # exploited=true 는 브라우저 실행(Playwright)/사람 확인 후에만 상위가 승격한다.
+    if res.get("verdict") == "needs-confirmation" or (res.get("reflected") and not res.get("exploited")):
+        return f"{prefix}🟡 반사 확인(후보 — 브라우저 실행으로 확정 필요)"
     return f"{prefix}{'🔴 악용 확정' if res.get('exploited') else '— 미확인'}"
 
 

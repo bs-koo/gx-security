@@ -1,6 +1,8 @@
 import importlib.util
 import io
+import json
 import os
+import sys
 import unittest
 import urllib.error
 from unittest.mock import MagicMock, patch
@@ -46,6 +48,62 @@ class TestNoRedirectOpener(unittest.TestCase):
         attack_xss.check_reflection(
             "http://app.local/search", "q", "get", {}, "<b>x</b>", "sqixssbbbbbbbb")
         self.assertTrue(mock_open.called)
+
+
+class TestVerdictContract(unittest.TestCase):
+    """P4 Task 7 (감사 #7 수정) — 반사만으로 exploited=true 를 찍지 않는다.
+
+    HTTP 응답 반사는 verdict='needs-confirmation'(후보)이며 exploited=False. evidence_expectation
+    카드를 방출한다. 확정은 Playwright 실행(④ 사람확인)으로 상위가 승격한다.
+    """
+
+    def _run(self, cr_return):
+        argv = ["attack_xss.py", "http://127.0.0.1:9/search", "--param", "q", "--json"]
+        buf = io.StringIO()
+        with patch.object(attack_xss, "check_reflection", return_value=cr_return), \
+                patch.object(sys, "argv", argv), patch.object(sys, "stdout", buf):
+            attack_xss.main()
+        return json.loads(buf.getvalue())
+
+    def test_reflection_is_needs_confirmation_not_exploited(self):
+        out = self._run(("html-text", 200, "body with marker reflected"))
+        self.assertTrue(out["reflected"])
+        self.assertEqual(out["verdict"], "needs-confirmation")
+        self.assertFalse(out["exploited"])          # 반사만으론 절대 exploited=true 아님
+        self.assertIn("evidence_expectation", out)
+        self.assertIn("contrast", out["evidence_expectation"])
+
+    def test_no_reflection_is_safe(self):
+        out = self._run((None, 200, "clean escaped body"))
+        self.assertFalse(out["reflected"])
+        self.assertEqual(out["verdict"], "safe")
+        self.assertFalse(out["exploited"])
+        self.assertNotIn("evidence_expectation", out)
+
+
+class TestRenderDynamicLineReflection(unittest.TestCase):
+    """audit.render_dynamic_line 이 반사(needs-confirmation)를 '후보'로 표기하고 악용 확정하지 않는다."""
+
+    def setUp(self):
+        _amod = os.path.join(_ROOT, "skills", "auditing-web-application-security",
+                             "scripts", "audit.py")
+        _aspec = importlib.util.spec_from_file_location("audit_p4", _amod)
+        self.audit = importlib.util.module_from_spec(_aspec)
+        _aspec.loader.exec_module(self.audit)
+
+    def test_reflected_shows_candidate_not_exploited(self):
+        line = self.audit.render_dynamic_line(
+            {"vuln": "xss", "param": "q", "returncode": 0,
+             "result": {"verdict": "needs-confirmation", "reflected": True, "exploited": False}})
+        self.assertIn("반사 확인", line)
+        self.assertNotIn("악용 확정", line)
+
+    def test_legacy_exploited_still_confirmed(self):
+        # sqli 등 기존 exploited 계약은 그대로 '악용 확정'
+        line = self.audit.render_dynamic_line(
+            {"vuln": "sqli", "param": "id", "returncode": 0,
+             "result": {"exploited": True}})
+        self.assertIn("악용 확정", line)
 
 
 if __name__ == "__main__":
