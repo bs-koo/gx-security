@@ -139,6 +139,87 @@ FALLBACK_PATTERNS = [
 ]
 
 
+# ── 접근통제 전용: 소유권/권한 "집행" 신호 (P4 결정 2 — 이 스킬에만 추가) ──
+# 후보 라인의 '같은 메서드' 창 안에 아래 강한 집행 신호가 있으면 IDOR/BFLA 후보에서 제외한다.
+# 보수적 원칙(FN 회피): 소유권을 실제로 '강제'하는 패턴만 신호로 본다 —
+#   · @Pre/@PostAuthorize 에 소유권 표현(#id·owns·hasPermission·returnObject·커스텀 빈 @auth.*)
+#   · 소유자 스코핑 조회(findByOwner/findByIdAndUser…·existsBy…Owner…)
+#   · 명시적 소유권 검사 호출(check/assert/verify/validate/ensure …Owner/Access/Permission, .owns())
+# @AuthenticationPrincipal·SecurityContextHolder 등 '보유'만으로는 집행이 아니므로(스코핑에
+# 안 쓸 수 있음) 억제 신호로 쓰지 않는다 — context.annotations 로만 노출해 AI 2단계가 판단한다.
+_OWNERSHIP_RULES = {
+    "spring-pathvariable-id", "spring-pathvariable-annotated-id", "jsp-getparameter-id",
+}
+_OWNERSHIP_ENFORCE = re.compile(
+    r'@(?:Pre|Post)Authorize\s*\(\s*"[^"]*(?:#\w+|\bowns\b|hasPermission|returnObject|@\w+\.\w+)'
+    r'|findBy\w*(?:Owner|User|Member|Writer|Creator|Author)\w*'
+    r'|existsBy\w*(?:Owner|User|Member)\w*'
+    r'|\b(?:check|assert|verify|validate|ensure)\w*(?:Owner|Ownership|Access|Permission)\s*\('
+    r'|\.owns\s*\(',
+    re.I,
+)
+_METHOD_DECL = re.compile(r'\b(?:public|private|protected)\b[\w<>\[\],.\s]*\s+\w+\s*\(')
+_DELEGATE = re.compile(r'\b(\w+(?:Service|Repository|Mapper|Dao|DAO|Manager|Store))\.(\w+)\s*\(')
+_ANNOTATION = re.compile(r'^\s*@\w+')
+
+
+def _enclosing_method(lines, i):
+    """후보(1-based i)를 감싸는 메서드 창 (start, end) 1-based inclusive 반환.
+
+    ① 후보 위(≤40줄)에서 메서드 시그니처(_METHOD_DECL)를 찾아 body_start로 삼고,
+    ② 그 위 연속 어노테이션 라인을 start에 포함(@Pre/PostAuthorize 포착),
+    ③ body_start부터 중괄호 깊이로 메서드 끝을 찾는다(cap +80). 시그니처를 못 찾으면
+    후보 자신을 기준으로 한다. 창을 넘겨 다른 메서드 신호를 오억제하지 않도록 보수적.
+    """
+    n = len(lines)
+    sig = None
+    for j in range(i, max(0, i - 40), -1):
+        if _METHOD_DECL.search(lines[j - 1]):
+            sig = j
+            break
+    body_start = sig or i
+    start = body_start
+    for j in range(body_start - 1, max(0, body_start - 12), -1):
+        if _ANNOTATION.match(lines[j - 1]):
+            start = j
+        else:
+            break
+    depth = 0
+    seen_open = False
+    end = body_start
+    for j in range(body_start, min(n, body_start + 80) + 1):
+        ln = lines[j - 1]
+        depth += ln.count("{") - ln.count("}")
+        if "{" in ln:
+            seen_open = True
+        end = j
+        if seen_open and depth <= 0:
+            break
+    return start, max(end, i)
+
+
+def _has_enforcement(lines, start, end):
+    return any(_OWNERSHIP_ENFORCE.search(lines[j - 1]) for j in range(start, end + 1))
+
+
+def _build_context(lines, i, start, end):
+    """AI 2단계 소유권 판정 사다리를 돕는 선택 필드(schema 선택)."""
+    method = None
+    for j in range(i, start - 1, -1):
+        if _METHOD_DECL.search(lines[j - 1]):
+            method = lines[j - 1].strip()[:160]
+            break
+    annotations = [lines[j - 1].strip()[:80]
+                   for j in range(start, end + 1) if _ANNOTATION.match(lines[j - 1])]
+    delegates = []
+    for j in range(start, end + 1):
+        for m in _DELEGATE.finditer(lines[j - 1]):
+            tag = f"{m.group(1)}.{m.group(2)}"
+            if tag not in delegates:
+                delegates.append(tag)
+    return {"method": method, "annotations": annotations[:6], "delegates_to": delegates[:8]}
+
+
 def run_fallback(target):
     findings = []
     for root, dirs, files in os.walk(target):
@@ -153,19 +234,30 @@ def run_fallback(target):
             path = os.path.join(root, f)
             try:
                 with open(path, encoding="utf-8", errors="replace") as fh:
-                    for i, line in enumerate(fh, 1):
-                        # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해 스킵
-                        if len(line) > _MAX_LINE_LEN:
-                            continue
-                        for rule_id, stack, _exts, rx in rules:
-                            if rx.search(line):
-                                findings.append({
-                                    "file": path, "line": i, "rule_id": rule_id,
-                                    "stack": stack, "confidence": "needs-context",
-                                    "snippet": line.strip()[:200],
-                                })
+                    lines = fh.readlines()
             except OSError:
                 continue
+            for i, line in enumerate(lines, 1):
+                # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해 스킵
+                if len(line) > _MAX_LINE_LEN:
+                    continue
+                for rule_id, stack, _exts, rx in rules:
+                    if not rx.search(line):
+                        continue
+                    cand = {
+                        "file": path, "line": i, "rule_id": rule_id,
+                        "stack": stack, "confidence": "needs-context",
+                        "snippet": line.strip()[:200],
+                    }
+                    # 접근통제 전용(P4 결정 2): 소유권/권한 후보는 같은 메서드 창에 강한
+                    # 집행 신호가 있으면 제외(오탐↓), 아니면 context를 달아 AI 판정에 넘긴다.
+                    # 그 외 규칙(admin 매핑·CORS·anyRequest 등)은 기존과 바이트 동일하게 방출.
+                    if rule_id in _OWNERSHIP_RULES:
+                        m_start, m_end = _enclosing_method(lines, i)
+                        if _has_enforcement(lines, m_start, m_end):
+                            continue
+                        cand["context"] = _build_context(lines, i, m_start, m_end)
+                    findings.append(cand)
     return findings
 
 

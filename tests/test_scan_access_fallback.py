@@ -149,5 +149,78 @@ class TestPathVariableBareId(unittest.TestCase):
         self.assertNotIn("spring-pathvariable-id", rules)
 
 
+class TestOwnershipSuppression(unittest.TestCase):
+    """P4 Task 2 (결정 2): 접근통제 전용 소유권/권한 집행 신호로 오탐 억제.
+
+    같은 메서드 창에 강한 집행 신호(@Pre/PostAuthorize 소유권 표현·소유자 스코핑 조회)가
+    있으면 id 계열 후보를 제외하되, 신호가 '다른 메서드'에 있으면 억제하지 않는다(FN 회피).
+    """
+
+    def _findings(self, filename, body):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, filename), "w", encoding="utf-8") as fh:
+                fh.write(body)
+            return scan_access.run_fallback(d)
+
+    def _rule_ids(self, filename, body):
+        return {c["rule_id"] for c in self._findings(filename, body)}
+
+    def test_preauthorize_owns_suppresses_pathvariable(self):
+        body = (
+            "public class Foo {\n"
+            '    @PreAuthorize("@auth.owns(#id)")\n'
+            '    @GetMapping("/{id}")\n'
+            "    public Post get(@PathVariable Long id) {\n"
+            "        return service.find(id);\n"
+            "    }\n"
+            "}\n"
+        )
+        self.assertNotIn("spring-pathvariable-id", self._rule_ids("Foo.java", body))
+
+    def test_owner_scoped_query_suppresses_getparameter(self):
+        body = (
+            "public class Bar {\n"
+            "    public String view(HttpServletRequest req) {\n"
+            '        String id = req.getParameter("id");\n'
+            "        return repo.findByIdAndOwner(id, currentUser());\n"
+            "    }\n"
+            "}\n"
+        )
+        self.assertNotIn("jsp-getparameter-id", self._rule_ids("Bar.java", body))
+
+    def test_unprotected_method_still_flagged(self):
+        # 보호 메서드(other) + 비보호 메서드(get)가 한 파일에. get 은 소유권 스코핑이 없으므로
+        # 다른 메서드의 @PreAuthorize 에 억제되지 않고 여전히 후보로 남아야 한다(FN 가드).
+        body = (
+            "public class Baz {\n"
+            '    @PreAuthorize("@auth.owns(#other)")\n'
+            "    public Post other(@PathVariable Long other) {\n"
+            "        return svc.get(other);\n"
+            "    }\n"
+            "\n"
+            "    public Post get(@PathVariable Long id) {\n"
+            "        return repo.findById(id);\n"
+            "    }\n"
+            "}\n"
+        )
+        self.assertIn("spring-pathvariable-id", self._rule_ids("Baz.java", body))
+
+    def test_context_block_attached_to_flagged(self):
+        body = (
+            "public class Q {\n"
+            "    public Post get(@PathVariable Long id) {\n"
+            "        return postService.findById(id);\n"
+            "    }\n"
+            "}\n"
+        )
+        cands = [c for c in self._findings("Q.java", body)
+                 if c["rule_id"] == "spring-pathvariable-id"]
+        self.assertEqual(len(cands), 1)
+        ctx = cands[0].get("context")
+        self.assertIsInstance(ctx, dict)
+        self.assertIn("delegates_to", ctx)
+        self.assertIn("postService.findById", ctx["delegates_to"])
+
+
 if __name__ == "__main__":
     unittest.main()
