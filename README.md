@@ -6,7 +6,7 @@
 
 정적 분석(SAST) + 동적 모의침투(DAST) 하이브리드 · 스택 자동 감지 · AI 오탐 제거
 
-`커맨드 3` · `스킬 16` (통합 1 · 진단 9 · 침투 6) · `v0.5.0` · Proprietary
+`커맨드 3` · `스킬 16` (통합 1 · 진단 9 · 침투 6) · `v0.7.0` · Proprietary
 
 </div>
 
@@ -285,4 +285,4 @@ security-plugin/
 
 ---
 
-<sub>Proprietary · GX 사업본부 사내용 · v0.5.0</sub>
+<sub>Proprietary · GX 사업본부 사내용 · v0.7.0</sub>

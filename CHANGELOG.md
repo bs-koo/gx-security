@@ -4,6 +4,23 @@
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르며,
 버전 체계는 [Semantic Versioning](https://semver.org/lang/ko/)을 준수합니다.
 
+## [0.7.0] - 2026-07-30
+
+> P4 커버리지. 정적 판정을 "충분히"로 승격하고 프론트엔드 XSS를 커버하며, 동적을 대화형·사람확인형으로 재편했다. (P3 0.6.0 미릴리스 시 이 릴리스가 P3 변경도 포함한다.)
+
+### Added
+- **접근통제 정적 정밀화(Task 2·3)** — `scan_access.py`가 소유권/권한 집행 신호(@Pre/PostAuthorize 소유권 표현·소유자 스코핑 조회·명시적 소유권 검사)를 같은 메서드 창에서 감지해 IDOR/BFLA 오탐을 억제하고, 남은 후보엔 `context`(method·annotations·delegates_to)를 부착한다. SKILL.md에 `secure/vulnerable/needs-runtime` 3-값 판정 사다리와 전 후보 판정 매트릭스 산출을 명문화. sef-2026 backend 65→57, 41건 context.
+- **프론트엔드 XSS 커버(Task 4·5)** — `detecting-xss`에 frontend 모드 추가: Vue/Nuxt `.vue` 스택 감지, `node_modules/dist/.nuxt/.output` 제외, `v-html`(미새니타이즈, sanitize 래핑 제외)·`insertAdjacentHTML/outerHTML`·`eval/new Function` 폴백 룰 + `rules/xss-frontend.yml`. SKILL.md에 프론트 폴더 탐색 → AskUserQuestion 확인 → 스캔 워크플로우. sef-2026 public/frontend v-html 5건 검출(기존 미커버).
+- **동적 대화형 게이트(Task 6)** — auditing·gx-pentest에 정적 우선 + AskUserQuestion 동적 게이트(대상 실행 여부 확인)·라이브니스 프로브·비밀 stdin 전달 원칙(자유서술 칸 상시).
+- **사람확인 확정 프로토콜(Task 8, ④)** — `attack_access`(soft-200)·`attack_pathupload`(업로드 미확정)에 `evidence_expectation` 카드, auditing SKILL.md에 예상 증거 카드 → AskUserQuestion(자유서술 주 채널) → 최종 판정 프로토콜.
+- **다중 루트(모노레포) 오케스트레이션(Task 9)** — 백엔드 루트(9종 풀스캔)·프론트 루트(XSS 전용)를 나눠 탐색·확인 후 단일 통합 리포트로 병합.
+
+### Changed
+- **XSS 과대표기 수정(Task 7)** — `attack_xss.py`가 반사만으로 `exploited:true`를 찍던 것을 제거. `reflected`/`verdict`(needs-confirmation|safe|unreached) + `evidence_expectation`을 방출하고 `exploited`는 브라우저 실행(Playwright) 확인 후 상위가 승격한다. 자기 SKILL.md 기준("반사=후보, 실행=확정")과 정합.
+
+### Fixed
+- **Windows(cp949) 인코딩 크래시 근본 수정(Task 1)** — 공용 `tools/io_utf8.py`(`configure()`·`emit_json()` UTF-8 바이트 직접 기록) 도입, 전 엔트리 스크립트가 JSON 계약을 콘솔 코덱에서 분리한다. cp949 회귀 테스트 추가.
+
 ## [0.5.0] - 2026-07-20
 
 ### Added
@@ -39,6 +56,7 @@
 - 이번 릴리스는 코드 로직 변경 없는 정합·릴리스 작업입니다. 버전 표기·문서 정합·CHANGELOG 신설에 한정됩니다.
 - 구성: 커맨드 3(`gx-audit`·`gx-diagnose`·`gx-pentest`)·스킬 16(통합 1·진단 9·침투 6).
 
+[0.7.0]: https://github.com/bs-koo/gx-security/releases/tag/v0.7.0
 [0.5.0]: https://github.com/bs-koo/gx-security/releases/tag/v0.5.0
 [0.4.0]: https://github.com/bs-koo/gx-security/releases/tag/v0.4.0
 [0.3.0]: https://github.com/bs-koo/gx-security/releases/tag/v0.3.0

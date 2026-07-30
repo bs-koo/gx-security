@@ -10,7 +10,7 @@ domain: cybersecurity
 subdomain: web-application-security
 tags: [audit, owasp, sast, dast, orchestrator, sqisoft, full-scan]
 stacks: [spring-modern, jsp-legacy]
-version: "0.5.0"
+version: "0.7.0"
 author: sqisoft-security
 license: Proprietary
 ---
@@ -37,9 +37,13 @@ license: Proprietary
 
 ## Workflow
 
-### 0단계 — 입력 확인
+### 0단계 — 입력 확인 · 스캔 루트 탐색(모노레포 대응)
 - 소스 경로 확보. 동적까지 할지(대상 URL 유무) 결정.
 - 대상 URL이 운영처럼 보이면 중단하고 사용자에게 스테이징/로컬을 요청.
+- **다중 루트 자동 탐색**: 모노레포일 수 있으므로 스캔 루트를 나눠 찾는다(`node_modules`·`dist`·`.nuxt`·`.output` 제외).
+  - **백엔드 루트**(9종 풀스캔): `build.gradle*`/`pom.xml`이 있는 디렉토리. 예 sef-2026 → `private/backend`, `public`.
+  - **프론트엔드 루트**(XSS frontend 모드 전용): `nuxt.config.*`/`vite.config.*`가 있는 디렉토리. 예 sef-2026 → `private/frontend`, `public/frontend`.
+  - **AskUserQuestion**으로 발견한 루트 목록을 확인한다("이 루트들이 스캔 대상 맞나요?", 자유서술 칸 상시). 백엔드 루트엔 9종, 프론트 루트엔 `detecting-xss` frontend 모드만 돌린 뒤 **하나의 통합 리포트**로 병합한다.
 
 ### 1단계 — 정적 엔진 실행 (항상 수행)
 ```bash
