@@ -41,15 +41,36 @@ license: Proprietary
 - 소스 경로 확보. 동적까지 할지(대상 URL 유무) 결정.
 - 대상 URL이 운영처럼 보이면 중단하고 사용자에게 스테이징/로컬을 요청.
 
-### 1단계 — 통합 엔진 실행 (정적 + 동적 일괄)
+### 1단계 — 정적 엔진 실행 (항상 수행)
 ```bash
-# 정적만
+# 정적만 먼저 — 완전 안전(읽기 전용). 동적은 1.5단계 게이트 통과 후에만.
 python skills/auditing-web-application-security/scripts/audit.py "<소스경로>" --json
-# 정적 + 동적(실행 중 대상)
-python skills/auditing-web-application-security/scripts/audit.py "<소스경로>" \
-    --target "http://localhost:8080" --params id,q,search --json
 ```
-→ `phases.static`(9종 후보) + `phases.dynamic`(실제 발사 결과)를 한 번에 받는다.
+→ `phases.static`(9종 후보)를 받는다. 동적은 아래 게이트에서 옵트인한다.
+
+### 1.5단계 — 동적 게이트 (AskUserQuestion — 대상 실행 여부 확인)
+
+정적은 항상 수행하고, **동적(모의침투)은 여기서 옵트인**한다. 정적 완료 후 사용자에게 묻는다.
+
+1. **AskUserQuestion** — "동적 모의침투를 진행할까요? 실행 중인 스테이징/로컬 대상이 있나요?"
+   - 옵션: `예 — URL 있음` / `아니오 — 정적만` / `지금 띄울게요(대기)` + **항상 자유서술("직접 입력") 칸**을 노출.
+   - `아니오`면 동적을 건너뛰고 정적 결과만으로 4단계 리포트를 쓴다(모든 미확정은 "정적 추정"으로 표기).
+2. **라이브니스 프로브** — `예`면 발사 전 대상이 실제로 떠 있는지 1회 확인(비파괴 GET). scope 통과 필수.
+   ```bash
+   python tools/scope_guard.py "<대상URL>"      # ALLOW 여야 진행(운영/공인은 코드 차단)
+   curl -sS -o /dev/null -w "%{http_code}\n" "<대상URL>"   # 200/302 등 응답이면 가동
+   ```
+   죽어 있으면 "대기/재시도"를 안내하고, 사용자가 띄운 뒤 다시 프로브한다.
+3. **비밀은 질문으로 받지 않는다** — URL·점검할 취약점 클래스·표적 경로(게시판 다운로드/업로드 등) 같은 **비(非)비밀 라우팅만** AskUserQuestion으로 받는다(자유서술 칸 활용). 로그인 계정/토큰은 트랜스크립트에 남지 않도록 `--creds-stdin`(stdin JSON) 또는 `--*-env`(환경변수)로 전달한다.
+   ```bash
+   # 확정 후 동적 발사(sef-2026 프리셋, 계정은 argv에 남기지 않음)
+   echo '{"user_a_pw":"..","user_b_pw":".."}' | \
+     python skills/auditing-web-application-security/scripts/audit.py "<소스경로>" \
+       --target "http://localhost:8080" --login-profile sef-2026 \
+       --user-a-id <A> --user-b-id <B> --resource-id <A소유ID> \
+       --probe /api/v1/users/me --params id,q --creds-stdin --json
+   ```
+   → `phases.dynamic` 및 클래스별 `*_dynamic` 결과를 받아 3단계로 종합한다.
 
 ### 2단계 — 정적 후보 AI 검증 (오탐 제거)
 후보가 많은 취약점 클래스부터, 해당 `detecting-<X>` 스킬의 2단계(컨텍스트 검증) 기준으로
