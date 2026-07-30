@@ -12,8 +12,12 @@ SQIsoft 보안 플러그인 통합 스캐너 런처.
 ── 후보(candidate) 공통 스키마 계약 — 9종 scan_*.py 균일 (v0.3.x~) ──
   · 필수 필드: file(str), line(int), rule_id(str), stack(str),
     confidence(str), snippet(str)  ← semgrep·grep-fallback 두 경로 모두 방출.
-  · 선택 필드: severity(str) — "있으면 쓰고 없으면 무시". 현재 scan_secrets의
-    debug-output-residue(디버그 잔류)만 "info"로 방출한다.
+  · 선택 필드(있으면 쓰고 없으면 무시): severity(str) — 현재 scan_secrets의
+    debug-output-residue(디버그 잔류)만 "info"로 방출. context(dict: method/annotations/
+    delegates_to) — scan_access의 접근통제 후보에 부착(AI 소유권 판정 사다리용).
+  · confidence는 보통 "needs-context"이나, scan_access가 소유권/권한 집행 신호를 감지하면
+    "enforcement-detected-verify"로 낮춰 방출한다(후보를 '삭제'하지 않고 태그해 AI 2단계가
+    검증 — silent FN 방지). 상위 결과에 enforcement_tagged_count(int)도 노출된다.
   · 각 스캐너 상위 JSON: {target, detected_stacks, engine, candidate_count,
     rule_summary(dict), candidates(list), note}. 자식 실패 시 error 필드 추가.
   AI 2단계 검증기·집계기는 필수 필드를 무조건 존재한다고 가정해도 되며,
@@ -30,12 +34,12 @@ import os
 import subprocess
 import sys
 
-try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-except (AttributeError, ValueError):
-    pass
-
 ROOT = os.path.dirname(os.path.abspath(__file__))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+from tools import io_utf8  # noqa: E402
+io_utf8.configure()
+
 SKILLS_DIR = os.path.join(ROOT, "skills")
 
 # 스킬 디렉토리명 → 사람이 읽는 라벨
@@ -186,7 +190,7 @@ def main():
         ]
 
     if args.json:
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        io_utf8.emit_json(summary)
         return
 
     engine_label = ", ".join(engines_sorted) if engines_sorted else "?"

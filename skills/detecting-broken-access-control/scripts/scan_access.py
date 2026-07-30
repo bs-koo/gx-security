@@ -22,14 +22,13 @@ import shutil
 import subprocess
 import sys
 
-# Windows 콘솔(cp949)에서도 한글이 깨지지 않도록 UTF-8 고정
-try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-except (AttributeError, ValueError):
-    pass
-
 HERE = os.path.dirname(os.path.abspath(__file__))
+_PLUGIN_ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+if _PLUGIN_ROOT not in sys.path:
+    sys.path.insert(0, _PLUGIN_ROOT)
+from tools import io_utf8  # noqa: E402  (UTF-8 콘솔 강제 — Windows cp949 크래시 방지, Task 1)
+io_utf8.configure()
+
 RULES = os.path.join(os.path.dirname(HERE), "rules", "access-control.yml")
 
 # 초대형 단일 라인(minified 등)에 폴백 정규식을 적용하면 O(n²) 백트래킹으로
@@ -140,6 +139,112 @@ FALLBACK_PATTERNS = [
 ]
 
 
+# ── 접근통제 전용: 소유권/권한 "집행" 신호 (P4 — 이 스킬에만) ──
+# 후보 라인의 '같은 메서드' 창에 강한 집행 신호가 있으면 후보를 '삭제'하지 않고 confidence를
+# 'enforcement-detected-verify'로 낮춰 context와 함께 AI 2단계로 넘긴다. 정적으로는 그 신호가
+# 진짜 집행인지(주석/문자열/도달 불가 코드/세션 미파생 파라미터인지) 확신할 수 없으므로,
+# 무기록 삭제는 실제 IDOR/BFLA를 흔적 없이 지우는 silent FN이 된다(코드리뷰 finding 1·2).
+# @AuthenticationPrincipal·SecurityContextHolder 등 '보유'만으로는 집행이 아니라 context로만 노출.
+_OWNERSHIP_RULES = {
+    "spring-pathvariable-id", "spring-pathvariable-annotated-id", "jsp-getparameter-id",
+}
+# @Pre/@PostAuthorize 소유권 표현은 문자열 안에 있으므로 '주석만 제거한' 라인에서 검사한다.
+# 과대broad하던 @\w+\.\w+(아무 커스텀 빈 매치, 예: @featureFlags.isEnabled)는 제거하고 소유권과
+# 직접 연관된 #param·owns·hasPermission·returnObject만 신호로 본다(리뷰 finding: feature-flag 빈).
+_PREAUTH_ENFORCE = re.compile(
+    r'@(?:Pre|Post)Authorize\s*\(\s*"[^"]*(?:#\w+|\bowns\b|hasPermission|returnObject)', re.I)
+# 코드 토큰 신호는 문자열/주석 안이면 오신호이므로 '문자열·주석 제거본'에서 검사한다.
+# 소유자 스코핑 조회는 결합형(id AND owner)만 인정 — bare findByUserId(id)는 IDOR 싱크(리뷰 finding).
+_CODE_ENFORCE = re.compile(
+    r'(?:findBy|existsBy)(?=\w*And)(?=\w*(?:Owner|User|Member|Writer|Creator|Author))\w+'
+    r'|\b(?:check|assert|verify|validate|ensure)\w*(?:Owner|Ownership|Access|Permission)\s*\('
+    r'|\.owns\s*\(',
+    re.I,
+)
+_METHOD_DECL = re.compile(
+    r'\b(?:public|private|protected)\b[\w<>\[\],.\s]*\s+\w+\s*\(|\bfun\s+\w+\s*\(')
+_DELEGATE = re.compile(r'\b(\w+(?:Service|Repository|Mapper|Dao|DAO|Manager|Store))\.(\w+)\s*\(')
+_ANNOTATION = re.compile(r'^\s*@\w+')
+_STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"')
+_LINE_COMMENT_RE = re.compile(r'//.*$')
+_BLOCK_COMMENT_RE = re.compile(r'/\*.*?\*/', re.DOTALL)
+
+
+def _to_code_lines(raw_text):
+    """주석 제거본(문자열 리터럴은 보존)을 라인 리스트로. 블록주석 /* */은 다중 라인이어도 같은
+    줄 수의 빈칸으로 치환해 라인 번호를 보존한다(리뷰 finding: 다중라인 블록주석 우회)."""
+    no_block = _BLOCK_COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), raw_text)
+    return [_LINE_COMMENT_RE.sub("", ln) for ln in no_block.splitlines()]
+
+
+def _blank_strings(line):
+    """문자열 리터럴 내용을 비운다 — 로그 메시지 등 문자열 안 토큰이 집행 신호로 오인되지 않게
+    (리뷰 finding: 문자열 리터럴), 경로 템플릿("/{id}") 등 문자열 내 중괄호가 brace 계산을 흔들지 않게."""
+    return _STRING_RE.sub('""', line)
+
+
+def _enclosing_method(code_lines, i):
+    """후보(1-based i)를 감싸는 메서드 창 (start, end) 1-based inclusive. 주석 제거된 code_lines를
+    받는다. brace 계산은 문자열 제외본으로 하며, 시그니처 유무와 무관하게 현재 메서드의 닫는
+    괄호에서 멈춰 다음 메서드 신호를 흡수하지 않는다(Kotlin `fun`·package-private 포함)."""
+    n = len(code_lines)
+    sig = None
+    for j in range(i, max(0, i - 40), -1):
+        if _METHOD_DECL.search(code_lines[j - 1]):
+            sig = j
+            break
+    body_start = sig or i
+    start = body_start
+    for j in range(body_start - 1, max(0, body_start - 12), -1):
+        if _ANNOTATION.match(code_lines[j - 1]):
+            start = j
+        else:
+            break
+    depth = 0
+    seen_open = False
+    end = body_start
+    for j in range(body_start, min(n, body_start + 80) + 1):
+        ln = _blank_strings(code_lines[j - 1])
+        depth += ln.count("{") - ln.count("}")
+        if "{" in ln:
+            seen_open = True
+        end = j
+        # 현재 메서드의 닫는 } 에서 종료: 여는 괄호를 본 뒤 depth<=0(정상 메서드·시그니처 라인이
+        # 후보인 Kotlin fun 포함) 또는 여는 괄호 없이 본문 중간 시작 후 depth<0(닫는 괄호 먼저).
+        # 둘 다 다음 메서드 @PreAuthorize 흡수를 막는다(brace-bleed FN 차단).
+        if (seen_open and depth <= 0) or depth < 0:
+            break
+    return start, max(end, i)
+
+
+def _has_enforcement(code_lines, start, end):
+    """창 안에 소유권/권한 집행 신호가 있는지. @Pre/PostAuthorize는 문자열 보존본에서,
+    코드 토큰(.owns/check…Owner/findBy…And…Owner)은 문자열 제거본에서 검사한다(오신호 회피)."""
+    for j in range(start, end + 1):
+        ln = code_lines[j - 1]
+        if _PREAUTH_ENFORCE.search(ln) or _CODE_ENFORCE.search(_blank_strings(ln)):
+            return True
+    return False
+
+
+def _build_context(code_lines, i, start, end):
+    """AI 2단계 소유권 판정 사다리를 돕는 선택 필드(schema 선택). 주석 제거본 기준."""
+    method = None
+    for j in range(i, start - 1, -1):
+        if _METHOD_DECL.search(code_lines[j - 1]):
+            method = code_lines[j - 1].strip()[:160]
+            break
+    annotations = [code_lines[j - 1].strip()[:80]
+                   for j in range(start, end + 1) if _ANNOTATION.match(code_lines[j - 1])]
+    delegates = []
+    for j in range(start, end + 1):
+        for m in _DELEGATE.finditer(code_lines[j - 1]):
+            tag = f"{m.group(1)}.{m.group(2)}"
+            if tag not in delegates:
+                delegates.append(tag)
+    return {"method": method, "annotations": annotations[:6], "delegates_to": delegates[:8]}
+
+
 def run_fallback(target):
     findings = []
     for root, dirs, files in os.walk(target):
@@ -154,19 +259,31 @@ def run_fallback(target):
             path = os.path.join(root, f)
             try:
                 with open(path, encoding="utf-8", errors="replace") as fh:
-                    for i, line in enumerate(fh, 1):
-                        # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해 스킵
-                        if len(line) > _MAX_LINE_LEN:
-                            continue
-                        for rule_id, stack, _exts, rx in rules:
-                            if rx.search(line):
-                                findings.append({
-                                    "file": path, "line": i, "rule_id": rule_id,
-                                    "stack": stack, "confidence": "needs-context",
-                                    "snippet": line.strip()[:200],
-                                })
+                    lines = fh.readlines()
             except OSError:
                 continue
+            code_lines = _to_code_lines("".join(lines))  # 주석 제거본(집행 신호·brace·context용)
+            for i, line in enumerate(lines, 1):
+                # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해 스킵
+                if len(line) > _MAX_LINE_LEN:
+                    continue
+                for rule_id, stack, _exts, rx in rules:
+                    if not rx.search(line):
+                        continue
+                    cand = {
+                        "file": path, "line": i, "rule_id": rule_id,
+                        "stack": stack, "confidence": "needs-context",
+                        "snippet": line.strip()[:200],
+                    }
+                    # 접근통제 소유권/권한 후보: 같은 메서드 창에 집행 신호가 있으면 '삭제하지 않고'
+                    # confidence를 낮춰 context와 함께 AI 2단계로 넘긴다(silent FN 방지 — 리뷰 1·2).
+                    # 그 외 규칙(admin 매핑·CORS·anyRequest 등)은 기존과 바이트 동일하게 방출.
+                    if rule_id in _OWNERSHIP_RULES:
+                        m_start, m_end = _enclosing_method(code_lines, i)
+                        cand["context"] = _build_context(code_lines, i, m_start, m_end)
+                        if _has_enforcement(code_lines, m_start, m_end):
+                            cand["confidence"] = "enforcement-detected-verify"
+                    findings.append(cand)
     return findings
 
 
@@ -268,6 +385,8 @@ def main():
         "detected_stacks": stacks,
         "engine": engine,
         "candidate_count": len(findings),
+        "enforcement_tagged_count": sum(
+            1 for c in findings if c.get("confidence") == "enforcement-detected-verify"),
         "rule_summary": summarize(findings),
         "candidates": findings,
         "note": (
@@ -280,7 +399,7 @@ def main():
         result["warnings"] = warnings
 
     if args.json:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        io_utf8.emit_json(result)
     else:
         print(f"대상: {args.target}")
         print(f"감지 스택: {', '.join(stacks)}   엔진: {engine}")

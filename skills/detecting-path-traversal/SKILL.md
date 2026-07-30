@@ -23,7 +23,7 @@ tags:
 cwe: [CWE-22]
 owasp: [A01:2021-Broken-Access-Control]
 stacks: [spring-modern, jsp-legacy]
-version: "0.3.0"
+version: "0.7.0"
 author: sqisoft-security
 license: Proprietary
 ---

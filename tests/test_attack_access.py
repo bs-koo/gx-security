@@ -200,5 +200,32 @@ class TestRunScopeGate(unittest.TestCase):
         self.assertEqual(cm.exception.code, 1)
 
 
+class TestSoft200EvidenceCard(unittest.TestCase):
+    """P4 Task 8 (④) — 상태코드상 취약 시 soft-200(200+거부본문) 구분용 사람확인 카드 방출."""
+
+    @patch("tools.dyn_session.request")
+    def test_bfla_vulnerable_has_evidence_expectation(self, mock_req):
+        t = {"path": "/adm/v1/users"}
+        mock_req.side_effect = [
+            {"status": 401, "body": "", "elapsed": 0.0, "headers": {}},        # anon 거부
+            {"status": 200, "body": "data", "elapsed": 0.0, "headers": {}},    # user 2xx
+        ]
+        out = attack_access.run_bfla("http://localhost:7171", t, "NORMALTOK")
+        self.assertTrue(out["vulnerable"])
+        self.assertIn("evidence_expectation", out)
+        self.assertIn("contrast", out["evidence_expectation"])
+
+    @patch("tools.dyn_session.request")
+    def test_bfla_public_no_card(self, mock_req):
+        t = {"path": "/adm/v1/users"}
+        mock_req.side_effect = [
+            {"status": 200, "body": "", "elapsed": 0.0, "headers": {}},        # anon 2xx(공개)
+            {"status": 200, "body": "data", "elapsed": 0.0, "headers": {}},
+        ]
+        out = attack_access.run_bfla("http://localhost:7171", t, "NORMALTOK")
+        self.assertFalse(out["vulnerable"])
+        self.assertNotIn("evidence_expectation", out)
+
+
 if __name__ == "__main__":
     unittest.main()

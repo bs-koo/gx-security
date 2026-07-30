@@ -110,6 +110,9 @@ class TestRunUpload(unittest.TestCase):
         self.assertTrue(out["undetermined"])
         self.assertIn("note", out)
         self.assertEqual(out["kind"], "file-upload")
+        # P4 Task 8 (④): 미확정에는 웹루트 회수 사람확인 카드가 붙는다.
+        self.assertIn("evidence_expectation", out)
+        self.assertIn("contrast", out["evidence_expectation"])
 
     @patch("tools.dyn_session.request")
     def test_rejected_defended(self, mock_req):

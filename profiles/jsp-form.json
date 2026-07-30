@@ -1,0 +1,6 @@
+{
+  "login_path": "/login.do",
+  "id_field": "j_username",
+  "pw_field": "j_password",
+  "auth_mode": "cookie"
+}

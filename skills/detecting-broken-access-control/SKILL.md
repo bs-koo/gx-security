@@ -31,7 +31,7 @@ owasp:
 stacks:
   - spring-modern
   - jsp-legacy
-version: "0.3.0"
+version: "0.7.0"
 author: sqisoft-security
 license: Proprietary
 ---
@@ -79,6 +79,22 @@ python skills/detecting-broken-access-control/scripts/scan_access.py "$TARGET" -
 ### 2단계 — AI 컨텍스트 검증 (핵심)
 
 스캐너 후보는 출발점일 뿐이다. 각 후보를 아래 기준으로 직접 검증한다.
+
+#### 소유권/권한 판정 사다리 (모든 접근통제 후보에 필수 적용)
+
+각 후보 엔드포인트를 아래 절차로 판정하고, **결과를 `secure` / `vulnerable` / `needs-runtime` 세 값 중 하나 + 근거 `파일:라인`으로 기록**한다. 스캐너가 후보에 붙인 `context` 블록(`method` · `annotations` · `delegates_to`)을 출발점으로 삼되, 반드시 소스를 직접 열어 확인한다. (스캐너는 강한 소유권 집행 신호가 있으면 이미 후보에서 제외하므로, 남은 후보는 "집행이 안 보이는" 것들이다 — 그래서 사다리가 필요하다.)
+
+1. **자원 식별자 추출** — 후보가 다루는 ID를 특정한다: `@PathVariable` / `@RequestParam` / `getParameter("…")` / 요청 DTO 필드. 식별자가 없으면(예: 목록 조회) IDOR 후보에서 제외.
+2. **집행 지점까지 추적** — `context.delegates_to`가 가리키는 서비스 → 도메인/매퍼를 **직접 열어**, 그 ID가 **인증 주체로 스코핑**되는지 확인한다: `WHERE user_id = #{principal}` · `findByIdAndOwner(id, me)` · 도메인 `validateOwner(userId)` · `@PreAuthorize("@auth.owns(#id)")`.
+3. **3-값 판정 + 근거 인용**:
+   - **secure** — 소유권/역할이 실제로 강제됨(위 스코핑 · `@Pre/PostAuthorize` 소유권 표현 · 도메인 `validateOwner` 확인). → **오탐 제외**에 근거 라인과 함께 남긴다.
+   - **vulnerable** —
+     - *IDOR*: 인증은 요구되나 자원이 principal로 스코핑되지 않음(id로 바로 조회/수정). 심각도는 **데이터 민감도**로 산정(개인정보·심사결과 = High).
+     - *BFLA*: 관리자 경로가 URL 레벨 `.authenticated()`뿐이고(`context.annotations`에 `@PreAuthorize`/`@Secured` 없음) 핸들러·서비스에도 역할 필터가 없음.
+   - **needs-runtime** — 집행이 정적으로 안 보이는 층(동적 SpEL · 외부 정책 엔진 · DB 룰 테이블 `TB_EG_SECU_ROLE_INFO`)에만 존재. **High로 단정하지 말고** `exploiting-broken-access-control`(사용자 2명 PoC) 또는 사람 확인으로 이관한다.
+4. **불변식**: 서비스 계층에서 검증이 안 보인다는 이유만으로 `vulnerable`로 확정하지 않는다 — 도메인 계층까지 (2)를 끝냈거나 `needs-runtime`으로 넘긴 뒤에만 판정한다(sef-2026 rich domain `BoardComment.validateOwner` 실사례).
+
+아래 스택별 포인트는 이 사다리의 (2) 집행 추적을 스택 문법에 맞게 구체화한 것이다.
 
 **spring-modern 검증 포인트**
 
@@ -136,6 +152,17 @@ python skills/detecting-broken-access-control/scripts/scan_access.py "$TARGET" -
   - `동적 확정(dynamic)` = `exploiting-broken-access-control`로 실제 발사해 악용 입증
   - `정적 추정(static-only)` = 정적 분석만 — IDOR/BFLA는 동적 확정 전까지 High로 단정하지 않는다
 
+## 접근통제 판정 매트릭스 (전 후보)
+
+스캐너 후보 **전체**를 소유권/권한 사다리로 판정한 표. `secure`는 근거와 함께 오탐 제외로,
+`needs-runtime`은 동적/사람 확인으로 이관한다. "N건 발견"이 아니라 "판정 완료"가 산출물이다.
+
+| 엔드포인트(메서드) | 자원 ID | 소유권/역할 근거 (파일:라인) | 판정 | 심각도 |
+|---|---|---|---|---|
+| `DELETE /adm/v1/…/boards/{id}` (BoardAdminController.deleteBoard) | boardId | @PreAuthorize 없음 · 서비스 역할필터 없음 (BoardAdminController.java:57) | 🔴 vulnerable(BFLA) | High |
+| `GET /api/v1/users/{id}` (UserController.get) | id | user.getUserId() 스코핑 (UserService.java:88) | ✅ secure | — |
+| `GET /certiDetailPage.do?seq=` (CertiController) | seq | 세션 룰 DB 테이블 의존 · 정적 미확인 | 🟡 needs-runtime | (동적 확정) |
+
 ## 확정 취약점
 
 ### [High] BFLA — 관리자 API 역할 미검증 — BoardAdminController.java:57
@@ -192,6 +219,8 @@ python skills/detecting-broken-access-control/scripts/scan_access.py "$TARGET" -
 - [ ] JSP 관리자 경로가 `AuthInterceptor WHITELIST`에 잘못 포함되지 않았는가
 - [ ] `context-security.xml` DB 룰 테이블이 비어있는지 확인했는가
 - [ ] 각 확정 취약점에 재현 근거(파일:라인 + 인증 방식)가 붙어 있는가
+- [ ] 모든 접근통제 후보를 3-값(secure / vulnerable / needs-runtime)으로 판정하고 근거 파일:라인을 인용했는가
+- [ ] `needs-runtime` 후보를 `exploiting-broken-access-control` 또는 사람 확인으로 이관했는가(정적만으로 High 단정 금지)
 
 ## Key Concepts
 

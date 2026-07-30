@@ -1,0 +1,6 @@
+{
+  "login_path": "/api/v1/auth/login",
+  "body_template": "{\"lgnId\":\"{id}\",\"password\":\"{pw}\"}",
+  "token_path": "data.accessToken",
+  "auth_mode": "bearer"
+}

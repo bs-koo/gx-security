@@ -22,14 +22,13 @@ import shutil
 import subprocess
 import sys
 
-# Windows 콘솔(cp949)에서도 한글이 깨지지 않도록 UTF-8 고정
-try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-except (AttributeError, ValueError):
-    pass
-
 HERE = os.path.dirname(os.path.abspath(__file__))
+_PLUGIN_ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+if _PLUGIN_ROOT not in sys.path:
+    sys.path.insert(0, _PLUGIN_ROOT)
+from tools import io_utf8  # noqa: E402  (UTF-8 콘솔 강제 — Windows cp949 크래시 방지, Task 1)
+io_utf8.configure()
+
 RULES = os.path.join(os.path.dirname(HERE), "rules", "xss.yml")
 
 # 초대형 단일 라인(minified 등)에 폴백 정규식을 적용하면 O(n²) 백트래킹으로
@@ -41,10 +40,11 @@ def detect_stacks(target):
     """리포에 섞일 수 있으므로 발견된 스택들의 집합을 반환."""
     stacks = set()
     for root, dirs, files in os.walk(target):
-        # 잡음 디렉토리 제외
+        # 잡음 디렉토리 제외 (프론트 빌드 산출물 .nuxt/.output/coverage 포함)
         dirs[:] = [d for d in dirs if d not in
                    (".git", "node_modules", "build", "target", "dist", ".gradle",
-                    ".dev", ".omc", ".humanize", ".idea", ".vscode")]
+                    ".dev", ".omc", ".humanize", ".idea", ".vscode",
+                    ".nuxt", ".output", "coverage")]
         base = os.path.basename(root)
         for f in files:
             if f in ("build.gradle.kts", "settings.gradle.kts", "build.gradle", "pom.xml"):
@@ -53,6 +53,9 @@ def detect_stacks(target):
                 stacks.add("jsp-legacy")
             if f.endswith(".jsp"):
                 stacks.add("jsp-legacy")
+            # frontend(SPA) — Vue/Nuxt/Vite. .vue 소스 또는 프레임워크 설정 파일(P4 Task 4).
+            if f.endswith(".vue") or re.match(r'(?:nuxt|vite)\.config\.(?:ts|js|mjs|cjs)$', f):
+                stacks.add("frontend")
         if base == "webapp":
             stacks.add("jsp-legacy")
     if not stacks:
@@ -137,6 +140,20 @@ FALLBACK_PATTERNS = [
     # 이스케이프 래핑(print(Encode.forHtml(...)))은 사이에 함수호출이 끼어 미검출.
     ("servlet-getwriter-reflected-xss", "spring-modern", (".java",),
      re.compile(r'\.getWriter\s*\(\s*\)\s*\.\s*(?:print|println|write)\s*\(\s*request\.getParameter', re.I)),
+
+    # ── frontend (Vue/Nuxt SPA) XSS 싱크 (P4 Task 4) ──
+    # frontend — v-html 미새니타이즈 (Vue 저장형/DOM XSS 핵심 싱크).
+    # run_fallback 후처리에서 sanitize()/DOMPurify 래핑 라인은 후보에서 제외한다.
+    ("vue-v-html-unsanitized", "frontend", (".vue",),
+     re.compile(r'v-html\s*=')),
+
+    # frontend — insertAdjacentHTML / outerHTML 할당(DOM 직접 주입)
+    ("dom-insertadjacenthtml-outerhtml", "frontend", (".vue", ".js", ".ts", ".jsx", ".tsx"),
+     re.compile(r'\.insertAdjacentHTML\s*\(|\.outerHTML\s*=')),
+
+    # frontend — eval / new Function (동적 코드 실행 싱크)
+    ("js-eval-dynamic-code", "frontend", (".vue", ".js", ".ts", ".jsx", ".tsx"),
+     re.compile(r'\beval\s*\(|\bnew\s+Function\s*\(')),
 ]
 
 
@@ -144,6 +161,7 @@ FALLBACK_PATTERNS = [
 _EXCLUDE_DIRS = {
     ".git", "node_modules", "build", "target", "dist", ".gradle",
     ".dev", ".omc", ".humanize", ".idea", ".vscode",
+    ".nuxt", ".output", "coverage",  # 프론트 빌드 산출물(P4 Task 4)
     "fullcalendar", "jquery", "bootstrap", "datatables", "tinymce",
     "ckeditor", "codemirror", "ace", "lib", "vendor", "assets",
     "pubRes",  # Gseed_Web_Renew 정적 리소스(서드파티 JS 포함)
@@ -151,6 +169,11 @@ _EXCLUDE_DIRS = {
 _EXCLUDE_FILE_PATTERNS = re.compile(
     r'(\.min\.js|\.min\.css|highcharts.*\.js|jquery.*\.js|bootstrap.*\.js|'
     r'datatables.*\.js|tinymce.*\.js|codemirror.*\.js)$', re.I)
+
+# frontend v-html 새니타이즈 판정은 '해당 속성값' 안에서만 한다 — 같은 줄의 다른 속성(:title 등)이나
+# 주석의 sanitize에 오도돼 미새니타이즈 v-html을 놓치지 않도록(코드리뷰 finding). 값을 추출해 검사.
+_VHTML_ATTR = re.compile(r'v-html\s*=\s*(["\'])(.*?)\1')
+_VHTML_SANITIZER = re.compile(r'DOMPurify|\bsanitize\b|\bpurify\b|escapeHtml', re.I)
 
 
 def run_fallback(target):
@@ -177,6 +200,13 @@ def run_fallback(target):
                                 if rule_id == "jsp-el-unescaped-model" and \
                                         re.search(r'escapeXml|<c:out', line):
                                     continue
+                                # frontend — v-html '속성값'이 전부 sanitize/DOMPurify 래핑일 때만
+                                # 방어로 제외. 같은 줄에 미새니타이즈 v-html이 하나라도 있으면 후보
+                                # 유지(줄 전체가 아니라 속성값 스코프로 판정 — 코드리뷰 finding).
+                                if rule_id == "vue-v-html-unsanitized":
+                                    _vals = [v for _q, v in _VHTML_ATTR.findall(line)]
+                                    if _vals and all(_VHTML_SANITIZER.search(v) for v in _vals):
+                                        continue
                                 findings.append({
                                     "file": path, "line": i, "rule_id": rule_id,
                                     "stack": stack, "confidence": "needs-context",
@@ -245,7 +275,7 @@ def main():
         result["warnings"] = warnings
 
     if args.json:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        io_utf8.emit_json(result)
     else:
         print(f"대상: {args.target}")
         print(f"감지 스택: {', '.join(stacks)}   엔진: {engine}")

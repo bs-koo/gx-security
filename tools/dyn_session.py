@@ -9,18 +9,15 @@ import os
 import json
 import time
 
-try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-except (AttributeError, ValueError):
-    pass
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _PLUGIN_ROOT = os.path.normpath(os.path.join(_HERE, ".."))
 if _PLUGIN_ROOT not in sys.path:
     sys.path.insert(0, _PLUGIN_ROOT)
 
 from tools.scope_guard import assert_in_scope, ScopeError  # noqa: F401  (재노출)
+from tools import io_utf8  # noqa: F401  (emit()의 JSON 출력 계약 — Task 1)
+
+io_utf8.configure()
 
 
 def mask_token(tok):
@@ -42,6 +39,23 @@ def extract_by_path(obj, path):
         else:
             return None
     return cur
+
+
+def set_by_path(obj, path, value):
+    """'data.query' 점 표기 경로에 value 설정(중간 dict 자동 생성). obj를 반환.
+
+    extract_by_path의 setter 대응 — D4 JSON 바디 주입 지점 지정(attack_sqli/xss)에 쓰인다.
+    """
+    keys = path.split(".")
+    cur = obj
+    for key in keys[:-1]:
+        nxt = cur.get(key)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[key] = nxt
+        cur = nxt
+    cur[keys[-1]] = value
+    return obj
 
 
 def login(base_url, login_path, cred, *, body_template=None,
@@ -209,7 +223,7 @@ def request(method, url, *, token=None, json_body=None, files=None, data=None,
 def emit(result, as_json):
     """표준 결과 출력. as_json이면 JSON, 아니면 사람용 요약."""
     if as_json:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        io_utf8.emit_json(result)
         return
     print(f"\n{'=' * 60}")
     print(f"  동적 점검 결과: {result.get('skill', 'dyn')}")
@@ -227,3 +241,63 @@ def emit(result, as_json):
         print(f"  {verdict} {f.get('kind')} {f.get('method')} {f.get('path')} "
               f"→ HTTP {f.get('status')}")
     print(f"{'=' * 60}\n")
+
+
+def read_stdin_creds():
+    """--creds-stdin 시 sys.stdin에서 JSON 1회 읽어 dict 반환.
+    TTY(파이프 없음)·빈 입력·비-JSON은 RuntimeError."""
+    if getattr(sys.stdin, "isatty", lambda: False)():
+        raise RuntimeError("--creds-stdin은 stdin 파이프가 필요합니다(TTY 감지)")
+    raw = sys.stdin.read()
+    if not raw.strip():
+        raise RuntimeError("--creds-stdin: stdin이 비어 있습니다")
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        raise RuntimeError("--creds-stdin: stdin JSON 파싱 실패")
+    if not isinstance(data, dict):
+        raise RuntimeError("--creds-stdin: JSON 객체(dict)여야 합니다")
+    return data
+
+
+def resolve_secret(*, direct=None, env_var=None, stdin_creds=None, stdin_key=None):
+    """자격증명 한 개를 우선순위 stdin > env > direct 로 해석. 없으면 None.
+    둘 이상 소스가 값을 주면 stderr 경고."""
+    vals = {}
+    if stdin_creds and stdin_key and stdin_creds.get(stdin_key) is not None:
+        vals["stdin"] = str(stdin_creds[stdin_key])
+    if env_var and os.environ.get(env_var) is not None:
+        vals["env"] = os.environ[env_var]
+    if direct is not None:
+        vals["direct"] = direct
+    if len(vals) > 1:
+        print("[!] 자격증명 다중 소스 — 우선순위(stdin>env>direct) 적용", file=sys.stderr)
+    for src in ("stdin", "env", "direct"):
+        if src in vals:
+            return vals[src]
+    return None
+
+
+_PROFILE_KEYS = {"login_path", "body_template", "token_path", "id_field", "pw_field", "auth_mode"}
+
+
+def load_login_profile(name_or_path):
+    """로그인 프로파일(dict) 로드. name이면 profiles/<name>.json, 경로면 그 파일.
+    허용 키 외/파일없음/비-JSON은 RuntimeError."""
+    if any(c in name_or_path for c in ("/", "\\")) or name_or_path.endswith(".json"):
+        path = name_or_path
+    else:
+        path = os.path.join(_PLUGIN_ROOT, "profiles", name_or_path + ".json")
+    if not os.path.isfile(path):
+        raise RuntimeError(f"로그인 프로파일을 찾을 수 없음: {path}")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (ValueError, OSError):
+        raise RuntimeError(f"로그인 프로파일 로드 실패(JSON 확인): {path}")
+    if not isinstance(data, dict):
+        raise RuntimeError(f"로그인 프로파일은 JSON 객체여야 함: {path}")
+    bad = set(data) - _PROFILE_KEYS
+    if bad:
+        raise RuntimeError(f"로그인 프로파일에 허용되지 않은 키: {sorted(bad)}")
+    return data

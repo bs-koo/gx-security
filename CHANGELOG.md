@@ -4,6 +4,44 @@
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르며,
 버전 체계는 [Semantic Versioning](https://semver.org/lang/ko/)을 준수합니다.
 
+## [0.7.0] - 2026-07-30
+
+> P4 커버리지. 정적 판정을 "충분히"로 승격하고 프론트엔드 XSS를 커버하며, 동적을 대화형·사람확인형으로 재편했다. (P3 0.6.0 미릴리스 시 이 릴리스가 P3 변경도 포함한다.)
+
+### Added
+- **접근통제 정적 정밀화(Task 2·3)** — `scan_access.py`가 소유권/권한 집행 신호(@Pre/PostAuthorize 소유권 표현·소유자 스코핑 조회·명시적 소유권 검사)를 같은 메서드 창에서 감지해 IDOR/BFLA 오탐을 억제하고, 남은 후보엔 `context`(method·annotations·delegates_to)를 부착한다. SKILL.md에 `secure/vulnerable/needs-runtime` 3-값 판정 사다리와 전 후보 판정 매트릭스 산출을 명문화. sef-2026 backend 65→57, 41건 context.
+- **프론트엔드 XSS 커버(Task 4·5)** — `detecting-xss`에 frontend 모드 추가: Vue/Nuxt `.vue` 스택 감지, `node_modules/dist/.nuxt/.output` 제외, `v-html`(미새니타이즈, sanitize 래핑 제외)·`insertAdjacentHTML/outerHTML`·`eval/new Function` 폴백 룰 + `rules/xss-frontend.yml`. SKILL.md에 프론트 폴더 탐색 → AskUserQuestion 확인 → 스캔 워크플로우. sef-2026 public/frontend v-html 5건 검출(기존 미커버).
+- **동적 대화형 게이트(Task 6)** — auditing·gx-pentest에 정적 우선 + AskUserQuestion 동적 게이트(대상 실행 여부 확인)·라이브니스 프로브·비밀 stdin 전달 원칙(자유서술 칸 상시).
+- **사람확인 확정 프로토콜(Task 8, ④)** — `attack_access`(soft-200)·`attack_pathupload`(업로드 미확정)에 `evidence_expectation` 카드, auditing SKILL.md에 예상 증거 카드 → AskUserQuestion(자유서술 주 채널) → 최종 판정 프로토콜.
+- **다중 루트(모노레포) 오케스트레이션(Task 9)** — 백엔드 루트(9종 풀스캔)·프론트 루트(XSS 전용)를 나눠 탐색·확인 후 단일 통합 리포트로 병합.
+
+### Changed
+- **XSS 과대표기 수정(Task 7)** — `attack_xss.py`가 반사만으로 `exploited:true`를 찍던 것을 제거. `reflected`/`verdict`(needs-confirmation|safe|unreached) + `evidence_expectation`을 방출하고 `exploited`는 브라우저 실행(Playwright) 확인 후 상위가 승격한다. 자기 SKILL.md 기준("반사=후보, 실행=확정")과 정합.
+
+### Fixed
+- **Windows(cp949) 인코딩 크래시 근본 수정(Task 1)** — 공용 `tools/io_utf8.py`(`configure()`·`emit_json()` UTF-8 바이트 직접 기록) 도입, 전 엔트리 스크립트가 JSON 계약을 콘솔 코덱에서 분리한다. cp949 회귀 테스트 추가.
+
+## [0.5.0] - 2026-07-20
+
+### Added
+- 자격증명 안전 입력(D1) — `--creds-stdin`(stdin JSON, 프로세스 미노출·권장)과 `--user-a-pw-env`/`--token-a-env`(환경변수 이름 참조)를 attack 4종·`audit.py`에 추가. `audit.py`는 자식 subprocess에 비밀을 환경변수로 전달해 cmd 평문 노출을 제거한다.
+- 로그인 프로파일 이식성(D2) — `--login-profile <name|path>`로 로그인 형식(경로·바디·토큰경로·필드·모드)을 외부화. 동봉 프로파일 `profiles/sef-2026.json`(Spring)·`profiles/jsp-form.json`(JSP form).
+- 동적 점검 런북(O2) — `docs/RUNBOOK-dynamic.md`. `docs/OPERATIONS.md`·`ATTACK_SAFETY.md`의 자격증명 취급 서술을 지원 사실에 맞게 정합.
+
+### Changed
+- 자격증명 우선순위 stdin>env>direct 해석(`dyn_session.resolve_secret`). 기존 CLI 인자·동작은 100% 하위호환.
+
+## [0.4.0] - 2026-07-20
+
+### Added
+- 정적 정밀도 표준화 — `requirements-dev.txt`(semgrep 1.95.0 핀)와 설치 스크립트, semgrep 미설치 시 grep 폴백 경고를 도입 문서에서 필수 설치로 승격.
+- Windows semgrep CI — `semgrep-tests` 잡에 windows 매트릭스 추가(비차단 관측 폴백 포함).
+- 운영정책 문서 `docs/OPERATIONS.md` — 스테이징 허용 등록·자격증명 취급·격리 호스트 규정.
+- 버전 일치 회귀 테스트 `tests/test_version_consistency.py`.
+
+### Changed
+- 0.3.0 이후 누적분 반영: SAST 미탐 9패턴 보강, semgrep 골든셋 CI(semgrep 1.95.0), semgrep 룰 전역 파탄 복구, 동적 판정 정밀화, dyn_session 레거시(form/cookie) 이식성.
+
 ## [0.3.0] - 2026-07-02
 
 ### Added
@@ -18,4 +56,7 @@
 - 이번 릴리스는 코드 로직 변경 없는 정합·릴리스 작업입니다. 버전 표기·문서 정합·CHANGELOG 신설에 한정됩니다.
 - 구성: 커맨드 3(`gx-audit`·`gx-diagnose`·`gx-pentest`)·스킬 16(통합 1·진단 9·침투 6).
 
+[0.7.0]: https://github.com/bs-koo/gx-security/releases/tag/v0.7.0
+[0.5.0]: https://github.com/bs-koo/gx-security/releases/tag/v0.5.0
+[0.4.0]: https://github.com/bs-koo/gx-security/releases/tag/v0.4.0
 [0.3.0]: https://github.com/bs-koo/gx-security/releases/tag/v0.3.0

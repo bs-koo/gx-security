@@ -6,7 +6,7 @@
 
 정적 분석(SAST) + 동적 모의침투(DAST) 하이브리드 · 스택 자동 감지 · AI 오탐 제거
 
-`커맨드 3` · `스킬 16` (통합 1 · 진단 9 · 침투 6) · `v0.3.0` · Proprietary
+`커맨드 3` · `스킬 16` (통합 1 · 진단 9 · 침투 6) · `v0.7.0` · Proprietary
 
 </div>
 
@@ -47,6 +47,25 @@
 /plugin marketplace add bs-koo/gx-security
 /plugin install gx-security@gx-security
 ```
+
+### 정적 정밀도 표준 (권장)
+
+정적 진단은 semgrep이 있을 때 정밀도(recall)가 크게 오릅니다. **사업부 공통 도입 시 semgrep 설치를 표준으로 합니다.** semgrep이 없으면 grep 폴백으로 동작하되 미탐 위험이 커지며, 스캐너가 `[!] 폴백 경고`를 출력합니다.
+
+```bash
+# Linux/macOS
+bash scripts/install-dev.sh
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -File scripts\install-dev.ps1
+# 또는 직접
+pip install -r requirements-dev.txt
+```
+
+> Windows 기본 실행정책(Restricted)에서는 `scripts\install-dev.ps1`을 직접 실행하면 `PSSecurityException`으로 막힙니다. 위처럼 `-ExecutionPolicy Bypass`를 붙이거나, `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`로 계정 실행정책을 변경한 뒤 실행하세요.
+
+> Windows는 semgrep 네이티브 휠 부재로 `semgrep --version`에서 설치 스크립트가 비정상 종료하는 것이 정상이며, 정적 진단은 grep 폴백으로 계속 동작합니다(정밀도는 낮아집니다).
+
+> **Windows(cp949) 환경 권장**: 모든 스크립트는 `tools/io_utf8.py`로 콘솔 인코딩을 UTF-8로 강제하지만, 벨트앤서스펜더로 환경변수 `PYTHONUTF8=1`도 함께 설정해두면 파이프·리다이렉션·CI 캡처에서 한글·특수문자(em-dash 등) 출력이 더 안전해집니다(`setx PYTHONUTF8 1` 또는 셸 세션에서 `$env:PYTHONUTF8=1`).
 
 ## 빠른 시작
 
@@ -238,6 +257,8 @@ pytest tests/
 | **README.md** (이 문서) | 개요, 설치, 빠른 시작, 스킬/커맨드 카탈로그 |
 | [USAGE.md](USAGE.md) | 실전 사용 가이드 — 시나리오별 명령, 옵션 조합별 동적 발동 조건, FAQ |
 | [ATTACK_SAFETY.md](ATTACK_SAFETY.md) | 공격형(`exploiting-*`) 스킬 안전 수칙 — scope_guard, 자격증명 노출, 법적 고지 |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | 운영정책 — 스테이징 허용 등록·자격증명 취급·격리 호스트 규정 |
+| [docs/RUNBOOK-dynamic.md](docs/RUNBOOK-dynamic.md) | 동적 점검 실전 런북 — 자격증명 안전 입력·로그인 프로파일·클래스별 점검 사이클·판정 해석 |
 | [docs/severity-rubric.md](docs/severity-rubric.md) | 심각도(Critical/High/Medium/Low) 판정 기준 |
 | [CHANGELOG.md](CHANGELOG.md) | 버전별 변경 이력 |
 
@@ -264,4 +285,4 @@ security-plugin/
 
 ---
 
-<sub>Proprietary · GX 사업본부 사내용 · v0.3.0</sub>
+<sub>Proprietary · GX 사업본부 사내용 · v0.7.0</sub>
