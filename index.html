@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="description" content="gx-security v0.7.0 — SQIsoft GX 웹앱 보안 점검 Claude Code 플러그인. 자연어로 물으면 AI가 16개 스킬을 발동해 정적(SAST)·동적(DAST)으로 취약점을 검증하고 발견까지 이끄는 하이브리드 점검 도구.">
+<title>gx-security — 질문이 곧 스캐너다</title>
+<style>
+  /* ============================================================
+     gx-security landing — self-contained, 2-color institutional
+     팔레트/타이포/형태/모션 토큰은 위임 브리프의 하드 앵커 그대로.
+     ============================================================ */
+  :root{
+    /* palette (2-color minimal, no accent) */
+    --primary:#141413;
+    --on-primary:#ffffff;
+    --bg:#faf9f5;
+    --surface:#141413;
+    --text:#141413;
+    --text-2:rgba(20,20,19,.72);
+    --text-3:rgba(20,20,19,.73);
+    --hairline:rgba(20,20,19,.13);
+    --hairline-2:rgba(20,20,19,.08);
+    --on-dark:#ffffff;
+    --on-dark-2:rgba(255,255,255,.74);
+    --on-dark-3:rgba(255,255,255,.64);
+    --on-dark-line:rgba(255,255,255,.18);
+    --on-dark-fill:rgba(255,255,255,.06);
+    /* spacing scale [2,4,8,12,16,22,58,68] */
+    --s1:2px; --s2:4px; --s3:8px; --s4:12px; --s5:16px; --s6:22px; --s7:58px; --s8:68px;
+    /* radius */
+    --r-sm:8px; --r-md:16px; --r-lg:24px;
+    /* elevation — whisper soft */
+    --shadow:rgba(0,0,0,.01) 0 2px 2px, rgba(0,0,0,.02) 0 4px 4px, rgba(0,0,0,.04) 0 16px 24px;
+    /* motion */
+    --fast:100ms; --base:200ms; --slow:800ms;
+    --ease:cubic-bezier(.16,1,.3,1);
+    /* type */
+    --sans:"Segoe UI",-apple-system,BlinkMacSystemFont,Arial,sans-serif;
+    --mono:ui-monospace,Consolas,"Cascadia Code","SFMono-Regular",Menlo,monospace;
+    --wrap:1140px;
+  }
+
+  *,*::before,*::after{ box-sizing:border-box; }
+  html{ -webkit-text-size-adjust:100%; scroll-behavior:smooth; }
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--sans); font-size:14px; line-height:1.4; letter-spacing:-.24px;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  }
+  h1,h2,h3,h4,p,ul,ol,figure{ margin:0; }
+  ul{ list-style:none; padding:0; }
+  a{ color:inherit; text-decoration:none; }
+  code,kbd,pre,.mono{ font-family:var(--mono); }
+  svg{ display:block; }
+
+  /* focus visibility */
+  :focus{ outline:none; }
+  :focus-visible{ outline:2px solid var(--primary); outline-offset:2px; border-radius:3px; }
+  .on-dark :focus-visible, .footer :focus-visible{ outline-color:var(--on-dark); }
+
+  .skip{
+    position:absolute; left:var(--s4); top:-64px; z-index:100;
+    background:var(--surface); color:var(--on-dark);
+    padding:10px 16px; border-radius:var(--r-sm); font-size:13px;
+    transition:transform var(--base) var(--ease);
+  }
+  .skip:focus{ top:var(--s4); }
+
+  .wrap{ width:100%; max-width:var(--wrap); margin-inline:auto; padding-inline:var(--s6); }
+  @media (min-width:768px){ .wrap{ padding-inline:32px; } }
+
+  .ico{ width:1em; height:1em; stroke:currentColor; stroke-width:1.6; fill:none;
+        stroke-linecap:round; stroke-linejoin:round; flex:none; }
+
+  /* micro label / tag */
+  .kicker{ font-size:12px; letter-spacing:.02em; color:var(--text-3); }
+  .tag{
+    display:inline-flex; align-items:center; gap:6px;
+    font-family:var(--mono); font-size:12px; letter-spacing:0;
+    padding:3px 9px; border:1px solid var(--hairline); border-radius:999px;
+    color:var(--text-2); white-space:nowrap;
+  }
+  .tag--solid{ background:var(--surface); color:var(--on-dark); border-color:var(--surface); }
+  .tag .ico{ font-size:13px; }
+
+  /* ---------- nav ---------- */
+  .nav{
+    position:sticky; top:0; z-index:50;
+    background:color-mix(in srgb, var(--bg) 86%, transparent);
+    -webkit-backdrop-filter:saturate(1.4) blur(8px); backdrop-filter:saturate(1.4) blur(8px);
+    border-bottom:1px solid var(--hairline);
+  }
+  .nav__in{ display:flex; align-items:center; justify-content:space-between; height:60px; gap:var(--s5); }
+  .brand{ display:inline-flex; align-items:center; gap:10px; font-family:var(--mono); font-size:15px; font-weight:600; letter-spacing:-.2px; }
+  .brand .mark{ width:22px; height:22px; }
+  .nav__links{ display:none; align-items:center; gap:4px; }
+  .nav__links a{
+    display:inline-flex; align-items:center; min-height:40px; padding:0 12px;
+    font-size:13px; color:var(--text-2); border-radius:var(--r-sm);
+    transition:color var(--fast) var(--ease), background var(--fast) var(--ease);
+  }
+  .nav__links a:hover{ color:var(--text); background:var(--hairline-2); }
+  .nav__ver{ font-family:var(--mono); font-size:12px; color:var(--text-3);
+    border:1px solid var(--hairline); border-radius:999px; padding:4px 10px; }
+  @media (min-width:768px){ .nav__links{ display:flex; } }
+
+  /* ---------- section rhythm ---------- */
+  section{ border-top:1px solid var(--hairline); }
+  section:first-of-type{ border-top:0; }
+  .sec{ padding-top:var(--s7); padding-bottom:var(--s7); scroll-margin-top:68px; }
+  @media (min-width:768px){ .sec{ padding-top:var(--s8); padding-bottom:var(--s8); } }
+  .sec__head{ max-width:660px; }
+  .sec__head .kicker{ display:block; margin-bottom:var(--s4); font-family:var(--mono); }
+  h2.sec__title{ font-size:30px; font-weight:700; line-height:1.12; letter-spacing:-.8px; }
+  @media (min-width:768px){ h2.sec__title{ font-size:38px; letter-spacing:-1.1px; } }
+  .sec__lead{ margin-top:var(--s5); font-size:15px; line-height:1.5; color:var(--text-2); max-width:600px; }
+
+  /* ---------- hero ---------- */
+  .hero{ padding-top:var(--s7); padding-bottom:var(--s7); }
+  @media (min-width:768px){ .hero{ padding-top:72px; padding-bottom:var(--s8); } }
+  .hero__grid{ display:grid; gap:44px; grid-template-columns:1fr; align-items:center; }
+  @media (min-width:768px){ .hero__grid{ grid-template-columns:minmax(0,1.08fr) minmax(0,.92fr); gap:56px; } }
+
+  .hero__eyebrow{ display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; font-size:12px; color:var(--text-3); font-family:var(--mono); }
+  .hero__eyebrow .dot{ width:3px; height:3px; border-radius:50%; background:var(--text-3); }
+  h1.hero__title{
+    margin-top:var(--s6); font-weight:700; line-height:1.06; letter-spacing:-1.6px;
+    font-size:clamp(40px,8.4vw,58px);
+  }
+  .hero__sub{ margin-top:var(--s6); font-size:16px; line-height:1.52; color:var(--text-2); max-width:520px; }
+  .hero__cmds{ margin-top:28px; }
+  .hero__cmds .lbl{ font-size:12px; color:var(--text-3); font-family:var(--mono); }
+  .cmd-row{ display:flex; flex-wrap:wrap; gap:var(--s3); margin-top:10px; }
+  .cmd-badge{
+    display:inline-flex; flex-direction:column; gap:2px; text-align:left;
+    padding:9px 13px; border:1px solid var(--primary); border-radius:var(--r-sm); background:transparent;
+    font-family:var(--mono); cursor:pointer; min-height:44px; justify-content:center;
+    transition:background var(--fast) var(--ease), color var(--fast) var(--ease);
+  }
+  .cmd-badge b{ font-size:13px; font-weight:600; letter-spacing:-.2px; }
+  .cmd-badge span{ font-size:11px; color:var(--text-3); font-family:var(--sans); letter-spacing:0; }
+  .cmd-badge:hover{ background:var(--primary); color:var(--on-dark); }
+  .cmd-badge:hover span{ color:var(--on-dark-2); }
+  .hero__cta{ margin-top:28px; display:flex; flex-wrap:wrap; align-items:center; gap:var(--s5); }
+  .btn{
+    display:inline-flex; align-items:center; gap:8px; min-height:48px; padding:0 22px;
+    border-radius:var(--r-sm); font-size:14px; font-weight:600; letter-spacing:-.2px; cursor:pointer;
+    background:var(--primary); color:var(--on-dark); border:1px solid var(--primary);
+    transition:transform var(--fast) var(--ease), opacity var(--fast) var(--ease);
+  }
+  .btn:hover{ opacity:.9; }
+  .btn:active{ transform:translateY(1px); }
+  .btn .ico{ font-size:16px; }
+  .link-arrow{ display:inline-flex; align-items:center; gap:6px; min-height:44px; font-size:14px; font-weight:600;
+    border-bottom:1px solid var(--primary); padding-bottom:1px; }
+  .link-arrow .ico{ font-size:15px; transition:transform var(--base) var(--ease); }
+  .link-arrow:hover .ico{ transform:translateX(3px); }
+
+  /* hero right — 3박자 teaser (dark surface) */
+  .beat{
+    background:var(--surface); color:var(--on-dark); border-radius:var(--r-lg);
+    padding:26px; box-shadow:var(--shadow);
+  }
+  .beat__cap{ display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:12px; color:var(--on-dark-3); letter-spacing:.02em; }
+  .beat__cap .ico{ font-size:14px; }
+  .beat__step{ padding-top:var(--s5); margin-top:var(--s5); border-top:1px solid var(--on-dark-line); }
+  .beat__step:first-of-type{ border-top:0; padding-top:0; margin-top:18px; }
+  .beat__k{ font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--on-dark-3); font-family:var(--mono); }
+  .beat__q{ margin-top:6px; font-size:19px; font-weight:600; letter-spacing:-.4px; line-height:1.28; }
+  .beat__fire{ margin-top:6px; font-family:var(--mono); font-size:13px; color:var(--on-dark); }
+  .beat__find{ margin-top:6px; font-size:13.5px; line-height:1.5; color:var(--on-dark-2); }
+  .beat__find b{ color:var(--on-dark); font-weight:600; }
+  .beat__find .files{ font-family:var(--mono); font-size:12px; color:var(--on-dark-2); }
+
+  /* ---------- generic card / panel ---------- */
+  .card{ background:#fff; border:1px solid var(--hairline); border-radius:var(--r-md); }
+  .panel-dark{ background:var(--surface); color:var(--on-dark); border-radius:var(--r-md); }
+
+  /* ---------- §2 how it works ---------- */
+  .layers{ display:grid; gap:var(--s5); grid-template-columns:1fr; margin-top:44px; }
+  @media (min-width:768px){ .layers{ grid-template-columns:1fr 1fr; gap:var(--s6); } }
+  .layer{ padding:24px; border-radius:var(--r-md); border:1px solid var(--hairline); background:#fff; }
+  .layer--dyn{ background:var(--surface); color:var(--on-dark); border-color:var(--surface); }
+  .layer__top{ display:flex; align-items:center; justify-content:space-between; gap:var(--s4); }
+  .layer__name{ display:flex; align-items:center; gap:10px; font-size:18px; font-weight:700; letter-spacing:-.4px; }
+  .layer__name .ico{ font-size:19px; }
+  .layer__abbr{ font-family:var(--mono); font-size:12px; color:var(--text-3); }
+  .layer--dyn .layer__abbr{ color:var(--on-dark-3); }
+  .layer__desc{ margin-top:14px; font-size:14px; line-height:1.5; color:var(--text-2); }
+  .layer--dyn .layer__desc{ color:var(--on-dark-2); }
+  .layer__meta{ margin-top:16px; display:flex; flex-wrap:wrap; gap:6px; }
+  .layer--dyn .tag{ border-color:var(--on-dark-line); color:var(--on-dark-2); }
+
+  /* pipeline */
+  .pipe{ margin-top:44px; }
+  .pipe__flow{ display:grid; gap:12px; grid-template-columns:1fr; align-items:stretch; }
+  @media (min-width:768px){
+    .pipe__flow{ grid-template-columns:1fr auto 1fr auto 1fr auto 1.15fr; gap:0; align-items:stretch; }
+  }
+  .stage{ border:1px solid var(--hairline); background:#fff; border-radius:var(--r-md); padding:18px; display:flex; flex-direction:column; }
+  .stage--ai{ background:var(--surface); color:var(--on-dark); border-color:var(--surface); }
+  .stage__n{ font-family:var(--mono); font-size:11px; color:var(--text-3); letter-spacing:.1em; }
+  .stage--ai .stage__n{ color:var(--on-dark-3); }
+  .stage__t{ margin-top:8px; font-size:15px; font-weight:700; letter-spacing:-.3px; }
+  .stage__d{ margin-top:8px; font-size:12.5px; line-height:1.46; color:var(--text-2); }
+  .stage--ai .stage__d{ color:var(--on-dark-2); }
+  .stage__d code{ font-size:12px; }
+  .arrow{ display:flex; align-items:center; justify-content:center; color:var(--text-3); padding:2px 0; }
+  .arrow .ico{ font-size:22px; }
+  .arrow--v{ transform:rotate(90deg); }
+  @media (min-width:768px){ .arrow--v{ transform:none; padding:0 6px; } }
+
+  .ladder{ margin-top:12px; display:flex; flex-wrap:wrap; gap:6px; }
+  .verdict{ display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:11.5px;
+    padding:4px 8px; border-radius:var(--r-sm); border:1px solid var(--hairline); color:var(--text-2); }
+  .verdict .ico{ font-size:12px; }
+  .verdict--bad{ background:var(--surface); color:var(--on-dark); border-color:var(--surface); }
+
+  .notes{ margin-top:var(--s6); display:grid; gap:var(--s4); grid-template-columns:1fr; }
+  @media (min-width:768px){ .notes{ grid-template-columns:1fr 1fr; gap:var(--s5); } }
+  .note{ display:flex; gap:14px; padding:18px; border:1px solid var(--hairline); border-radius:var(--r-md); background:#fff; }
+  .note__ico{ flex:none; width:34px; height:34px; border:1px solid var(--primary); border-radius:var(--r-sm);
+    display:grid; place-items:center; font-size:17px; }
+  .note h4{ font-size:14px; font-weight:700; letter-spacing:-.2px; }
+  .note p{ margin-top:5px; font-size:13px; line-height:1.5; color:var(--text-2); }
+  .note code{ font-size:12px; }
+
+  /* ---------- §3 demo ---------- */
+  .demo{ margin-top:40px; display:grid; gap:var(--s5); grid-template-columns:1fr; }
+  @media (min-width:768px){ .demo{ grid-template-columns:minmax(0,340px) minmax(0,1fr); gap:var(--s6); align-items:start; } }
+  .demo__aside .demo__lbl{ font-family:var(--mono); font-size:12px; color:var(--text-3); display:flex; align-items:center; gap:8px; margin-bottom:14px; }
+  .tablist{ display:flex; flex-direction:column; gap:var(--s3); }
+  .q-chip{
+    text-align:left; cursor:pointer; background:#fff; color:var(--text);
+    border:1px solid var(--hairline); border-radius:var(--r-md); padding:15px 16px;
+    font-family:inherit; font-size:14.5px; font-weight:500; letter-spacing:-.3px; line-height:1.35;
+    min-height:52px; display:flex; align-items:center; justify-content:space-between; gap:12px;
+    transition:border-color var(--fast) var(--ease), background var(--fast) var(--ease), transform var(--fast) var(--ease);
+  }
+  .q-chip .q-chip__q::before{ content:"\201C"; }
+  .q-chip .q-chip__q::after{ content:"\201D"; }
+  .q-chip .chev{ color:var(--text-3); font-size:15px; opacity:0; transform:translateX(-4px); transition:opacity var(--fast) var(--ease), transform var(--fast) var(--ease); }
+  .q-chip:hover{ border-color:var(--text-3); background:#fff; }
+  .q-chip:hover .chev{ opacity:1; transform:translateX(0); }
+  .q-chip[aria-selected="true"]{ background:var(--surface); color:var(--on-dark); border-color:var(--surface); }
+  .q-chip[aria-selected="true"] .chev{ opacity:1; transform:translateX(0); color:var(--on-dark-3); }
+
+  .demo__stage{ position:relative; }
+  .q-panel{ border:1px solid var(--hairline); border-radius:var(--r-md); background:#fff; overflow:hidden; box-shadow:var(--shadow); }
+  .q-panel[hidden]{ display:none; }
+  .q-panel.leaving{ opacity:0; transform:translateY(6px); transition:opacity var(--fast) var(--ease), transform var(--fast) var(--ease); }
+  .q-panel.entering{ opacity:0; transform:translateY(10px); }
+  .q-panel.anim{ transition:opacity var(--base) var(--ease), transform var(--base) var(--ease); }
+
+  .fire{ background:var(--surface); color:var(--on-dark); padding:18px 20px; }
+  .fire__row{ display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; }
+  .fire__lbl{ font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--on-dark-3); }
+  .fire__cmd{ font-family:var(--mono); font-size:15px; font-weight:600; color:var(--on-dark); letter-spacing:-.2px; }
+  .fire__cmd .ico{ font-size:14px; display:inline-block; vertical-align:-2px; margin-right:2px; }
+  .fire .tag{ border-color:var(--on-dark-line); color:var(--on-dark-2); }
+  .fire .tag--solid{ background:var(--on-dark); color:var(--surface); border-color:var(--on-dark); }
+  .fire__skill{ margin-top:10px; font-family:var(--mono); font-size:12.5px; color:var(--on-dark-2); }
+
+  .find{ padding:20px; }
+  .find__head{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .find__head .h{ font-size:12px; font-family:var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--text-3); }
+  .find__head .prov{ font-size:12px; color:var(--text-3); font-family:var(--mono); }
+  .find__signal{ margin-top:12px; font-size:14px; line-height:1.5; color:var(--text); }
+  .find__signal b{ font-weight:700; }
+  .find__signal code{ font-size:12.5px; background:var(--hairline-2); padding:1px 6px; border-radius:5px; }
+
+  /* bars (R1) */
+  .bars{ margin-top:16px; display:flex; flex-direction:column; gap:9px; }
+  .bar{ display:grid; grid-template-columns:132px 1fr 34px; align-items:center; gap:12px; }
+  .bar__name{ font-size:13px; color:var(--text-2); }
+  .bar__name small{ display:block; font-size:11px; color:var(--text-3); font-family:var(--mono); letter-spacing:0; }
+  .bar__track{ height:10px; background:var(--hairline-2); border-radius:999px; overflow:hidden; }
+  .bar__fill{ height:100%; background:var(--primary); border-radius:999px; transform-origin:left; }
+  .bar__val{ font-family:var(--mono); font-size:14px; font-weight:600; text-align:right; }
+  .bar--zero .bar__val{ color:var(--text-3); }
+  @media (max-width:520px){ .bar{ grid-template-columns:104px 1fr 30px; gap:8px; } }
+
+  .find__note{ margin-top:16px; padding-top:14px; border-top:1px solid var(--hairline); font-size:12.5px; line-height:1.5; color:var(--text-2); display:flex; gap:10px; }
+  .find__note .ico{ font-size:15px; flex:none; margin-top:1px; color:var(--text); }
+  .find__note code{ font-size:12px; }
+
+  /* stat row (R2) */
+  .steps{ margin-top:16px; display:flex; flex-direction:column; gap:12px; }
+  .step2{ display:flex; align-items:center; gap:14px; }
+  .step2__num{ font-family:var(--mono); font-size:26px; font-weight:600; letter-spacing:-1px; min-width:52px; }
+  .step2__txt{ font-size:13.5px; line-height:1.45; color:var(--text-2); }
+  .step2__txt b{ color:var(--text); font-weight:600; }
+  .chips-inline{ margin-top:14px; display:flex; flex-wrap:wrap; gap:6px; }
+  .pill{ font-family:var(--mono); font-size:11.5px; padding:4px 9px; border-radius:999px; border:1px solid var(--hairline); color:var(--text-2); display:inline-flex; align-items:center; gap:6px; }
+  .pill .ico{ font-size:12px; }
+  .pill--mark{ background:var(--surface); color:var(--on-dark); border-color:var(--surface); }
+
+  /* file list (R3) */
+  .files-list{ margin-top:14px; display:flex; flex-direction:column; gap:8px; }
+  .file{ display:flex; align-items:center; gap:11px; padding:11px 14px; border:1px solid var(--hairline); border-radius:var(--r-sm); background:var(--bg); }
+  .file .ico{ font-size:15px; color:var(--text-2); }
+  .file code{ font-size:13px; }
+  .file .n{ margin-left:auto; font-family:var(--mono); font-size:12px; color:var(--text-3); }
+
+  /* compare (R4) */
+  .compare{ margin-top:16px; display:grid; gap:12px; grid-template-columns:1fr; }
+  @media (min-width:520px){ .compare{ grid-template-columns:1fr 1fr; } }
+  .cmp{ border:1px solid var(--hairline); border-radius:var(--r-sm); padding:14px; }
+  .cmp__k{ display:flex; align-items:center; gap:7px; font-size:12px; font-family:var(--mono); color:var(--text-3); }
+  .cmp__code{ margin-top:9px; font-family:var(--mono); font-size:18px; font-weight:600; }
+  .cmp__d{ margin-top:7px; font-size:12.5px; color:var(--text-2); line-height:1.45; }
+  .cmp--safe{ background:var(--surface); color:var(--on-dark); border-color:var(--surface); }
+  .cmp--safe .cmp__k{ color:var(--on-dark-3); }
+  .cmp--safe .cmp__d{ color:var(--on-dark-2); }
+
+  /* dynamic flow (R5) */
+  .dflow{ margin-top:14px; display:flex; flex-direction:column; gap:2px; }
+  .dstep{ display:flex; gap:14px; padding:12px 0; border-top:1px solid var(--hairline); }
+  .dstep:first-child{ border-top:0; }
+  .dstep__i{ flex:none; width:30px; height:30px; border-radius:50%; border:1px solid var(--primary); display:grid; place-items:center; font-size:15px; }
+  .dstep__i.pass{ background:var(--surface); color:var(--on-dark); }
+  .dstep__b .dstep__h{ font-size:13.5px; font-weight:700; letter-spacing:-.2px; }
+  .dstep__b p{ margin-top:4px; font-size:13px; line-height:1.46; color:var(--text-2); }
+  .dstep__b code{ font-size:12px; background:var(--hairline-2); padding:1px 5px; border-radius:5px; }
+
+  /* ---------- §4 catalog ---------- */
+  .cat-orch{ margin-top:36px; }
+  .orch{ display:grid; gap:20px; grid-template-columns:1fr; padding:26px; }
+  @media (min-width:768px){ .orch{ grid-template-columns:minmax(0,1fr) minmax(0,1.1fr); align-items:center; padding:30px; } }
+  .orch .l .k{ font-family:var(--mono); font-size:12px; color:var(--on-dark-3); }
+  .orch .l h3{ margin-top:10px; font-family:var(--mono); font-size:20px; font-weight:600; letter-spacing:-.4px; }
+  @media (min-width:768px){ .orch .l h3{ font-size:22px; } }
+  .orch .l .t{ margin-top:12px; font-size:14px; line-height:1.5; color:var(--on-dark-2); }
+  .orch .r{ position:relative; padding-top:18px; }
+  .orch .r::before{ content:""; position:absolute; background:var(--on-dark-line); left:0; right:0; top:0; height:1px; }
+  @media (min-width:768px){
+    .orch .r{ padding-top:0; padding-left:26px; }
+    .orch .r::before{ right:auto; bottom:0; height:auto; width:1px; }
+  }
+  .qf{ font-size:14px; }
+  .qf__q{ font-weight:600; letter-spacing:-.3px; }
+  .qf__q::before{ content:"\201C"; } .qf__q::after{ content:"\201D"; }
+  .qf__f{ margin-top:8px; color:var(--on-dark-2); line-height:1.5; }
+  .qf__f b{ color:var(--on-dark); font-weight:600; }
+
+  .cat-group{ margin-top:var(--s7); }
+  .cat-group__head{ display:flex; align-items:baseline; justify-content:space-between; gap:16px; flex-wrap:wrap; padding-bottom:16px; border-bottom:1px solid var(--primary); }
+  .cat-group__head h3{ font-size:20px; font-weight:700; letter-spacing:-.5px; display:flex; align-items:center; gap:11px; }
+  .cat-group__head h3 .n{ font-family:var(--mono); font-size:13px; font-weight:600; color:var(--on-dark); background:var(--surface); border-radius:999px; padding:2px 10px; letter-spacing:0; }
+  .cat-group__head .note{ display:block; border:0; padding:0; background:none; font-size:12.5px; color:var(--text-3); font-family:var(--mono); max-width:none; }
+  .grid{ margin-top:22px; display:grid; gap:var(--s4); grid-template-columns:1fr; }
+  @media (min-width:560px){ .grid{ grid-template-columns:1fr 1fr; } }
+  @media (min-width:960px){ .grid{ grid-template-columns:1fr 1fr 1fr; } }
+  .scard{ padding:18px; border:1px solid var(--hairline); border-radius:var(--r-md); background:#fff; display:flex; flex-direction:column; gap:10px;
+    transition:border-color var(--fast) var(--ease); }
+  .scard:hover{ border-color:var(--text-3); }
+  .scard__name{ font-family:var(--mono); font-size:13px; font-weight:600; letter-spacing:-.2px; line-height:1.3; word-break:break-all; }
+  .scard__ask{ font-size:13px; color:var(--text); }
+  .scard__ask .q{ font-weight:600; }
+  .scard__ask .q::before{ content:"\201C"; } .scard__ask .q::after{ content:"\201D"; }
+  .scard__find{ font-size:12.5px; line-height:1.5; color:var(--text-2); margin-top:auto; }
+  .scard__k{ font-family:var(--mono); font-size:12px; letter-spacing:.04em; text-transform:uppercase; color:var(--text-3); }
+
+  /* ---------- §5 usage ---------- */
+  .use-grid{ margin-top:40px; display:grid; gap:var(--s5); grid-template-columns:1fr; }
+  @media (min-width:768px){ .use-grid{ grid-template-columns:repeat(3,1fr); gap:var(--s5); } }
+  .ucard{ border:1px solid var(--hairline); border-radius:var(--r-md); background:#fff; padding:22px; display:flex; flex-direction:column; }
+  .ucard__cmd{ font-family:var(--mono); font-size:15px; font-weight:600; letter-spacing:-.3px; }
+  .ucard__tag{ margin-top:10px; }
+  .ucard__d{ margin-top:12px; font-size:13px; line-height:1.5; color:var(--text-2); }
+  .ucard__hint{ margin-top:12px; font-family:var(--mono); font-size:12px; color:var(--text-3); background:var(--bg); border:1px solid var(--hairline); border-radius:var(--r-sm); padding:8px 10px; word-break:break-all; }
+  .ucard__nl{ margin-top:14px; font-size:12.5px; color:var(--text-2); }
+  .ucard__nl .q{ font-style:normal; }
+  .ucard__nl .q::before{ content:"\201C"; } .ucard__nl .q::after{ content:"\201D"; }
+
+  pre.code{
+    margin-top:40px; background:var(--surface); color:var(--on-dark); border-radius:var(--r-md);
+    padding:22px 24px; overflow-x:auto; font-family:var(--mono); font-size:14px; line-height:1.65; letter-spacing:0;
+    box-shadow:var(--shadow);
+  }
+  pre.code .c{ color:var(--on-dark-3); }
+  pre.code .p{ color:var(--on-dark); }
+  pre.code b{ color:var(--on-dark); font-weight:600; }
+  .code-cap{ margin-top:40px; margin-bottom:-24px; font-family:var(--mono); font-size:12px; color:var(--text-3); }
+
+  .gate{ margin-top:var(--s6); }
+  .gate__in{ display:flex; gap:16px; padding:22px; border:1px solid var(--primary); border-radius:var(--r-md); background:#fff; align-items:flex-start; }
+  .gate__ico{ flex:none; width:40px; height:40px; border-radius:var(--r-sm); background:var(--surface); color:var(--on-dark); display:grid; place-items:center; font-size:20px; }
+  .gate h4{ font-size:15px; font-weight:700; letter-spacing:-.3px; }
+  .gate p{ margin-top:8px; font-size:13.5px; line-height:1.55; color:var(--text-2); }
+  .gate p code{ font-size:12.5px; background:var(--hairline-2); padding:1px 6px; border-radius:5px; }
+
+  /* ---------- footer ---------- */
+  .footer{ background:var(--surface); color:var(--on-dark); }
+  .footer__in{ padding-block:var(--s7); }
+  .footer__top{ display:grid; gap:28px; grid-template-columns:1fr; }
+  @media (min-width:768px){ .footer__top{ grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); gap:40px; } }
+  .footer .brand{ color:var(--on-dark); }
+  .footer__desc{ margin-top:16px; font-size:13.5px; line-height:1.55; color:var(--on-dark-2); max-width:420px; }
+  .footer__meta{ margin-top:18px; display:flex; flex-wrap:wrap; gap:8px; }
+  .footer__meta .tag{ border-color:var(--on-dark-line); color:var(--on-dark-2); }
+  .footer__links{ display:flex; flex-direction:column; gap:2px; }
+  .footer__links .k{ font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--on-dark-3); margin-bottom:10px; }
+  .footer__links a{ display:inline-flex; align-items:center; gap:9px; min-height:44px; font-size:14px; color:var(--on-dark); }
+  .footer__links a .ico{ font-size:16px; color:var(--on-dark-2); }
+  .footer__links a .u{ border-bottom:1px solid var(--on-dark-line); padding-bottom:2px; transition:border-color var(--fast) var(--ease); }
+  .footer__links a:hover .u{ border-color:var(--on-dark); }
+  .footer__bottom{ margin-top:40px; padding-top:22px; border-top:1px solid var(--on-dark-line); display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; font-size:12px; color:var(--on-dark-3); font-family:var(--mono); }
+
+  .vh{ position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
+
+  /* reduced motion */
+  @media (prefers-reduced-motion:reduce){
+    html{ scroll-behavior:auto; }
+    *,*::before,*::after{ transition-duration:.01ms !important; animation-duration:.01ms !important; animation-iteration-count:1 !important; }
+    .q-panel.anim{ transition:none !important; }
+    .link-arrow:hover .ico{ transform:none; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#demo">본문 데모로 건너뛰기</a>
+
+<!-- inline icon sprite -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-mark" viewBox="0 0 24 24">
+      <rect x="3.5" y="3.5" width="17" height="17" rx="4"/>
+      <path d="M8 12h8M12 8v8"/>
+    </symbol>
+    <symbol id="i-source" viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.2-2.9 7.9-7 9-4.1-1.1-7-4.8-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3l9-16z"/><path d="M12 10v4M12 17.5v.5"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.4 9.3a2.6 2.6 0 0 1 5 .9c0 1.7-2.4 2.1-2.4 3.8M12 17.4v.2"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9l-6-6z"/><path d="M13 3v6h6"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3L5 13h6l-1 8 8-10h-6l1-8z"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M5 4h9a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H5V4z"/><path d="M5 4v14"/></symbol>
+    <symbol id="i-github" viewBox="0 0 24 24" stroke="none" fill="currentColor"><path d="M12 2C6.5 2 2 6.6 2 12.3c0 4.5 2.9 8.4 6.8 9.7.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.4-3.4-1.4-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.6-1.4-2.2-.3-4.6-1.1-4.6-5.1 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.7 1a9.3 9.3 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 4-2.4 4.8-4.6 5.1.4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5 3.9-1.3 6.8-5.2 6.8-9.7C22 6.6 17.5 2 12 2z"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.8"/></symbol>
+  </defs>
+</svg>
+
+<!-- ============ NAV ============ -->
+<header class="nav">
+  <div class="wrap nav__in">
+    <a class="brand" href="#top" aria-label="gx-security 홈">
+      <svg class="ico mark" aria-hidden="true"><use href="#i-mark"/></svg>gx-security
+    </a>
+    <nav class="nav__links" aria-label="섹션">
+      <a href="#how">작동 원리</a>
+      <a href="#demo">데모</a>
+      <a href="#skills">스킬</a>
+      <a href="#usage">사용법</a>
+    </nav>
+    <span class="nav__ver">v0.7.0</span>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ============ ① HERO ============ -->
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="wrap hero__grid">
+      <div>
+        <p class="hero__eyebrow">
+          SQIsoft GX 웹앱 보안 점검<span class="dot"></span>Claude Code 플러그인<span class="dot"></span>v0.7.0
+        </p>
+        <h1 class="hero__title" id="hero-title">질문이 곧<br>스캐너다</h1>
+        <p class="hero__sub">GX 사업부 웹앱을 정적으로 읽고(SAST), 실행 중인 스테이징엔 직접 찔러 본다(DAST). 스캔 메뉴를 고르는 대신 자연어로 물으면, AI가 16개 스킬 중 맞는 것을 발동해 후보를 검증하고 발견까지 이끈다.</p>
+
+        <div class="hero__cmds">
+          <span class="lbl">커맨드 3</span>
+          <div class="cmd-row">
+            <a class="cmd-badge" href="#usage"><b>/gx-audit</b><span>통합 · 정적+동적</span></a>
+            <a class="cmd-badge" href="#usage"><b>/gx-diagnose</b><span>정적 · 안전</span></a>
+            <a class="cmd-badge" href="#usage"><b>/gx-pentest</b><span>동적 · 권한 필요</span></a>
+          </div>
+        </div>
+
+        <div class="hero__cta">
+          <a class="btn" href="#demo">물어보기 데모 <svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          <a class="link-arrow" href="#how">작동 원리 <svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+        </div>
+      </div>
+
+      <!-- 3박자 teaser (real DEMO data) -->
+      <figure class="beat" aria-label="질문에서 발견까지의 흐름 예시">
+        <figcaption class="beat__cap"><svg class="ico" aria-hidden="true"><use href="#i-source"/></svg>질문 → 발동 → 발견</figcaption>
+        <div class="beat__step">
+          <div class="beat__k">질문</div>
+          <p class="beat__q">프론트엔드 XSS 봐줘</p>
+        </div>
+        <div class="beat__step">
+          <div class="beat__k">발동</div>
+          <p class="beat__fire">detecting-xss-vulnerabilities · frontend 모드</p>
+        </div>
+        <div class="beat__step">
+          <div class="beat__k">발견</div>
+          <p class="beat__find"><b>Vue v-html 미새니타이즈 5건.</b><br><span class="files">public/frontend — board/[id].vue · admin/bbs · terms.vue</span><br>node_modules는 제외.</p>
+        </div>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============ ② HOW IT WORKS ============ -->
+  <section class="sec" id="how" aria-labelledby="how-title">
+    <div class="wrap">
+      <div class="sec__head">
+        <span class="kicker">작동 원리</span>
+        <h2 class="sec__title">정적으로 읽고, 동적으로 찌른다</h2>
+        <p class="sec__lead">두 계층이 후보를 만들고, AI가 실제 소스와 응답을 읽어 한 번 더 판정한다. 기계가 올린 후보를 그대로 믿지 않는 것이 이 도구의 핵심이다.</p>
+      </div>
+
+      <!-- 2 layers -->
+      <div class="layers">
+        <div class="layer">
+          <div class="layer__top">
+            <h3 class="layer__name"><svg class="ico" aria-hidden="true"><use href="#i-source"/></svg>정적 탐지</h3>
+            <span class="layer__abbr">SAST</span>
+          </div>
+          <p class="layer__desc">소스를 <b>읽기만</b> 하므로 실행 중인 앱이 필요 없고 완전히 안전하다. 스택(Spring 모던 / JSP 레거시)을 자동 감지해 스택별 룰로 후보를 도출한다.</p>
+          <div class="layer__meta">
+            <span class="tag">detecting-* · 9종</span>
+            <span class="tag">semgrep 우선</span>
+            <span class="tag">없으면 grep-fallback</span>
+          </div>
+        </div>
+        <div class="layer layer--dyn on-dark">
+          <div class="layer__top">
+            <h3 class="layer__name"><svg class="ico" aria-hidden="true"><use href="#i-target"/></svg>동적 악용</h3>
+            <span class="layer__abbr">DAST</span>
+          </div>
+          <p class="layer__desc">실행 중인 스테이징/로컬에만 실제 페이로드를 발사해 "정말 뚫리는가"를 확정한다. 기본은 비파괴(탐지 페이로드만).</p>
+          <div class="layer__meta">
+            <span class="tag">exploiting-* · 6종</span>
+            <span class="tag">scope_guard 게이트</span>
+            <span class="tag">비파괴 기본</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- pipeline: 후보 → AI 판정 → 확정/미확정 -->
+      <div class="pipe" role="group" aria-label="검증 파이프라인">
+        <div class="pipe__flow">
+          <div class="stage">
+            <span class="stage__n">입력</span>
+            <span class="stage__t">소스 · 실행 중 대상</span>
+            <p class="stage__d">소스 트리(필수)와 스테이징/로컬 URL(선택).</p>
+          </div>
+          <div class="arrow arrow--v" aria-hidden="true"><svg class="ico"><use href="#i-arrow"/></svg></div>
+          <div class="stage">
+            <span class="stage__n">1차 · 기계</span>
+            <span class="stage__t">후보 도출</span>
+            <p class="stage__d">정적은 semgrep→grep, 동적은 게이트 통과 후 페이로드. 결과 = <b>후보(candidates)</b>.</p>
+          </div>
+          <div class="arrow arrow--v" aria-hidden="true"><svg class="ico"><use href="#i-arrow"/></svg></div>
+          <div class="stage stage--ai on-dark">
+            <span class="stage__n">2차 · AI</span>
+            <span class="stage__t">컨텍스트 검증</span>
+            <p class="stage__d">실제 소스·응답을 읽어 오탐을 제거한다. <code>csrf().disable()</code>이 STATELESS면 의도된 예외로 판정.</p>
+          </div>
+          <div class="arrow arrow--v" aria-hidden="true"><svg class="ico"><use href="#i-arrow"/></svg></div>
+          <div class="stage">
+            <span class="stage__n">판정</span>
+            <span class="stage__t">확정 / 미확정</span>
+            <div class="ladder">
+              <span class="verdict verdict--bad"><svg class="ico" aria-hidden="true"><use href="#i-alert"/></svg>vulnerable</span>
+              <span class="verdict"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>secure</span>
+              <span class="verdict"><svg class="ico" aria-hidden="true"><use href="#i-clock"/></svg>needs-runtime</span>
+              <span class="verdict"><svg class="ico" aria-hidden="true"><use href="#i-help"/></svg>needs-confirmation</span>
+              <span class="verdict"><svg class="ico" aria-hidden="true"><use href="#i-help"/></svg>undetermined</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- safety + honesty notes -->
+      <div class="notes">
+        <div class="note">
+          <span class="note__ico" aria-hidden="true"><svg class="ico"><use href="#i-lock"/></svg></span>
+          <div>
+            <h4>scope_guard — fail-closed</h4>
+            <p>동적 발사는 안전 게이트를 통과해야만 실행된다. 운영으로 보이는 대상(<code>prod</code>·<code>www</code>·공인 IP)은 코드로 차단하고 즉시 멈춘다.</p>
+          </div>
+        </div>
+        <div class="note">
+          <span class="note__ico" aria-hidden="true"><svg class="ico"><use href="#i-alert"/></svg></span>
+          <div>
+            <h4>후보 0건 ≠ 안전</h4>
+            <p>grep 폴백은 recall 한계가 있다. gx-security는 0건을 "안전"으로 과대표기하지 않고, 진짜 음성인지 폴백 경고인지 구분해 정직하게 보고한다.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ③ DEMO (protagonist) ============ -->
+  <section class="sec" id="demo" aria-labelledby="demo-title">
+    <div class="wrap">
+      <div class="sec__head">
+        <span class="kicker">질문 → 발동 → 발견</span>
+        <h2 class="sec__title">어떻게 물으면 무엇을 발견하나</h2>
+        <p class="sec__lead">왼쪽 질문을 눌러 보라. 그 한마디가 어떤 커맨드·스킬을 발동하고 무엇을 찾아내는지 보여준다. 아래는 실제 프로젝트(sef-2026)에서 나온 값이다.</p>
+      </div>
+
+      <div class="demo">
+        <div class="demo__aside">
+          <p class="demo__lbl"><svg class="ico" aria-hidden="true"><use href="#i-eye"/></svg>질문 칩 — 눌러서 발견 보기</p>
+          <div class="tablist" role="tablist" aria-label="예시 질문" aria-orientation="vertical">
+            <button class="q-chip" role="tab" id="chip-0" aria-controls="panel-0" aria-selected="true" tabindex="0">
+              <span class="q-chip__q">이 프로젝트 전체 점검해줘</span><svg class="ico chev" aria-hidden="true"><use href="#i-arrow"/></svg>
+            </button>
+            <button class="q-chip" role="tab" id="chip-1" aria-controls="panel-1" aria-selected="false" tabindex="-1">
+              <span class="q-chip__q">접근통제 소유권·권한 확인해줘</span><svg class="ico chev" aria-hidden="true"><use href="#i-arrow"/></svg>
+            </button>
+            <button class="q-chip" role="tab" id="chip-2" aria-controls="panel-2" aria-selected="false" tabindex="-1">
+              <span class="q-chip__q">프론트엔드 XSS 봐줘</span><svg class="ico chev" aria-hidden="true"><use href="#i-arrow"/></svg>
+            </button>
+            <button class="q-chip" role="tab" id="chip-3" aria-controls="panel-3" aria-selected="false" tabindex="-1">
+              <span class="q-chip__q">SQL 인젝션 있어?</span><svg class="ico chev" aria-hidden="true"><use href="#i-arrow"/></svg>
+            </button>
+            <button class="q-chip" role="tab" id="chip-4" aria-controls="panel-4" aria-selected="false" tabindex="-1">
+              <span class="q-chip__q">스테이징에 실제로 뚫어봐</span><svg class="ico chev" aria-hidden="true"><use href="#i-arrow"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="demo__stage">
+          <!-- R1 -->
+          <div class="q-panel" role="tabpanel" id="panel-0" aria-labelledby="chip-0" tabindex="0">
+            <div class="fire on-dark">
+              <div class="fire__row">
+                <span class="fire__lbl">발동</span>
+                <span class="fire__cmd"><svg class="ico" aria-hidden="true"><use href="#i-bolt"/></svg>/gx-security:gx-audit</span>
+                <span class="tag tag--solid">정적 9종 일괄</span>
+                <span class="tag">+대상 URL 있으면 동적</span>
+              </div>
+              <p class="fire__skill">auditing-web-application-security — 오케스트레이터가 9종 스캐너를 한 번에 돌린다</p>
+            </div>
+            <div class="find">
+              <div class="find__head"><span class="h">발견 · 후보 분포</span><span class="prov">sef-2026 backend · 실측</span></div>
+              <div class="bars">
+                <div class="bar"><span class="bar__name">접근통제<small>access control</small></span><span class="bar__track"><span class="bar__fill" style="width:100%"></span></span><span class="bar__val">65</span></div>
+                <div class="bar"><span class="bar__name">민감정보<small>sensitive data</small></span><span class="bar__track"><span class="bar__fill" style="width:9.2%"></span></span><span class="bar__val">6</span></div>
+                <div class="bar"><span class="bar__name">경로조작<small>path traversal</small></span><span class="bar__track"><span class="bar__fill" style="width:4.6%"></span></span><span class="bar__val">3</span></div>
+                <div class="bar"><span class="bar__name">인증/세션<small>auth/session</small></span><span class="bar__track"><span class="bar__fill" style="width:4.6%"></span></span><span class="bar__val">3</span></div>
+                <div class="bar"><span class="bar__name">파일업로드<small>file upload</small></span><span class="bar__track"><span class="bar__fill" style="width:3.1%"></span></span><span class="bar__val">2</span></div>
+                <div class="bar"><span class="bar__name">CSRF<small>csrf</small></span><span class="bar__track"><span class="bar__fill" style="width:1.6%"></span></span><span class="bar__val">1</span></div>
+                <div class="bar bar--zero"><span class="bar__name">SQLi · XSS · SSRF<small>injection 계열</small></span><span class="bar__track"></span><span class="bar__val">0</span></div>
+              </div>
+              <p class="find__note"><svg class="ico" aria-hidden="true"><use href="#i-alert"/></svg><span>0건은 진짜 음성일 수도, 폴백 recall 한계일 수도 있다. gx-security는 둘을 구분해 표기하고 "안전"으로 단정하지 않는다.</span></p>
+            </div>
+          </div>
+
+          <!-- R2 -->
+          <div class="q-panel" role="tabpanel" id="panel-1" aria-labelledby="chip-1" tabindex="0" hidden>
+            <div class="fire on-dark">
+              <div class="fire__row">
+                <span class="fire__lbl">발동</span>
+                <span class="fire__cmd">detecting-broken-access-control</span>
+                <span class="tag">정적</span>
+              </div>
+              <p class="fire__skill">소유권·권한 검증 — IDOR · BFLA · 강제 브라우징</p>
+            </div>
+            <div class="find">
+              <div class="find__head"><span class="h">발견 · 신호와 판정</span><span class="prov">sef-2026 backend · 실측</span></div>
+              <p class="find__signal">신호: <code>@PathVariable id</code> 소유권 미검증 · 관리자 <code>@PreAuthorize</code> 누락.</p>
+              <div class="steps">
+                <div class="step2"><span class="step2__num">65</span><span class="step2__txt"><b>후보</b> — 기계가 올린 접근통제 후보 총수.</span></div>
+                <div class="step2"><span class="step2__num">8</span><span class="step2__txt"><b>enforcement-detected-verify</b> — 집행 신호가 감지된 건. 삭제하지 않고 AI가 실제로 검증한다.</span></div>
+              </div>
+              <div class="chips-inline" aria-label="나머지 판정 사다리">
+                <span class="pill pill--mark"><svg class="ico" aria-hidden="true"><use href="#i-help"/></svg>나머지 57건 → 3-값 사다리</span>
+                <span class="pill"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>secure</span>
+                <span class="pill"><svg class="ico" aria-hidden="true"><use href="#i-alert"/></svg>vulnerable</span>
+                <span class="pill"><svg class="ico" aria-hidden="true"><use href="#i-clock"/></svg>needs-runtime</span>
+              </div>
+              <p class="find__note"><svg class="ico" aria-hidden="true"><use href="#i-source"/></svg><span>집행 신호가 있는 건을 기계가 임의로 지우지 않는다. 판정은 소스를 읽은 AI가 내린다.</span></p>
+            </div>
+          </div>
+
+          <!-- R3 -->
+          <div class="q-panel" role="tabpanel" id="panel-2" aria-labelledby="chip-2" tabindex="0" hidden>
+            <div class="fire on-dark">
+              <div class="fire__row">
+                <span class="fire__lbl">발동</span>
+                <span class="fire__cmd">detecting-xss-vulnerabilities</span>
+                <span class="tag">정적</span>
+                <span class="tag tag--solid">frontend 모드</span>
+              </div>
+              <p class="fire__skill">반사·저장·DOM XSS + 프론트엔드 Vue 템플릿 점검</p>
+            </div>
+            <div class="find">
+              <div class="find__head"><span class="h">발견 · 위치</span><span class="prov">public/frontend · 실측</span></div>
+              <p class="find__signal">신호: Vue <code>v-html</code> 미새니타이즈 <b>5건</b>. node_modules는 스캔에서 제외.</p>
+              <div class="files-list">
+                <div class="file"><svg class="ico" aria-hidden="true"><use href="#i-file"/></svg><code>board/[id].vue</code><span class="n">v-html</span></div>
+                <div class="file"><svg class="ico" aria-hidden="true"><use href="#i-file"/></svg><code>admin/bbs</code><span class="n">v-html</span></div>
+                <div class="file"><svg class="ico" aria-hidden="true"><use href="#i-file"/></svg><code>terms.vue</code><span class="n">v-html</span></div>
+              </div>
+              <p class="find__note"><svg class="ico" aria-hidden="true"><use href="#i-eye"/></svg><span>정적 신호를 실제 악용으로 확정하려면 <code>exploiting-xss</code>가 Playwright로 브라우저 실행까지 확인한다.</span></p>
+            </div>
+          </div>
+
+          <!-- R4 -->
+          <div class="q-panel" role="tabpanel" id="panel-3" aria-labelledby="chip-3" tabindex="0" hidden>
+            <div class="fire on-dark">
+              <div class="fire__row">
+                <span class="fire__lbl">발동</span>
+                <span class="fire__cmd">detecting-sql-injection</span>
+                <span class="tag">정적</span>
+              </div>
+              <p class="fire__skill">파라미터 바인딩 없이 문자열로 조립되는 쿼리를 탐지</p>
+            </div>
+            <div class="find">
+              <div class="find__head"><span class="h">발견 · 대비와 결론</span><span class="prov">sef-2026 backend · 실측</span></div>
+              <div class="compare">
+                <div class="cmp">
+                  <span class="cmp__k"><svg class="ico" aria-hidden="true"><use href="#i-alert"/></svg>취약 패턴</span>
+                  <div class="cmp__code">${}</div>
+                  <p class="cmp__d">MyBatis 문자열 치환 — 입력이 쿼리에 그대로 박힌다.</p>
+                </div>
+                <div class="cmp cmp--safe on-dark">
+                  <span class="cmp__k"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>안전 패턴</span>
+                  <div class="cmp__code">#{}</div>
+                  <p class="cmp__d">파라미터 바인딩 — sef는 이 방식만 사용한다.</p>
+                </div>
+              </div>
+              <p class="find__signal" style="margin-top:16px;">결론: <b>0건</b>. 억지로 만들지 않은 <b>진짜 음성(true negative)</b>이며, 과대표기하지 않는다.</p>
+            </div>
+          </div>
+
+          <!-- R5 -->
+          <div class="q-panel" role="tabpanel" id="panel-4" aria-labelledby="chip-4" tabindex="0" hidden>
+            <div class="fire on-dark">
+              <div class="fire__row">
+                <span class="fire__lbl">발동</span>
+                <span class="fire__cmd"><svg class="ico" aria-hidden="true"><use href="#i-bolt"/></svg>/gx-security:gx-pentest</span>
+                <span class="tag tag--solid">동적</span>
+                <span class="tag">exploiting-*</span>
+              </div>
+              <p class="fire__skill">실행 중인 스테이징/로컬에 실제 페이로드를 발사</p>
+            </div>
+            <div class="find">
+              <div class="find__head"><span class="h">발견 · 발사 절차</span><span class="prov">스테이징 · 권한 테스트</span></div>
+              <div class="dflow">
+                <div class="dstep">
+                  <span class="dstep__i pass" aria-hidden="true"><svg class="ico"><use href="#i-lock"/></svg></span>
+                  <div class="dstep__b"><p class="dstep__h">scope_guard — fail-closed 통과</p><p>대상이 스테이징/로컬임을 확인한 뒤에만 발사. 운영이면 여기서 차단된다.</p></div>
+                </div>
+                <div class="dstep">
+                  <span class="dstep__i" aria-hidden="true"><svg class="ico"><use href="#i-bolt"/></svg></span>
+                  <div class="dstep__b"><p class="dstep__h">실제 페이로드 발사</p><p>BFLA(일반 사용자 토큰 → 관리자 API) · IDOR · SQLi · XSS.</p></div>
+                </div>
+                <div class="dstep">
+                  <span class="dstep__i" aria-hidden="true"><svg class="ico"><use href="#i-help"/></svg></span>
+                  <div class="dstep__b"><p class="dstep__h">미확정이면 사람에게</p><p>상태코드·반사만으로 판단이 안 서면 <code>evidence_expectation</code> 카드를 띄우고, 사람이 실행·확인한다(AskUserQuestion).</p></div>
+                </div>
+              </div>
+              <p class="find__note"><svg class="ico" aria-hidden="true"><use href="#i-shield"/></svg><span>권한 있는 사내 테스트 전용. 기본 비파괴이며, 데이터 변조·삭제는 별도 승인이 필요하다.</span></p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ④ SKILL CATALOG ============ -->
+  <section class="sec" id="skills" aria-labelledby="skills-title">
+    <div class="wrap">
+      <div class="sec__head">
+        <span class="kicker">스킬 16 · 오케스트레이터 1 / 정적 9 / 동적 6</span>
+        <h2 class="sec__title">무엇을 묻고, 무엇을 발견하나</h2>
+        <p class="sec__lead">스킬은 메뉴가 아니라 어휘다. 질문에 담긴 의도를 AI가 읽어 맞는 스킬을 발동한다. 아래는 그 어휘집이다.</p>
+      </div>
+
+      <!-- orchestrator -->
+      <div class="cat-orch">
+        <div class="orch panel-dark on-dark">
+          <div class="l">
+            <span class="k">오케스트레이터 · 1</span>
+            <h3>auditing-web-application-security</h3>
+            <p class="t">소스 경로(필수)와 실행 URL(선택)을 받아, 9종 정적 스캐너를 일괄로 돌리고 대상이 있으면 동적까지 통합해 하나의 리포트로 낸다.</p>
+          </div>
+          <div class="r">
+            <p class="qf">
+              <span class="qf__q">이 프로젝트 전체 점검해줘</span>
+              <span class="qf__f qf__f--block" style="display:block;">→ 정적 9종 + (URL 있으면) 동적을 <b>한 번에</b>. 심각도순 4요소 리포트(취약점·이유·공격법·해결법 + Evidence).</span>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- static 9 -->
+      <div class="cat-group">
+        <div class="cat-group__head">
+          <h3><svg class="ico" style="font-size:20px" aria-hidden="true"><use href="#i-source"/></svg>정적 탐지 <span class="n">detecting-* · 9</span></h3>
+          <span class="note">소스만 읽음 · 앱 불필요 · 완전 안전</span>
+        </div>
+        <div class="grid">
+          <article class="scard">
+            <span class="scard__k">CSRF</span>
+            <h4 class="scard__name">detecting-csrf-vulnerabilities</h4>
+            <p class="scard__ask"><span class="q">CSRF 막혀 있어?</span></p>
+            <p class="scard__find">상태변경 엔드포인트의 토큰 보호 유무를 판정. <code>csrf().disable()</code>이 STATELESS면 의도된 예외로 본다.</p>
+          </article>
+          <article class="scard">
+            <span class="scard__k">XSS</span>
+            <h4 class="scard__name">detecting-xss-vulnerabilities</h4>
+            <p class="scard__ask"><span class="q">XSS 있어? 프론트도</span></p>
+            <p class="scard__find">반사·저장·DOM XSS + 프론트엔드 Vue <code>v-html</code> 미새니타이즈까지.</p>
+          </article>
+          <article class="scard">
+            <span class="scard__k">SQL Injection</span>
+            <h4 class="scard__name">detecting-sql-injection</h4>
+            <p class="scard__ask"><span class="q">SQL 인젝션 있어?</span></p>
+            <p class="scard__find">파라미터 바인딩 없이 문자열로 조립되는 쿼리. MyBatis 치환 vs 바인딩을 구분.</p>
+          </article>
+          <article class="scard">
+            <span class="scard__k">File Upload</span>
+            <h4 class="scard__name">detecting-file-upload-vulnerabilities</h4>
+            <p class="scard__ask"><span class="q">업로드로 웹쉘 되나?</span></p>
+            <p class="scard__find">확장자 화이트리스트 부재·매직바이트 미검증·웹루트 내부 저장 (CWE-434).</p>
+          </article>
+          <article class="scard">
+            <span class="scard__k">Path Traversal</span>
+            <h4 class="scard__name">detecting-path-traversal</h4>
+            <p class="scard__ask"><span class="q">임의 파일 읽혀?</span></p>
+            <p class="scard__find">다운로드·뷰어에서 <code>../</code>로 WEB-INF/web.xml·/etc/passwd 접근 (CWE-22).</p>
+          </article>
+          <article class="scard">
+            <span class="scard__k">Broken Access Control</span>
+            <h4 class="scard__name">detecting-broken-access-control</h4>
+            <p class="scard__ask"><span class="q">남의 데이터 보여?</span></p>
+            <p class="scard__find">IDOR·BFLA·강제 브라우징. 소유권 미검증·<code>@PreAuthorize</code> 누락.</p>
+          </article>
+          <article class="scard">
+            <span class="scard__k">Auth / Session / JWT</span>
+            <h4 class="scard__name">detecting-auth-session-weaknesses</h4>
+            <p class="scard__ask"><span class="q">세션·JWT 튼튼해?</span></p>
+            <p class="scard__find">세션 고정·약한 해시·JWT 설정 오류·쿠키 보안속성(Secure/HttpOnly/SameSite) 누락.</p>
+          </article>
+          <article class="scard">
+            <span class="scard__k">Sensitive Data</span>
+            <h4 class="scard__name">detecting-sensitive-data-exposure</h4>
+            <p class="scard__ask"><span class="q">시크릿·개인정보 샜어?</span></p>
+            <p class="scard__find">하드코딩 시크릿(DB PW·API 키)·주민번호/이메일 평문·응답 DTO 과다 노출.</p>
+          </article>
+          <article class="scard">
+            <span class="scard__k">SSRF / Open Redirect</span>
+            <h4 class="scard__name">detecting-ssrf-and-open-redirect</h4>
+            <p class="scard__ask"><span class="q">내부망 찌를 수 있어?</span></p>
+            <p class="scard__find">검증 없이 서버측 HTTP 요청에 쓰이는 사용자 URL(RestTemplate·WebClient) + 오픈 리다이렉트.</p>
+          </article>
+        </div>
+      </div>
+
+      <!-- dynamic 6 -->
+      <div class="cat-group">
+        <div class="cat-group__head">
+          <h3><svg class="ico" style="font-size:20px" aria-hidden="true"><use href="#i-target"/></svg>동적 악용 <span class="n">exploiting-* · 6</span></h3>
+          <span class="note">실행 중 스테이징/로컬만 · scope_guard · 비파괴 기본</span>
+        </div>
+        <div class="grid">
+          <article class="scard">
+            <span class="scard__k">SQL Injection</span>
+            <h4 class="scard__name">exploiting-sql-injection</h4>
+            <p class="scard__ask"><span class="q">진짜 데이터 빠져?</span></p>
+            <p class="scard__find">후보 URL·파라미터에 boolean/time-based PoC 또는 sqlmap을 발사해 악용을 확정.</p>
+          </article>
+          <article class="scard">
+            <span class="scard__k">XSS</span>
+            <h4 class="scard__name">exploiting-xss-vulnerabilities</h4>
+            <p class="scard__ask"><span class="q">스크립트 진짜 실행돼?</span></p>
+            <p class="scard__find">고유 마커 주입 + Playwright로 브라우저 실제 실행 확인(저장형·DOM).</p>
+          </article>
+          <article class="scard">
+            <span class="scard__k">Broken Access Control</span>
+            <h4 class="scard__name">exploiting-broken-access-control</h4>
+            <p class="scard__ask"><span class="q">관리자 API 뚫려?</span></p>
+            <p class="scard__find">일반 사용자 토큰으로 관리자 API 호출(BFLA)·타인 토큰으로 A의 리소스(IDOR).</p>
+          </article>
+          <article class="scard">
+            <span class="scard__k">Auth / Session</span>
+            <h4 class="scard__name">exploiting-auth-session</h4>
+            <p class="scard__ask"><span class="q">토큰 위조돼?</span></p>
+            <p class="scard__find">토큰 base64 변조(alg=none·서명 제거·역할·만료)·로그아웃 후 재사용 점검.</p>
+          </article>
+          <article class="scard">
+            <span class="scard__k">SSRF / Open Redirect</span>
+            <h4 class="scard__name">exploiting-ssrf-and-open-redirect</h4>
+            <p class="scard__ask"><span class="q">콜백 돌아와?</span></p>
+            <p class="scard__find">루프백에 OOB canary 리스너를 띄우고 콜백 수신으로 블라인드 SSRF까지 확정.</p>
+          </article>
+          <article class="scard">
+            <span class="scard__k">Path Traversal / Upload</span>
+            <h4 class="scard__name">exploiting-path-traversal-upload</h4>
+            <p class="scard__ask"><span class="q">파일 실제로 읽혀?</span></p>
+            <p class="scard__find"><code>../</code> 주입 → 응답 본문의 파일 시그니처(/etc/passwd·web.xml)로 인밴드 검증(읽기 전용).</p>
+          </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ⑤ USAGE ============ -->
+  <section class="sec" id="usage" aria-labelledby="usage-title">
+    <div class="wrap">
+      <div class="sec__head">
+        <span class="kicker">사용법</span>
+        <h2 class="sec__title">세 커맨드, 혹은 그냥 질문</h2>
+        <p class="sec__lead">커맨드를 정확히 쳐도 되고, 자연어로 물어도 된다. 어느 쪽이든 같은 스킬을 발동한다. 안전 게이트는 항상 먼저 걸린다.</p>
+      </div>
+
+      <div class="use-grid">
+        <div class="ucard">
+          <h3 class="ucard__cmd">/gx-security:gx-diagnose</h3>
+          <span class="ucard__tag"><span class="tag"><svg class="ico" aria-hidden="true"><use href="#i-source"/></svg>정적 · 안전</span></span>
+          <p class="ucard__d">소스만 읽어 취약점 후보를 진단한다. 실행 중인 앱이 필요 없다.</p>
+          <span class="ucard__hint">&lt;소스경로&gt; [종류: csrf|xss|sqli|…]</span>
+          <p class="ucard__nl">자연어 <span class="q">이 소스 접근통제만 정적으로 봐줘</span></p>
+        </div>
+        <div class="ucard">
+          <h3 class="ucard__cmd">/gx-security:gx-audit</h3>
+          <span class="ucard__tag"><span class="tag"><svg class="ico" aria-hidden="true"><use href="#i-shield"/></svg>통합 · 정적+동적</span></span>
+          <p class="ucard__d">9종 정적을 일괄로 돌리고, 대상 URL을 주면 동적 모의침투까지 이어 통합 리포트를 낸다.</p>
+          <span class="ucard__hint">&lt;소스경로&gt; [대상URL]</span>
+          <p class="ucard__nl">자연어 <span class="q">이 프로젝트 전체 점검해줘</span></p>
+        </div>
+        <div class="ucard">
+          <h3 class="ucard__cmd">/gx-security:gx-pentest</h3>
+          <span class="ucard__tag"><span class="tag tag--solid"><svg class="ico" aria-hidden="true"><use href="#i-target"/></svg>동적 · 권한 필요</span></span>
+          <p class="ucard__d">실행 중인 스테이징/로컬에 실제 공격을 발사해 악용을 확정한다. 자사 소유·격리 대상만.</p>
+          <span class="ucard__hint">&lt;대상URL&gt; [sqli|xss] [--param 이름]</span>
+          <p class="ucard__nl">자연어 <span class="q">스테이징에 SQLi 실제로 뚫어봐</span></p>
+        </div>
+      </div>
+
+      <p class="code-cap">정적 진단 — 안전, 앱 불필요</p>
+      <pre class="code" aria-label="정적 진단 실행 예시"><span class="c"># 소스 전체 9종 정적 진단</span>
+<b>/gx-security:gx-diagnose</b> D:\SQ\sqisoft-sef-2026
+
+<span class="c"># 특정 종류만 (예: 프론트 XSS)</span>
+<b>/gx-security:gx-diagnose</b> D:\SQ\GSEED\source\Gseed_Web_Renew xss
+
+<span class="c"># 자연어로도 같은 스킬이 발동한다</span>
+<span class="p">&gt;</span> 이 소스 정적으로 전체 점검해줘</pre>
+
+      <p class="code-cap">동적 모의침투 — 안전 게이트가 먼저</p>
+      <pre class="code" aria-label="동적 모의침투 실행 예시"><span class="c"># 0) 발사 전 범위 확인 — fail-closed. 운영이면 여기서 차단</span>
+python tools/scope_guard.py <span class="p">"http://localhost:8080/board?id=1"</span>
+
+<span class="c"># 1) 통과하면 발사 (SQLi, 파라미터 id)</span>
+<b>/gx-security:gx-pentest</b> http://localhost:8080/board?id=1 sqli --param id
+
+<span class="c"># 통합으로 한 번에: 소스 + 대상 URL</span>
+<b>/gx-security:gx-audit</b> D:\SQ\sqisoft-sef-2026 http://localhost:8080</pre>
+
+      <div class="gate">
+        <div class="gate__in">
+          <span class="gate__ico" aria-hidden="true"><svg class="ico"><use href="#i-lock"/></svg></span>
+          <div>
+            <h4>안전 게이트 — 늘 먼저 걸린다</h4>
+            <p><code>tools/scope_guard.py</code>가 운영(<code>prod</code>·<code>www</code>·공인 IP) 대상을 <b>코드로 차단</b>한다(fail-closed). 대상이 떠 있지 않으면 게이트가 되묻고(AskUserQuestion), 자격증명은 트랜스크립트가 아니라 <code>--creds-stdin</code>/<code>--*-env</code>로 전달한다. 기본은 <b>비파괴</b>다. 데이터 변조·삭제는 <code>--allow-destructive</code> + 사람 승인이 있어야만 실행된다.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============ ⑥ FOOTER ============ -->
+<footer class="footer on-dark">
+  <div class="wrap footer__in">
+    <div class="footer__top">
+      <div>
+        <span class="brand"><svg class="ico mark" aria-hidden="true"><use href="#i-mark"/></svg>gx-security</span>
+        <p class="footer__desc">SQIsoft GX 사업부 웹앱 보안 점검 Claude Code 플러그인. 정적(SAST)으로 읽고 동적(DAST)으로 확정하는 하이브리드. 권한 있는 사내 보안 테스트 전용이며, 동적 발사는 자사 소유·격리된 스테이징/로컬에만.</p>
+        <div class="footer__meta">
+          <span class="tag">v0.7.0</span>
+          <span class="tag">커맨드 3</span>
+          <span class="tag">스킬 16</span>
+          <span class="tag">SAST + DAST</span>
+        </div>
+      </div>
+      <nav class="footer__links" aria-label="레포지토리">
+        <span class="k">Repository</span>
+        <a href="https://github.com/bs-koo/gx-security"><svg class="ico" aria-hidden="true"><use href="#i-github"/></svg><span class="u">github.com/bs-koo/gx-security</span></a>
+        <a href="https://github.com/bs-koo/gx-security/releases/tag/v0.7.0"><svg class="ico" aria-hidden="true"><use href="#i-book"/></svg><span class="u">릴리스 노트 · v0.7.0</span></a>
+      </nav>
+    </div>
+    <div class="footer__bottom">
+      <span>SQIsoft Security · GX 사업부</span>
+      <span>질문 → 발동 → 발견</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var tablist = document.querySelector('.tablist');
+  if(!tablist) return;
+  var tabs = Array.prototype.slice.call(tablist.querySelectorAll('[role="tab"]'));
+  var panels = tabs.map(function(t){ return document.getElementById(t.getAttribute('aria-controls')); });
+  var current = 0;
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function setReduce(){ reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+  if(window.matchMedia){
+    var mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if(mq.addEventListener){ mq.addEventListener('change', setReduce); }
+    else if(mq.addListener){ mq.addListener(setReduce); }
+  }
+
+  function activate(idx, focusTab){
+    if(focusTab) tabs[idx].focus();
+    if(idx === current) return;
+
+    tabs[current].setAttribute('aria-selected','false');
+    tabs[current].tabIndex = -1;
+    tabs[idx].setAttribute('aria-selected','true');
+    tabs[idx].tabIndex = 0;
+    current = idx;
+
+    var to = panels[idx];
+    // State changes apply immediately so rapid clicks/arrow-keys always land correctly.
+    if(reduce){
+      panels.forEach(function(pnl,i){ pnl.hidden = (i !== idx); pnl.classList.remove('anim','entering'); });
+      return;
+    }
+    // Outgoing is instant (faster than incoming); incoming panel eases in over --base.
+    panels.forEach(function(pnl,i){ if(i !== idx){ pnl.hidden = true; pnl.classList.remove('anim','entering'); } });
+    to.hidden = false;
+    to.classList.add('anim','entering');
+    requestAnimationFrame(function(){
+      requestAnimationFrame(function(){ to.classList.remove('entering'); });
+    });
+  }
+
+  tabs.forEach(function(tab, i){
+    tab.addEventListener('click', function(){ activate(i, false); });
+    tab.addEventListener('keydown', function(e){
+      var k = e.key, n = tabs.length, next = -1;
+      if(k === 'ArrowDown' || k === 'ArrowRight'){ next = (i + 1) % n; }
+      else if(k === 'ArrowUp' || k === 'ArrowLeft'){ next = (i - 1 + n) % n; }
+      else if(k === 'Home'){ next = 0; }
+      else if(k === 'End'){ next = n - 1; }
+      if(next !== -1){ e.preventDefault(); activate(next, true); }
+    });
+  });
+})();
+</script>
+</body>
+</html>
