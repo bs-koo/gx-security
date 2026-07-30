@@ -10,8 +10,6 @@
 
 [![온라인 문서 · GitHub Pages](https://img.shields.io/badge/온라인_문서-GitHub_Pages-141413?style=flat&logo=github&logoColor=white)](https://bs-koo.github.io/gx-security/)
 
-**[→ 온라인 소개 페이지 (질문→발견 인터랙티브 데모)](https://bs-koo.github.io/gx-security/)**
-
 </div>
 
 ---
