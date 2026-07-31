@@ -4,6 +4,22 @@
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르며,
 버전 체계는 [Semantic Versioning](https://semver.org/lang/ko/)을 준수합니다.
 
+## [0.8.0] - 2026-07-31
+
+> Burp Suite MCP 하이브리드 연동. 기존 4종(접근통제·인증세션·SSRF·경로조작)을 Burp 프록시로 경유시켜 결정론·판정·`scope_guard`를 유지한 채 트래픽을 Burp 히스토리에 축적하고, 세션 스와핑 등 Burp 고유 심화는 MCP 도구로 얹는다. SQLi·XSS는 sqlmap·Playwright 우위라 기존 경로 유지.
+
+### Added
+- **Burp 프리플라이트·온보딩(`tools/burp_preflight.py`)** — 프록시(8080)/MCP(9876) 포트 프로브 + 미설정 시 설치 온보딩. `--require proxy|mcp|both`, `split_hostport`/`probe_port`/`check`/`onboarding_text`.
+- **dyn_session 프록시 경유(`SECURITY_PLUGIN_BURP_PROXY`)** — env 지정 시 모든 requests 발사(`request`/`login`/`login_response`/`form_login`)가 Burp 프록시를 경유(+`verify=False`, `InsecureRequestWarning` 1회 억제), 미지정 시 기존과 바이트 동일. 로그인 프록시 오류 힌트.
+- **audit `--burp-proxy`/`--burp-proxy-strict`** — 프리플라이트 게이트 + env 전파(자식 subprocess 상속), `report["burp_proxy"]` 노출. 미가동 시 온보딩 후 폴백, strict면 발사 중단(증거 없는 발사 방지).
+- **`exploiting-with-burp` 스킬** — 하이브리드 워크플로 문서(프록시 경유 결정론 + MCP 보조 심화) + `references/burp-engine.md`. Intercept OFF·MCP scope fail-open 한계 명시.
+
+### Notes (실물 검증 — 2026-07-31)
+- **프록시 경유 end-to-end 확인** — Burp Community 2026.3.3에서 `dyn_session`→Burp 프록시→로컬 대상 왕복 성공.
+- **MCP SSE 직결** — `claude mcp add --transport sse burp http://127.0.0.1:9876`(엔드포인트는 루트, stdio proxy 불필요). `send_http1_request` 실호출로 응답 회수 확인.
+- **엣지 D 확정** — Burp `base64` 도구는 표준 base64만 지원(url-safe `-`/`_` 거부, 출력도 표준 패딩). JWT(base64url) 변조는 MCP base64로 불가 → `attack_auth.py` 프록시 경유로 처리.
+- **엣지 H 실증** — 8080은 환경에 따라 Oracle TNSLSNR 등이 점유할 수 있어 "포트 열림 ≠ Burp". 대상 포트가 Burp인지 확인 필요(온보딩·SKILL에 경고 반영).
+
 ## [0.7.0] - 2026-07-30
 
 > P4 커버리지. 정적 판정을 "충분히"로 승격하고 프론트엔드 XSS를 커버하며, 동적을 대화형·사람확인형으로 재편했다. (P3 0.6.0 미릴리스 시 이 릴리스가 P3 변경도 포함한다.)

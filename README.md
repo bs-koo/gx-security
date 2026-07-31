@@ -6,7 +6,7 @@
 
 정적 분석(SAST) + 동적 모의침투(DAST) 하이브리드 · 스택 자동 감지 · AI 오탐 제거
 
-`커맨드 3` · `스킬 16` (통합 1 · 진단 9 · 침투 6) · `v0.7.0` · Proprietary
+`커맨드 3` · `스킬 17` (통합 1 · 진단 9 · 침투 7) · `v0.8.0` · Proprietary
 
 [![GitHub Pages · 온라인 문서](https://img.shields.io/badge/온라인_문서-GitHub_Pages-141413?style=flat&logo=github&logoColor=white)](https://bs-koo.github.io/gx-security/)
 
@@ -177,7 +177,7 @@ CLI로 단독 실행도 됩니다 — `python scan_all.py <소스>` (Claude 없�
 
 각 스킬은 `python skills/detecting-<종류>/scripts/scan_*.py <소스>` 로 단독 실행할 수도 있습니다(`skills/detecting-<종류>/references/stack-patterns.md`가 AI 검증 기준).
 
-### 침투 — `exploiting-*` (6개, 동적/DAST — 실행 중인 대상에 실제 발사, `scope_guard` fail-closed 강제)
+### 침투 — `exploiting-*` (7개, 동적/DAST — 실행 중인 대상에 실제 발사, `scope_guard` fail-closed 강제)
 
 | 스킬 | 확정 방식 | 스크립트 |
 |---|---|---|
@@ -288,4 +288,4 @@ security-plugin/
 
 ---
 
-<sub>Proprietary · GX 사업본부 사내용 · v0.7.0</sub>
+<sub>Proprietary · GX 사업본부 사내용 · v0.8.0</sub>

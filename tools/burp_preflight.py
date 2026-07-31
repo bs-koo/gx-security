@@ -63,8 +63,8 @@ def onboarding_text(proxy="127.0.0.1:8080", mcp="127.0.0.1:9876"):
         "  3) MCP Server 확장 로드 — BApp Store 또는 ./gradlew embedProxyJar 후\n"
         "     Burp > Extensions > Add > Java > burp-mcp-all.jar\n"
         f"  4) Burp MCP 탭에서 서버 Enable ({mcp}) + 프록시 리스너 확인 ({proxy})\n"
-        "  5) Claude Code에 MCP 등록:\n"
-        "     claude mcp add burp -- <java> -jar mcp-proxy-all.jar --sse-url http://127.0.0.1:9876\n"
+        "  5) Claude Code에 MCP 등록 (SSE 직결 — stdio proxy jar 불필요):\n"
+        "     claude mcp add --transport sse burp http://127.0.0.1:9876   (엔드포인트는 루트, /sse 아님)\n"
         "  ⚠ Burp Proxy > Intercept 는 OFF로 두세요 — ON이면 프록시 경유 발사가 전부 멈춥니다.\n"
         "  설정 후 다시 실행하세요. (Burp 없이 진행하려면 --burp-proxy 없이 기존 스크립트 경로 사용)\n"
     )
