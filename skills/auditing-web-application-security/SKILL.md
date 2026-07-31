@@ -76,6 +76,12 @@ python skills/auditing-web-application-security/scripts/audit.py "<소스경로>
    ```
    → `phases.dynamic` 및 클래스별 `*_dynamic` 결과를 받아 3단계로 종합한다.
 
+4. **(선택) Burp 프록시 경유(하이브리드)** — `--burp-proxy http://127.0.0.1:8080`을 더하면 모든 동적 발사가
+   Burp 프록시를 경유해 트래픽이 Burp 히스토리에 축적된다(판정·`scope_guard` 불변). 발사 전
+   `tools/burp_preflight.py`가 Burp 가동을 확인하고, 미가동이면 설치 온보딩을 출력한 뒤 기존 스크립트
+   경로로 폴백한다(`--burp-proxy-strict`면 폴백 대신 중단). Burp 고유 심화(JWT 변조·Collaborator)는
+   `exploiting-with-burp` 스킬을 참조한다. ⚠ Burp Proxy > Intercept는 OFF여야 발사가 멈추지 않는다.
+
 ### 2단계 — 정적 후보 AI 검증 (오탐 제거)
 후보가 많은 취약점 클래스부터, 해당 `detecting-<X>` 스킬의 2단계(컨텍스트 검증) 기준으로
 실제 소스를 읽어 **오탐을 제거하고 확정 취약점만 남긴다**. (예: `csrf().disable()`이 STATELESS면 의도된 예외)

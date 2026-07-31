@@ -187,6 +187,7 @@ CLI로 단독 실행도 됩니다 — `python scan_all.py <소스>` (Claude 없�
 | `exploiting-auth-session` | JWT 변조(`alg=none`·서명 제거·역할 변조·만료) 발사, 로그아웃 후 토큰 재사용, 쿠키 보안속성(Secure/HttpOnly/SameSite) 점검 | `skills/exploiting-auth-session/scripts/attack_auth.py` |
 | `exploiting-ssrf-and-open-redirect` | 루프백 OOB canary 리스너로 콜백 수신 시 블라인드 SSRF 확정, `Location` 헤더가 외부 호스트면 오픈 리다이렉트 확정(모두 비파괴 GET) | `skills/exploiting-ssrf-and-open-redirect/scripts/attack_ssrf.py` (+ `oob_canary.py`) |
 | `exploiting-path-traversal-upload` | 경로조작은 응답 본문 파일 시그니처로 인밴드 확정(읽기전용). 업로드는 `--allow-destructive`일 때만 무해 마커(.jsp, 코드 없음)로 위험확장자 수용·웹루트 회수 확인 | `skills/exploiting-path-traversal-upload/scripts/attack_pathupload.py` |
+| `exploiting-with-burp` | (하이브리드) 접근통제·인증세션·SSRF·경로조작 4종을 Burp 프록시로 경유해 결정론·`scope_guard` 유지(히스토리 증거 축적) + JWT `base64` 변조·Collaborator 등 Burp 고유 강점만 MCP 도구로 심화. SQLi·XSS는 기존 경로 유지 | `skills/exploiting-with-burp/SKILL.md` (+ `tools/burp_preflight.py`) |
 
 각 스킬은 `python skills/exploiting-<종류>/scripts/attack_*.py <URL> --param p` 로 단독 실행할 수 있습니다(`ATTACK_SAFETY.md`의 안전 게이트가 모든 발사 전에 강제됨).
 
