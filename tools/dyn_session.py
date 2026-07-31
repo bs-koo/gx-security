@@ -19,6 +19,35 @@ from tools import io_utf8  # noqa: F401  (emit()의 JSON 출력 계약 — Task 
 
 io_utf8.configure()
 
+_burp_warned = False
+
+
+def _burp_proxies():
+    """SECURITY_PLUGIN_BURP_PROXY env가 있으면 requests용 proxies dict, 없으면 None.
+    하이브리드 Burp 경유 — 값이 없거나 공백이면 프록시를 쓰지 않아 기존 발사와 바이트 동일."""
+    val = os.environ.get("SECURITY_PLUGIN_BURP_PROXY", "").strip()
+    if not val:
+        return None
+    return {"http": val, "https": val}
+
+
+def _proxy_kwargs():
+    """프록시 활성 시 requests 호출에 병합할 kwargs({proxies, verify}), 비활성 시 빈 dict.
+    Burp가 TLS를 MITM하므로 프록시 경유 시 verify=False가 필요하다(로컬/스테이징 한정).
+    verify=False가 유발하는 InsecureRequestWarning을 프록시 활성 시 1회만 억제한다(엣지 B)."""
+    proxies = _burp_proxies()
+    if not proxies:
+        return {}
+    global _burp_warned
+    if not _burp_warned:
+        try:
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        except Exception:
+            pass
+        _burp_warned = True
+    return {"proxies": proxies, "verify": False}
+
 
 def mask_token(tok):
     """토큰을 로그/출력용으로 마스킹. 앞 4·뒤 4만 노출."""
@@ -73,9 +102,11 @@ def login(base_url, login_path, cred, *, body_template=None,
     else:
         body = {"lgnId": cred["id"], "password": cred["pw"]}  # sef-2026 프리셋
     try:
-        resp = requests.post(url, json=body, timeout=timeout, allow_redirects=False)
+        resp = requests.post(url, json=body, timeout=timeout,
+                             allow_redirects=False, **_proxy_kwargs())
     except Exception as e:
-        raise RuntimeError(f"로그인 요청 실패: {url} — {type(e).__name__}")
+        hint = " (Burp 프록시 경유 중 — Burp 가동·Intercept OFF 확인)" if _burp_proxies() else ""
+        raise RuntimeError(f"로그인 요청 실패: {url} — {type(e).__name__}{hint}")
     if not (200 <= resp.status_code < 300):
         raise RuntimeError(f"로그인 실패(HTTP {resp.status_code}): {url} — "
                            f"2xx 아님(3xx 리다이렉트·4xx 거부 포함). 자격/요청형식 확인")
@@ -110,9 +141,11 @@ def login_response(base_url, login_path, cred, *, body_template=None,
     else:
         body = {"lgnId": cred["id"], "password": cred["pw"]}  # sef-2026 프리셋
     try:
-        resp = requests.post(url, json=body, timeout=timeout, allow_redirects=False)
+        resp = requests.post(url, json=body, timeout=timeout,
+                             allow_redirects=False, **_proxy_kwargs())
     except Exception as e:
-        raise RuntimeError(f"로그인 요청 실패: {url} — {type(e).__name__}")
+        hint = " (Burp 프록시 경유 중 — Burp 가동·Intercept OFF 확인)" if _burp_proxies() else ""
+        raise RuntimeError(f"로그인 요청 실패: {url} — {type(e).__name__}{hint}")
     if not (200 <= resp.status_code < 300):
         raise RuntimeError(f"로그인 실패(HTTP {resp.status_code}): {url} — "
                            f"2xx 아님(3xx 리다이렉트·4xx 거부 포함). 자격/요청형식 확인")
@@ -167,7 +200,8 @@ def form_login(base_url, login_path, cred, *, id_field=None, pw_field=None,
     url = base_url.rstrip("/") + login_path
     form = {(id_field or "username"): cred["id"], (pw_field or "password"): cred["pw"]}
     try:
-        resp = session.post(url, data=form, timeout=timeout, allow_redirects=False)
+        resp = session.post(url, data=form, timeout=timeout,
+                            allow_redirects=False, **_proxy_kwargs())
     except Exception as e:
         raise RuntimeError(f"로그인 요청 실패: {url} — {type(e).__name__}")
     status = resp.status_code
@@ -214,7 +248,7 @@ def request(method, url, *, token=None, json_body=None, files=None, data=None,
     resp = caller.request(
         method.upper(), url, headers=headers, json=json_body,
         files=files, data=data,
-        timeout=timeout, allow_redirects=False)
+        timeout=timeout, allow_redirects=False, **_proxy_kwargs())
     return {"status": resp.status_code, "body": resp.text,
             "headers": dict(resp.headers),
             "elapsed": round(time.monotonic() - t0, 3)}
