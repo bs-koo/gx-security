@@ -768,6 +768,30 @@ def _apply_burp_proxy(burp_proxy, *, strict=False, probe=None):
     return {"enabled": up, "proxy_up": up, "strict_abort": bool(strict and not up)}
 
 
+_STATIC_ONLY_LABELS = {
+    "access_dynamic": "접근통제(IDOR/BFLA)",
+    "auth_dynamic": "인증세션(JWT·재사용)",
+    "ssrf_dynamic": "SSRF/오픈리다이렉트",
+    "pathupload_dynamic": "경로조작/파일업로드",
+}
+
+
+def _static_only_classes(report):
+    """report의 *_dynamic phase 중 confidence=='static-only'인 클래스 라벨 목록.
+
+    계정/표적 미제공으로 동적 확정을 못 한(정적 추정으로 남은) 항목이다. 계정을 준비해
+    재실행하면 dynamic으로 전환되는 '보강 재실행' 대상을 SKILL이 파싱 없이 소비하게 한다.
+    partial(쿠키만)·login-failed·dynamic·skipped는 보강 대상이 아니므로 제외한다.
+    """
+    phases = report.get("phases", {}) if isinstance(report, dict) else {}
+    out = []
+    for key, label in _STATIC_ONLY_LABELS.items():
+        ph = phases.get(key, {})
+        if isinstance(ph, dict) and ph.get("confidence") == "static-only":
+            out.append(label)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description="SQIsoft 보안 통합 점검 오케스트레이터")
     ap.add_argument("source", help="검사 대상 소스 디렉토리")
@@ -930,6 +954,8 @@ def main():
 
     report["next"] = ("Claude Code에서 auditing-web-application-security 스킬로 "
                       "오탐 제거·컨텍스트 검증·4요소 통합 리포트를 완성하세요.")
+    # 계정/표적 미제공으로 정적 추정에 머문 동적 클래스 — 보강 재실행 대상(SKILL이 소비)
+    report["static_only_summary"] = _static_only_classes(report)
 
     if args.json:
         io_utf8.emit_json(report)
@@ -1055,6 +1081,12 @@ def main():
     pu = report["phases"].get("pathupload_dynamic", {})
     for line in render_pathupload(pu):
         print(line)
+
+    _so = report.get("static_only_summary") or []
+    if _so:
+        print(f"\n[정적 추정으로 남음] {', '.join(_so)}")
+        print("  → 계정/주입점을 준비해 재실행하면 이 항목이 동적으로 확정됩니다"
+              " (비밀번호는 read -rs 로 입력 후 --*-env 전달).")
 
     print(f"\n※ {report['next']}")
 
