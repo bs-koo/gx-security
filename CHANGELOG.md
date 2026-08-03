@@ -4,6 +4,13 @@
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르며,
 버전 체계는 [Semantic Versioning](https://semver.org/lang/ko/)을 준수합니다.
 
+## [0.8.1] - 2026-08-03
+
+> gx-audit DB 격리 게이트 — 동적 검사 전 서버가 바라보는 DB의 격리 여부를 확인해 공유 개발 DB 오염·실데이터 노출을 방지한다.
+
+### Added
+- **DB 격리 게이트(auditing 1.5단계)** — `scope_guard`가 검증하지 못하는 "서버 뒤의 DB"를 사용자 확인(fail-safe=개발DB)으로 게이트한다. **격리/더미 DB**는 AI가 소스 정독으로 계정·픽스처를 자유 생성(로컬 검증 방식), **공유 개발 DB**는 오염 방지 모드(계정·픽스처 생성 금지, 사용자 제공 계정으로 로그인만, 파괴적 작업 차단, 비파괴 읽기만)로 분기. 로컬 도커 격리 DB 전환 안내 + 기존 테스트 계정 요청 안내를 함께 제공한다. audit.py 코드 변경 없이 대화형 게이트로 구현.
+
 ## [0.8.0] - 2026-07-31
 
 > Burp Suite MCP 하이브리드 연동. 기존 4종(접근통제·인증세션·SSRF·경로조작)을 Burp 프록시로 경유시켜 결정론·판정·`scope_guard`를 유지한 채 트래픽을 Burp 히스토리에 축적하고, 세션 스와핑 등 Burp 고유 심화는 MCP 도구로 얹는다. SQLi·XSS는 sqlmap·Playwright 우위라 기존 경로 유지.

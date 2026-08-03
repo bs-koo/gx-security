@@ -6,7 +6,7 @@
 
 정적 분석(SAST) + 동적 모의침투(DAST) 하이브리드 · 스택 자동 감지 · AI 오탐 제거
 
-`커맨드 3` · `스킬 17` (통합 1 · 진단 9 · 침투 7) · `v0.8.0` · Proprietary
+`커맨드 3` · `스킬 17` (통합 1 · 진단 9 · 침투 7) · `v0.8.1` · Proprietary
 
 [![GitHub Pages · 온라인 문서](https://img.shields.io/badge/온라인_문서-GitHub_Pages-141413?style=flat&logo=github&logoColor=white)](https://bs-koo.github.io/gx-security/)
 
@@ -288,4 +288,4 @@ security-plugin/
 
 ---
 
-<sub>Proprietary · GX 사업본부 사내용 · v0.8.0</sub>
+<sub>Proprietary · GX 사업본부 사내용 · v0.8.1</sub>
