@@ -46,6 +46,23 @@ SCANNERS = {
 }
 
 
+def _semgrep_usable():
+    """semgrep이 설치됐고 실제로 실행되는지 확인한다.
+    windows는 PyPI 네이티브 휠 부재로 실행파일은 있어도(shutil.which 통과) semgrep-core 미탑재라
+    `semgrep --version`이 rc!=0으로 실패한다 → 이 경우 semgrep 경로 테스트를 skip해
+    grep-fallback 강등으로 engine 단언이 실패하는 것을 막는다. ubuntu(rc=0)에선 검증을 유지한다."""
+    exe = shutil.which("semgrep")
+    if not exe:
+        return False
+    try:
+        return subprocess.run([exe, "--version"], capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+_SEMGREP_OK = _semgrep_usable()
+
+
 def _scan(scanner_rel, target_rel, force_fallback=False):
     return _scan_abs(os.path.join(_ROOT, target_rel), scanner_rel, force_fallback)
 
@@ -111,7 +128,7 @@ def _scan_fixture_semgrep(scanner_key, kind):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-@unittest.skipUnless(shutil.which("semgrep"), "semgrep 미설치 → 스킵(CI semgrep-tests job에서 검증)")
+@unittest.skipUnless(_SEMGREP_OK, "semgrep 미가용(미설치/윈도 네이티브 휠 부재) → 스킵(ubuntu semgrep-tests에서 검증)")
 class TestSemgrepGoldenset(unittest.TestCase):
     """semgrep 경로 재현율/정밀도 하드 가드 — 룰이 로드+검출됨을 semgrep 설치 job 에서 강제한다.
 
@@ -145,7 +162,7 @@ class TestSemgrepGoldenset(unittest.TestCase):
                     f"{key}: semgrep 룰이 안전 픽스처를 오탐하면 안 된다(정밀도)")
 
 
-@unittest.skipUnless(shutil.which("semgrep"), "semgrep 미설치 → 스킵(CI에서 관측)")
+@unittest.skipUnless(_SEMGREP_OK, "semgrep 미가용(미설치/윈도 네이티브 휠 부재) → 스킵(ubuntu에서 관측)")
 class TestFR4Measured(unittest.TestCase):
     """FR-4: semgrep 룰의 컨텍스트 게이트/pattern-not-regex 실효 실측(초기 비차단).
 
@@ -166,7 +183,7 @@ class TestFR4Measured(unittest.TestCase):
         self.assertGreaterEqual(count, 0)  # 초기 비차단 — CI 관측 후 assertEqual 로 핀(B3)
 
 
-@unittest.skipUnless(shutil.which("semgrep"), "semgrep 미설치 → 스킵(CI에서 관측)")
+@unittest.skipUnless(_SEMGREP_OK, "semgrep 미가용(미설치/윈도 네이티브 휠 부재) → 스킵(ubuntu에서 관측)")
 class TestFR7BareOwnershipSemgrep(unittest.TestCase):
     """FR-7(AC-9 semgrep 측): bare @PathVariable id 소유권 미검증 룰 — 비차단 발견 리포트.
 

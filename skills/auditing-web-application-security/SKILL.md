@@ -10,7 +10,7 @@ domain: cybersecurity
 subdomain: web-application-security
 tags: [audit, owasp, sast, dast, orchestrator, sqisoft, full-scan]
 stacks: [spring-modern, jsp-legacy]
-version: "0.7.0"
+version: "0.8.0"
 author: sqisoft-security
 license: Proprietary
 ---
@@ -65,16 +65,47 @@ python skills/auditing-web-application-security/scripts/audit.py "<소스경로>
    curl -sS -o /dev/null -w "%{http_code}\n" "<대상URL>"   # 200/302 등 응답이면 가동
    ```
    죽어 있으면 "대기/재시도"를 안내하고, 사용자가 띄운 뒤 다시 프로브한다.
-3. **비밀은 질문으로 받지 않는다** — URL·점검할 취약점 클래스·표적 경로(게시판 다운로드/업로드 등) 같은 **비(非)비밀 라우팅만** AskUserQuestion으로 받는다(자유서술 칸 활용). 로그인 계정/토큰은 트랜스크립트에 남지 않도록 `--creds-stdin`(stdin JSON) 또는 `--*-env`(환경변수)로 전달한다.
+3. **계정 입력 — 무엇을 어디에 (비밀은 대화·argv·파일에 남기지 않는다)**
+
+   동적 확정에 필요한 값을 **비밀/비-비밀로 나눠** 입력한다. 비밀(비밀번호·토큰)만 인터랙티브 env로 받는다:
+
+   | 값 | 비밀? | 넣는 곳 | 방법 |
+   |----|:---:|--------|------|
+   | 로그인 형식(경로·바디·필드) | ❌ | `profiles/<앱>.json` 파일 | sef-2026 기본 제공, 다르면 파일 작성 |
+   | 아이디(user_a_id·user_b_id) | ❌ | 명령 인자 | `--user-a-id` 등 |
+   | resource_id·주입점 | ❌ | 명령 인자 | `--resource-id`·`--ssrf-target` 등 |
+   | **비밀번호·토큰** | ✅ | **환경변수(인터랙티브)** | `read -rs` → `--*-env` |
+
+   **비밀번호는 인터랙티브 env로** — 화면·셸 history·argv·디스크 어디에도 안 남긴다:
    ```bash
-   # 확정 후 동적 발사(sef-2026 프리셋, 계정은 argv에 남기지 않음)
-   echo '{"user_a_pw":"..","user_b_pw":".."}' | \
-     python skills/auditing-web-application-security/scripts/audit.py "<소스경로>" \
+   read -rs GXSEC_USER_A_PW; export GXSEC_USER_A_PW     # 입력이 화면에 안 보임
+   read -rs GXSEC_USER_B_PW; export GXSEC_USER_B_PW
+   python skills/auditing-web-application-security/scripts/audit.py "<소스경로>" \
        --target "http://localhost:8080" --login-profile sef-2026 \
-       --user-a-id <A> --user-b-id <B> --resource-id <A소유ID> \
-       --probe /api/v1/users/me --params id,q --creds-stdin --json
+       --user-a-id <A> --user-a-pw-env GXSEC_USER_A_PW \
+       --user-b-id <B> --user-b-pw-env GXSEC_USER_B_PW \
+       --resource-id <A소유ID> --probe /api/v1/users/me --params id,q --json
    ```
+   - **⛔ 금지**: 비밀번호를 **채팅창 입력**(트랜스크립트 영구 기록)·`--user-a-pw <값>` 직접 인자(argv·history 노출)·아무 **파일 저장**(디스크 평문).
+   - **📄 파일은 로그인 "형식"에만** — `profiles/<앱>.json`에 `login_path`·`body_template`·`token_path`·`id_field`·`pw_field`만. `{id}`/`{pw}`는 실행 시 env에서 치환되며 **비밀번호는 파일에 넣지 않는다**.
+   - (인라인이 편하면 `--creds-stdin`으로 `echo '{"user_a_pw":".."}' | ...` 도 가능하나, `echo`가 셸 history에 남을 수 있어 위 `read -rs`를 권장.)
+
    → `phases.dynamic` 및 클래스별 `*_dynamic` 결과를 받아 3단계로 종합한다.
+
+4. **미입력 시 사전 경고 (발사 전 예측)** — 동적 발사 **전에** 현재 계정/주입점 준비 상태를 보고, 지금 돌리면 무엇이 `static-only`(정적 추정)로 남는지 미리 알리고 AskUserQuestion으로 확인한다:
+   ```
+   [사전 경고] 현재 준비 상태 → 다음은 정적 추정(static-only)으로 남습니다:
+     · 접근통제(IDOR/BFLA)  — user_a/user_b + resource_id 필요
+     · 인증세션(JWT·재사용) — user_a + --probe 필요
+     · SSRF/경로/업로드     — 주입점(--ssrf-target 등) 필요
+   지금 준비해 확정할까요, 아니면 이대로 정적 추정으로 진행할까요?
+   ```
+
+5. **(선택) Burp 프록시 경유(하이브리드)** — `--burp-proxy http://127.0.0.1:8080`을 더하면 모든 동적 발사가
+   Burp 프록시를 경유해 트래픽이 Burp 히스토리에 축적된다(판정·`scope_guard` 불변). 발사 전
+   `tools/burp_preflight.py`가 Burp 가동을 확인하고, 미가동이면 설치 온보딩을 출력한 뒤 기존 스크립트
+   경로로 폴백한다(`--burp-proxy-strict`면 폴백 대신 중단). Burp 고유 심화(JWT 변조·Collaborator)는
+   `exploiting-with-burp` 스킬을 참조한다. ⚠ Burp Proxy > Intercept는 OFF여야 발사가 멈추지 않는다.
 
 ### 2단계 — 정적 후보 AI 검증 (오탐 제거)
 후보가 많은 취약점 클래스부터, 해당 `detecting-<X>` 스킬의 2단계(컨텍스트 검증) 기준으로
@@ -89,6 +120,14 @@ python skills/auditing-web-application-security/scripts/audit.py "<소스경로>
 - **SSRF/오픈 리다이렉트**도 `run_ssrf_dynamic`이 **표적과 계정 유무**로 판정 수준이 갈린다 — 표적(`--redirect-target`/`--ssrf-target`)과 계정(`--token-a` 또는 `--user-a-id/pw`)이 **모두** 있으면 리다이렉트 파라미터·SSRF 주입점에 실제 발사하는 `dynamic`, 표적이나 계정이 하나라도 없으면 발사하지 않는 `static-only`로 구분한다(표적을 우선 판정한다). 확정은 `Location`이 외부 호스트면 오픈 리다이렉트, OOB canary 콜백 수신이면 블라인드 SSRF까지 잡는다(비파괴 GET).
 - **경로조작/파일업로드**도 `run_pathupload_dynamic`이 **표적과 계정 유무**로 판정 수준이 갈린다 — 표적(`--traversal-target`/`--upload-target`)과 계정(`--token-a` 또는 `--user-a-id/pw`)이 **모두** 있으면 실제 발사하는 `dynamic`, 표적이나 계정이 하나라도 없으면 발사하지 않는 `static-only`로 구분한다(표적을 우선 판정한다). 경로조작은 응답 본문에 파일 내용 시그니처(`root:.*:0:0` 등)가 나오면 취약(비파괴 GET), 미도달(non-2xx)은 방어가 아닌 미확정으로 구분한다. **파일업로드는 서버에 파일을 실제로 기록하는 파괴적 검사이므로 `--allow-destructive` 옵트인 게이트가 없으면 발사하지 않으며**(오케스트레이터·익스플로잇터 이중 게이트), 위험 확장자(.jsp) 마커가 2xx 수용됐으나 회수(웹루트 저장)가 확인되지 않으면 **미확정**(서버측 후처리 — 격리·개명·스캔 가능성으로 취약 단정 불가), 회수까지 확인되면 **취약(High)**으로 확정하고 남은 마커 파일 정리 안내를 노출한다.
 - XSS는 저장·DOM형이면 Playwright MCP로 브라우저 실제 실행까지 확인한다.
+
+#### static-only 보강 재실행 (계정 확보 후 마저 확정)
+
+1차 audit 리포트의 **`static_only_summary`** 필드에 계정/주입점 미제공으로 **정적 추정으로 남은 동적 클래스**가 담긴다(예: `["접근통제(IDOR/BFLA)", "인증세션(JWT·재사용)"]`). 계정을 확보하면 **그 항목만** 동적으로 마저 확정한다:
+
+1. 1차 리포트의 `static_only_summary`를 사용자에게 그대로 보여준다("이 항목들이 정적 추정으로 남았습니다").
+2. 계정을 준비했으면 위 **3번의 `read -rs` 방식**으로 env에 넣고, **1차 정적 결과는 재사용**한 채 audit을 계정과 함께 재실행한다(정적은 이미 확정됐으므로 동적 보강이 목적).
+3. 2차 실행에서 해당 클래스가 `static-only → dynamic`으로 전환되면, **1차 정적 + 2차 동적**을 병합해 최종 리포트를 완성한다. (audit.py는 계정이 있으면 자동으로 dynamic 판정하므로 별도 모드 불필요.)
 
 #### 미확정 사람 확인 프로토콜 (④ — evidence_expectation 카드)
 

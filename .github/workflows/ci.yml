@@ -22,16 +22,11 @@ jobs:
         run: python -m unittest discover -s tests -p "test_*.py" -v
 
   semgrep-tests:
-    # semgrep 경로(required on ubuntu, best-effort on windows).
-    # 버전 핀(재현성): FR-4 실측값·룰 동작 드리프트 방지.
-    # windows는 continue-on-error로 비차단 관측: semgrep==1.95.0은 PyPI에 Windows 네이티브 휠이 없어
-    # (Task 2 실측) 설치는 되어도 semgrep-core 미탑재로 `semgrep --version`이 rc=2로 실패한다.
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    # semgrep 경로 — ubuntu 전용. windows는 PyPI에 semgrep-core 네이티브 휠이 없어(Task 2 실측)
+    # 파이썬 패키지는 설치돼도 실제 스캔이 rc=2(Failed to find semgrep-core.exe)로 항상 실패하므로
+    # semgrep 검증 대상에서 제외한다. windows의 폴백(grep-fallback) 경로는 test job(windows-latest)이
+    # 이미 검증한다. 버전 핀(재현성): FR-4 실측값·룰 동작 드리프트 방지.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
