@@ -652,3 +652,20 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 **3. Type consistency:** 룰 id는 전 태스크에서 원본과 동일하게 유지(참조 안정성). 스캐너 함수 시그니처(`run_semgrep`, `run_fallback`, `_is_mybatis_xml`) 불변. golden set 테스트 이름(`TestSemgrepGoldenset`, `TestGoldensetAllScanners`, `test_safe_clean_by_semgrep`, `test_safe_clean`)은 실제 `tests/test_scanner_goldenset.py`와 일치 확인함.
 
 **주의(리스크):** 룰을 좁히면 진짜 취약을 놓칠(미탐) 위험이 생긴다. 각 태스크의 vuln fixture가 계속 탐지되는지(≥1) 반드시 확인하며, 근본적으로 정적 판별이 불가한 케이스(IDOR 서비스레이어 검증, 커스텀 JWT 래퍼)는 동적 `exploiting-*`·AI 검증이 보완함을 SKILL.md에 유지한다.
+
+---
+
+## 실행 결과 (2026-08-04)
+
+**전체 회귀:** `pytest` **466 passed, 0 failed, 1 skipped** (신규 safe fixture 7 + IDOR 전용 테스트 2 추가, 회귀 0). 각 태스크 커밋: T1 `8082b22` · T2 `d665d21` · T3 `57ef259` · T4 `020177f` · T5 `62224b3` · T6 `ef3ba55` · T7 `0cfd3f6` · T8 `28c2fe2`.
+
+**실제 프로젝트 재측정 (오탐 감소):**
+
+| 프로젝트 | 스택 | before | after | 감소 |
+|---|---|---:|---:|---|
+| Gseed_Web_Renew/src | jsp-legacy | 687 | 347 | **-340 (49.5%)** |
+| sef-2026/public | spring-modern | 47 | 29 | **-18 (38%)** |
+
+클래스별 감소 — Gseed: SQLi 20→0, XSS 526→265, Sensitive 75→36, Auth 34→14 · sef: SQLi 12→0, Access 12→10, Sensitive 12→9, Auth 4→3.
+
+Task 8(IDOR)은 계획 조정: fallback의 silent-FN-방지 설계(후보 유지+confidence 하향)와 golden set safe==0이 충돌해, semgrep 룰만 @PreAuthorize/@Secured 제외하고 `TestIdorPreAuthorizeExclusion` 전용 테스트로 검증했다. Task 4/5도 실측 결과 fallback이 이미 정확해 semgrep 룰만 수정했다. 진짜 취약점(하드코딩 시크릿·무방비 IDOR)은 모두 유지됐다.
