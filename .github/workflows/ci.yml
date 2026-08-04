@@ -25,15 +25,29 @@ jobs:
     # semgrep 경로 — ubuntu 전용. windows는 PyPI에 semgrep-core 네이티브 휠이 없어(Task 2 실측)
     # 파이썬 패키지는 설치돼도 실제 스캔이 rc=2(Failed to find semgrep-core.exe)로 항상 실패하므로
     # semgrep 검증 대상에서 제외한다. windows의 폴백(grep-fallback) 경로는 test job(windows-latest)이
-    # 이미 검증한다. 버전 핀(재현성): FR-4 실측값·룰 동작 드리프트 방지.
+    # 이미 검증한다.
+    #
+    # 버전 매트릭스: pinned(requirements-dev.txt, 1.95.0)는 재현성·FR-4 실측값 하드 게이트.
+    # latest는 룰 파싱/동작 드리프트 조기경보(continue-on-error 비차단) — 최신 semgrep에서 룰이
+    # 깨지는 회귀(예: bare @CrossOrigin이 'Invalid pattern for Java'로 파일 전체를 폴백강등)를
+    # CI가 먼저 잡는다. latest 실패는 PR을 막지 않고 로그로 신호한다.
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - semgrep_spec: "-r requirements-dev.txt"   # pinned 1.95.0 — 하드 게이트
+            experimental: false
+          - semgrep_spec: "requests PyYAML semgrep"    # latest — 드리프트 조기경보(비차단)
+            experimental: true
+    continue-on-error: ${{ matrix.experimental }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install deps (semgrep 핀)
-        run: for i in 1 2 3; do pip install -r requirements-dev.txt && break || { [ "$i" -eq 3 ] && exit 1; sleep 5; }; done
+      - name: Install deps (${{ matrix.semgrep_spec }})
+        run: for i in 1 2 3; do pip install ${{ matrix.semgrep_spec }} && break || { [ "$i" -eq 3 ] && exit 1; sleep 5; }; done
         shell: bash
       - name: Run unittest suite (semgrep 경로)
         run: python -m unittest discover -s tests -p "test_*.py" -v

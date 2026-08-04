@@ -6,7 +6,7 @@
 
 정적 분석(SAST) + 동적 모의침투(DAST) 하이브리드 · 스택 자동 감지 · AI 오탐 제거
 
-`커맨드 3` · `스킬 17` (통합 1 · 진단 9 · 침투 7) · `v0.8.1` · Proprietary
+`커맨드 3` · `스킬 17` (통합 1 · 진단 9 · 침투 7) · `v0.8.2` · Proprietary
 
 [![GitHub Pages · 온라인 문서](https://img.shields.io/badge/온라인_문서-GitHub_Pages-141413?style=flat&logo=github&logoColor=white)](https://bs-koo.github.io/gx-security/)
 
@@ -67,7 +67,7 @@ pip install -r requirements-dev.txt
 
 > Windows는 semgrep 네이티브 휠 부재로 `semgrep --version`에서 설치 스크립트가 비정상 종료하는 것이 정상이며, 정적 진단은 grep 폴백으로 계속 동작합니다(정밀도는 낮아집니다).
 
-> **Windows(cp949) 환경 권장**: 모든 스크립트는 `tools/io_utf8.py`로 콘솔 인코딩을 UTF-8로 강제하지만, 벨트앤서스펜더로 환경변수 `PYTHONUTF8=1`도 함께 설정해두면 파이프·리다이렉션·CI 캡처에서 한글·특수문자(em-dash 등) 출력이 더 안전해집니다(`setx PYTHONUTF8 1` 또는 셸 세션에서 `$env:PYTHONUTF8=1`).
+> **Windows(cp949) 환경 필수 안내**: `tools/io_utf8.py`가 콘솔 인코딩을 UTF-8로 강제하고 `PYTHONUTF8=1`을 자식 프로세스에 자동 전파하므로, 스캐너 경유 semgrep은 cp949 환경에서도 UTF-8 룰을 정상 로드합니다. 이 전파가 없으면 semgrep이 한글 message가 담긴 UTF-8 룰을 cp949로 읽다 실패해 **정밀 진단이 grep 폴백(저정밀)으로 강등**됩니다. 다만 `semgrep`을 **직접 CLI로 실행**할 때는 이 자동 전파가 적용되지 않으므로 `setx PYTHONUTF8 1`(또는 세션에서 `$env:PYTHONUTF8=1`)로 직접 설정하세요. 파이프·리다이렉션·CI 캡처의 한글 출력 안정성도 함께 좋아집니다.
 
 ## 빠른 시작
 
@@ -243,7 +243,7 @@ best-effort 보조 도구이며 사람의 코드 리뷰나 전문 SAST/DAST·의
 
 1. **크롤링/엔드포인트 자동탐색이 없습니다.** 공격할 URL·파라미터를 사용자가 직접 지정해야 하며 앱의 엔드포인트를 스스로 수집하지 않습니다.
 2. **GET·form-urlencoded POST만 지원합니다.** 이 두 방식의 요청에만 페이로드를 주입합니다.
-3. **JSON 바디 주입은 불가합니다.** `application/json` 요청 본문에는 페이로드를 삽입하지 못합니다.
+3. **JSON 바디 주입은 SQLi만 지원합니다.** `exploiting-sql-injection`은 `--content-type json --inject-path`로 `application/json` 본문에 페이로드를 주입하지만, 나머지 동적 스킬(XSS·접근통제·인증·SSRF·경로/업로드)은 GET·form-urlencoded만 지원합니다.
 
 ## 테스트
 
@@ -270,7 +270,7 @@ pytest tests/
 ```
 security-plugin/
 ├── commands/                # 슬래시 커맨드 3개 — gx-audit · gx-diagnose · gx-pentest
-├── skills/                  # 스킬 16개
+├── skills/                  # 스킬 17개 (통합 1 · 진단 9 · 침투 7)
 │   └── <skill-name>/
 │       ├── SKILL.md         # 트리거 조건 · AI 검증 기준
 │       ├── scripts/         # scan_*.py (정적) / attack_*.py (동적)
@@ -288,4 +288,4 @@ security-plugin/
 
 ---
 
-<sub>Proprietary · GX 사업본부 사내용 · v0.8.1</sub>
+<sub>Proprietary · GX 사업본부 사내용 · v0.8.2</sub>

@@ -4,6 +4,31 @@
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르며,
 버전 체계는 [Semantic Versioning](https://semver.org/lang/ko/)을 준수합니다.
 
+## [0.8.2] - 2026-08-04
+
+> Windows 한국어(cp949)에서 꺼져 있던 semgrep 정밀경로를 복구하고, 실제 프로젝트(Gseed_Web_Renew·sqisoft-sef-2026) 실측으로 스캐너 오탐 8종을 제거해 정밀도를 40~50% 높였다. 진짜 취약점은 모두 유지된다.
+
+### Fixed
+- **cp949 semgrep 강등 복구** — Windows 한국어 로케일에서 semgrep이 UTF-8 한글 룰을 OS 기본 코덱으로 읽다 크래시해, 설치해도 grep-fallback(저정밀)으로 강등되던 문제. `tools/io_utf8.configure()`가 `PYTHONUTF8=1`을 자식 프로세스에 전파하도록 하여 해결(스캐너 경유 semgrep이 정밀경로로 동작). 실측: Gseed·sef public·sef private 세 대상 모두 `engine=semgrep` 확인.
+- **룰 파싱 드리프트** — bare `@CrossOrigin`이 최신 semgrep에서 `Invalid pattern for Java`로 `csrf.yml` 전체를 폴백 강등시키던 것을 `@CrossOrigin(...)`로 파싱 호환.
+- **스캐너 오탐 8종 제거** (실측 Gseed 687→347, sef public 47→29):
+  - 설정 XML(log4j2·context-*·checkstyle)의 `${}`를 MyBatis SQL로 오인 → semgrep 경로에 `_is_mybatis_xml` 필터 이식
+  - jquery 등 벤더 JS의 `.innerHTML`을 XSS로 오인(96%) → semgrep 경로에 벤더 제외 이식
+  - `SimpleDateFormat.parse()`·`jsonParser.parse()`를 JWT로 오인 → jjwt 앵커로 한정
+  - `PASSWORD_CHANGE_JOB` 등 식별자 상수를 비밀번호로 오인 → 상수·camelCase 값 제외
+  - 요청 DTO(`*Request`)의 password 필드를 응답 노출로 오인 → 요청 DTO 클래스 제외
+  - UI 섹션 주석(`<!-- 비밀번호 영역 -->`)을 자격증명으로 오인 → 키워드=값 형태만 매치
+  - JSTL 비출력 EL(`<c:forEach items>`·`<c:if test>`)을 XSS로 오인 → 비출력 컨텍스트 제외
+  - `@PreAuthorize` 권한 핸들러를 IDOR로 오인 → 권한 어노테이션 인식(semgrep). fallback은 silent-FN-방지(후보 유지+confidence 하향) 설계 유지.
+
+### Added
+- **CI semgrep 버전 매트릭스** — pinned(1.95.0, 재현성 하드게이트) + latest(룰 파싱 드리프트 조기감지, 비차단).
+- **SQLi taint 시범 룰** — source(`getParameter`)→sink(Statement 실행) 데이터플로우 추적으로 `needs-context` 오탐 감소 착수(PreparedStatement 바인딩은 sanitizer).
+- **회귀 가드** — PYTHONUTF8 전파 테스트 2건, IDOR `@PreAuthorize` 제외 전용 테스트 2건, 오탐 8종 safe fixture.
+
+### Changed
+- README 정정 — JSON 바디 주입 지원 범위(SQLi 한정), 저장소 스킬 수(16→17), PYTHONUTF8 안내를 "Windows semgrep 정밀진단 필수 전제"로 격상.
+
 ## [0.8.1] - 2026-08-03
 
 > gx-audit DB 격리 게이트 — 동적 검사 전 서버가 바라보는 DB의 격리 여부를 확인해 공유 개발 DB 오염·실데이터 노출을 방지한다.

@@ -209,3 +209,5 @@ rules:
     patterns:
       - pattern-regex: '\$\{(?!(?:param|requestScope|sessionScope|pageContext|applicationScope|header|cookie|initParam)[.\}])[a-zA-Z_]\w*\.[^}]+\}'
       - pattern-not-regex: 'escapeXml|<c:out'
+      # 주의: JSTL 비출력 컨텍스트(c:if test/c:forEach items) 제외는 semgrep pattern-not-regex가
+      # 매치 span만 봐서 라인 컨텍스트를 놓치므로, scan_xss.py run_semgrep 결과 후처리에서 거른다.

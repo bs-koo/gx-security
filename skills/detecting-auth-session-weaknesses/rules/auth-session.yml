@@ -46,11 +46,15 @@ rules:
       confidence: high
     patterns:
       - pattern-either:
-          # parseClaimsJws(서명키 설정 시 서명을 검증하는 안전 호출)는 제외 — 방향성 오탐 방지(코드리뷰 M1)
-          - pattern: $P.parseClaimsJwt($TOKEN)
-          - pattern: $P.parse($TOKEN)
+          # jjwt 앵커가 붙은 파싱만 대상 — bare '.parse()'(SimpleDateFormat/JSON 등) 오탐 제거.
+          # parseClaimsJws(서명키 설정 시 서명 검증하는 안전 호출)는 아래 pattern-not-inside로 제외(코드리뷰 M1).
+          - pattern: Jwts.parser().build().parse($TOKEN)
+          - pattern: Jwts.parser().parse($TOKEN)
+          - pattern: $P.parseClaimsJwt($TOKEN)      # unsigned 파싱(항상 위험)
       - pattern-not-inside: |
           Jwts.parser().verifyWith(...).build().$M($TOKEN)
+      - pattern-not-inside: |
+          Jwts.parser().setSigningKey(...).build().$M($TOKEN)
 
   - id: sqisoft-spring-cookie-no-secure
     languages: [java]

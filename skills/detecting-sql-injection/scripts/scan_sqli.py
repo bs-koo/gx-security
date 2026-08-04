@@ -81,10 +81,16 @@ def run_semgrep(target):
         return None, "semgrep JSON 파싱 실패"
     findings = []
     for r in data.get("results", []):
+        rid = r.get("check_id", "").split(".")[-1]
+        path = r.get("path")
+        # MyBatis ${} 룰은 실제 Mapper XML만 대상 — Spring/log4j/checkstyle 설정 XML의
+        # ${} placeholder 오탐을 제거한다(grep 폴백의 _is_mybatis_xml 필터를 semgrep 경로에 이식).
+        if rid == "sqisoft-mybatis-xml-dollar-interpolation" and not _is_mybatis_xml(path or ""):
+            continue
         findings.append({
-            "file": r.get("path"),
+            "file": path,
             "line": r.get("start", {}).get("line"),
-            "rule_id": r.get("check_id", "").split(".")[-1],
+            "rule_id": rid,
             "stack": r.get("extra", {}).get("metadata", {}).get("stack", "?"),
             "confidence": r.get("extra", {}).get("metadata", {}).get("confidence") or "needs-context",
             "snippet": (r.get("extra", {}).get("lines", "") or "").strip()[:200],

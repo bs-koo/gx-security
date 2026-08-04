@@ -65,6 +65,21 @@ rules:
                               @AuthenticationPrincipal $U $USER, ...) {
               ...
           }
+      # 메서드 레벨 권한 표현식(@PreAuthorize/@PostAuthorize/@Secured)이 있으면 접근통제가
+      # 집행되므로 제외한다(예: @PreAuthorize("hasMenuAuthority(#menuId,'R')")). 표현식 부실
+      # 여부는 동적 exploiting-broken-access-control이 확정한다.
+      - pattern-not: |
+          @PreAuthorize(...)
+          @GetMapping($PATH)
+          public $RET $METHOD(@PathVariable $TYPE $ID, ...) { ... }
+      - pattern-not: |
+          @PostAuthorize(...)
+          @GetMapping($PATH)
+          public $RET $METHOD(@PathVariable $TYPE $ID, ...) { ... }
+      - pattern-not: |
+          @Secured(...)
+          @GetMapping($PATH)
+          public $RET $METHOD(@PathVariable $TYPE $ID, ...) { ... }
 
   - id: sqisoft-spring-pathvariable-annotated-id
     languages: [java]
@@ -86,6 +101,16 @@ rules:
       - metavariable-regex:
           metavariable: $NAME
           regex: '^"(?:[A-Za-z_]\w*(?:Id|Seq|No)|(?i:id|seq|no))"$'
+      # 메서드 레벨 권한 표현식이 있으면 접근통제 집행 — 제외(부실 여부는 동적으로 확정)
+      - pattern-not-inside: |
+          @PreAuthorize(...)
+          $RET $M(...) { ... }
+      - pattern-not-inside: |
+          @PostAuthorize(...)
+          $RET $M(...) { ... }
+      - pattern-not-inside: |
+          @Secured(...)
+          $RET $M(...) { ... }
 
   - id: sqisoft-spring-anyrequestpermitall-risk
     languages: [java]

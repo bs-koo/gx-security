@@ -10,7 +10,7 @@ domain: cybersecurity
 subdomain: web-application-security
 tags: [audit, owasp, sast, dast, orchestrator, sqisoft, full-scan]
 stacks: [spring-modern, jsp-legacy]
-version: "0.8.1"
+version: "0.8.2"
 author: sqisoft-security
 license: Proprietary
 ---

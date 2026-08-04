@@ -40,7 +40,10 @@ rules:
       - pattern-either:
           - pattern: '@org.springframework.web.bind.annotation.CrossOrigin(origins = "*")'
           - pattern: '@CrossOrigin(origins = "*")'
-          - pattern: '@CrossOrigin'
+          # bare '@CrossOrigin'(인자 없는 애노테이션 단독)은 semgrep 1.x Java 파서에서
+          # 'Invalid pattern for Java: Stdlib.' 파싱 에러를 내 파일 전체를 무효화(폴백 강등)한다.
+          # 인자 있는 형태 '@CrossOrigin(...)'로 대체해 파싱 호환을 유지하면서 넓게 후보를 잡는다.
+          - pattern: '@CrossOrigin(...)'
 
   # ───────────────────────── jsp-legacy ─────────────────────────
   # JSP는 generic 모드(토큰 hidden 필드 부재는 음성 패턴이라 룰로 단정 어려움).

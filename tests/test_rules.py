@@ -132,7 +132,11 @@ class TestRuleFilesSemgrepLoadable(unittest.TestCase):
                     proc = subprocess.run(
                         ["semgrep", "--config", path, "--json", "--quiet", tmp],
                         capture_output=True, text=True,
-                        encoding="utf-8", errors="replace", timeout=180)
+                        encoding="utf-8", errors="replace", timeout=180,
+                        # PYTHONUTF8=1: Windows 한국어(cp949)에서 semgrep이 UTF-8 룰 파일을
+                        # OS 기본 코덱으로 읽다 UnicodeDecodeError로 죽는 것을 막는다(제품 코드는
+                        # tools/io_utf8.configure()가 전파하지만 이 테스트는 semgrep을 직접 호출).
+                        env={**os.environ, "PYTHONUTF8": "1"})
                     # semgrep --json: valid=0, findings=0(--json 은 findings 로 rc 안 올림), 룰/설정에러=2.
                     # 비정상 종료 시 stdout 이 비어 'or "{}"' 로 파싱 통과→위양성이 되는 사각지대 차단.
                     if proc.returncode != 0:

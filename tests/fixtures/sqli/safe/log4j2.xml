@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- log4j2 설정 파일: ${}는 log4j 변수 치환이며 MyBatis SQL이 아니다(오탐이면 안 됨) -->
+<Configuration status="WARN">
+  <Appenders>
+    <Console name="console" target="SYSTEM_OUT">
+      <PatternLayout pattern="${consoleLayout}"/>
+    </Console>
+    <RollingFile name="file" fileName="${logDir}/${logFileName}.log"/>
+  </Appenders>
+</Configuration>
