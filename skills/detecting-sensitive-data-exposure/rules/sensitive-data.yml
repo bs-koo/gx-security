@@ -133,6 +133,12 @@ rules:
       - metavariable-regex:
           metavariable: $FIELD
           regex: (?i)(password|passwd|pwd|encryptedPwd|pwdHash|hashedPw)
+      - metavariable-regex:
+          metavariable: $CLASS
+          # 요청/입력 DTO(*Request/*Req/*Form/*Command/*Params)는 응답 직렬화 대상이 아니므로
+          # 제외한다(입력 전용 — 응답 노출 오탐 방지). 경로가 아닌 클래스명으로 판별해
+          # 테스트 fixture(flat 복사)에서도 결정적으로 검증된다.
+          regex: '^(?!.*(?:Request|Req|Form|Command|Params)$).*$'
       - pattern-not: |
           class $CLASS {
             ...
