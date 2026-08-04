@@ -37,7 +37,7 @@ owasp:
 stacks:
   - spring-modern
   - jsp-legacy
-version: "0.8.1"
+version: "0.8.2"
 author: sqisoft-security
 license: Proprietary
 ---

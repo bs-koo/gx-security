@@ -14,7 +14,7 @@ tags: [xss, cross-site-scripting, cwe-79, owasp-a03, jsp, spring, thymeleaf, rea
 cwe: [CWE-79]
 owasp: [A03:2021-Injection]
 stacks: [spring-modern, jsp-legacy, frontend]
-version: "0.8.1"
+version: "0.8.2"
 author: sqisoft-security
 license: Proprietary
 ---
