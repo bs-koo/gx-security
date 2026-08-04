@@ -65,8 +65,18 @@ def detect_stacks(target):
 
 # ── semgrep 경로 ─────────────────────────────────────────────────
 def run_semgrep(target):
-    cmd = ["semgrep", "--config", RULES, "--json", "--quiet",
-           "--exclude", ".dev", "--exclude", ".omc", "--exclude", ".humanize", target]
+    # 서드파티/빌드 산출물 제외 — grep 폴백의 _EXCLUDE_DIRS/_EXCLUDE_FILE_PATTERNS와 동기화.
+    # semgrep --exclude 는 파일·디렉토리 glob를 반복 지정한다(벤더 JS 라이브러리 오탐 제거).
+    _SEMGREP_EXCLUDES = [
+        ".dev", ".omc", ".humanize", ".nuxt", ".output", "coverage",
+        "lib", "vendor", "assets", "pubRes",
+        "*.min.js", "jquery*.js", "bootstrap*.js", "datatables*.js",
+        "tinymce*.js", "codemirror*.js", "highcharts*.js",
+    ]
+    cmd = ["semgrep", "--config", RULES, "--json", "--quiet"]
+    for _ex in _SEMGREP_EXCLUDES:
+        cmd += ["--exclude", _ex]
+    cmd.append(target)
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
                              encoding="utf-8", errors="replace")
