@@ -18,11 +18,20 @@ JSON 내부 개행이 LF로 나온다 — 기능 영향은 없다(소비자는 �
 """
 import io
 import json
+import os
 import sys
 
 
 def configure():
-    """sys.stdout/stderr를 UTF-8·errors=replace로 강제. 실패 시 TextIOWrapper 폴백."""
+    """sys.stdout/stderr를 UTF-8·errors=replace로 강제. 실패 시 TextIOWrapper 폴백.
+
+    또한 PYTHONUTF8=1을 프로세스 환경에 전파해, 이 스크립트가 subprocess로 실행하는
+    semgrep 등 자식 프로세스가 Windows 한국어(cp949) 로케일에서 UTF-8 룰 파일을 읽다
+    UnicodeDecodeError로 크래시하는 것을 막는다. semgrep은 config 파일을 인코딩 미지정
+    read_text()로 읽어 OS 기본 코덱(cp949)으로 디코딩하므로, 한글 message가 담긴 UTF-8
+    룰이 cp949에서 로드 실패 → 룰 전체 무효화 → grep-폴백(저정밀) 강등된다. setdefault라
+    이미 설정된 값은 존중한다(회귀 테스트: tests/test_io_utf8.py)."""
+    os.environ.setdefault("PYTHONUTF8", "1")
     for name in ("stdout", "stderr"):
         stream = getattr(sys, name, None)
         if stream is None:

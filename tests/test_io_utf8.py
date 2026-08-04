@@ -267,5 +267,36 @@ class TestScopeGuardCP949Regression(unittest.TestCase):
         self.assertEqual(out.stdout.strip(), "allow")
 
 
+class TestPythonUtf8Propagation(unittest.TestCase):
+    """configure()가 자식 프로세스용 PYTHONUTF8=1을 전파하는지 검증(cp949 semgrep 회귀 가드).
+
+    Windows 한국어(cp949)에서 semgrep은 config(룰) 파일을 인코딩 미지정 read_text()로 읽어
+    OS 기본 코덱(cp949)으로 디코딩하므로, 한글 message가 담긴 UTF-8 룰이 로드 실패 →
+    룰 전체 무효화 → grep-폴백(저정밀) 강등된다. io_utf8.configure()가 PYTHONUTF8=1을
+    setdefault해 자식 semgrep이 UTF-8 모드로 뜨게 함으로써 이를 막는다. 이 계약이 제거되면
+    cp949 환경에서 정밀 진단이 조용히 강등되므로 회귀 테스트로 고정한다."""
+
+    def setUp(self):
+        self._saved = os.environ.get("PYTHONUTF8")
+
+    def tearDown(self):
+        if self._saved is None:
+            os.environ.pop("PYTHONUTF8", None)
+        else:
+            os.environ["PYTHONUTF8"] = self._saved
+
+    def test_configure_sets_pythonutf8_when_unset(self):
+        os.environ.pop("PYTHONUTF8", None)
+        io_utf8.configure()
+        self.assertEqual(os.environ.get("PYTHONUTF8"), "1",
+                         "configure()가 PYTHONUTF8=1을 전파해야 한다(cp949 semgrep 크래시 방지)")
+
+    def test_configure_respects_existing_pythonutf8(self):
+        os.environ["PYTHONUTF8"] = "0"   # 사용자가 명시적으로 끈 경우 존중(setdefault)
+        io_utf8.configure()
+        self.assertEqual(os.environ.get("PYTHONUTF8"), "0",
+                         "setdefault라 이미 설정된 값을 덮어쓰지 않아야 한다")
+
+
 if __name__ == "__main__":
     unittest.main()
