@@ -28,11 +28,14 @@ rules:
               private String $VAR = "$VALUE";
       - metavariable-regex:
           metavariable: $VAR
-          regex: (?i)(password|passwd|pwd|secret|secretKey|apiKey|api_key|token|authKey|privateKey|credentials)
+          # 자격증명 키워드를 포함하되, 식별자 상수(대문자_JOB/_NAME/_TYPE/_KEY/_ID/_CODE/_CRON
+          # 접미사 — 예: PASSWORD_CHANGE_JOB)는 비밀번호 값이 아니므로 제외한다.
+          regex: '(?i)^(?!.*_(?:job|name|type|key|id|code|cron)$)(?=.*(?:password|passwd|pwd|secret|secretkey|apikey|api_key|token|authkey|privatekey|credentials)).*$'
       - metavariable-regex:
           metavariable: $VALUE
-          # 길이 6자 이상, 환경변수 참조(${ 시작) 제외
-          regex: ^(?!\$\{).{6,}$
+          # 6자 이상, ${...} placeholder 제외, 순수 camelCase 식별자(job명 등 — 예:
+          # passwordChangeExpiry)도 제외한다(실제 비밀번호는 보통 숫자/특수문자를 포함).
+          regex: '^(?!\$\{)(?!(?:[a-z]+[A-Z][a-zA-Z]*)$).{6,}$'
 
   - id: sqisoft-value-annotation-default-secret
     languages: [java]
