@@ -181,7 +181,9 @@ rules:
       include:
         - "*.jsp"
         - "*.java"
-    pattern-regex: '(?i)(<!--.*?(password|passwd|pwd|계정|아이디|비밀번호|id/pw).*?-->|//.*?(password|passwd|pwd)\s*[:=]\s*\S+)'
+    # 키워드 뒤에 실제 값(키워드[:=]값)이 따라오는 경우만 매치 — UI 섹션 주석
+    # (<!-- BEGIN: 비밀번호 영역 -->)의 단어 언급 오탐을 제거한다.
+    pattern-regex: '(?i)(<!--[^>]*(password|passwd|pwd|계정|아이디|비밀번호|id/pw)\s*[:=]\s*[^\s<>]{3,}[^>]*-->|//\s*(password|passwd|pwd)\s*[:=]\s*\S+)'
 
   - id: sqisoft-xml-hardcoded-password
     languages: [generic]

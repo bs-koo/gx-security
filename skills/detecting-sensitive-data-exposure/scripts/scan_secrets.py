@@ -188,7 +188,8 @@ FALLBACK_PATTERNS = [
         "jsp-legacy",
         (".jsp",),
         re.compile(
-            r'(?i)<!--[^>]*(?:password|passwd|pwd|id/pw|계정|비밀번호|아이디)[^>]*-->',
+            # 키워드[:=]값 형태만 — UI 섹션 주석(<!-- BEGIN: 비밀번호 영역 -->) 오탐 제거
+            r'(?i)<!--[^>]*(?:password|passwd|pwd|id/pw|계정|비밀번호|아이디)\s*[:=]\s*[^\s<>]{3,}[^>]*-->',
         ),
     ),
 
@@ -241,7 +242,8 @@ MULTILINE_PATTERNS = [
         "jsp-legacy",
         (".jsp",),
         re.compile(
-            r'(?i)<!--.*?(?:password|passwd|pwd|id/pw|계정|비밀번호|아이디).*?-->',
+            # 키워드[:=]값 형태만 — UI 섹션 주석 오탐 제거(멀티라인)
+            r'(?i)<!--.*?(?:password|passwd|pwd|id/pw|계정|비밀번호|아이디)\s*[:=]\s*[^\s<>]{3,}.*?-->',
             re.DOTALL,
         ),
     ),
