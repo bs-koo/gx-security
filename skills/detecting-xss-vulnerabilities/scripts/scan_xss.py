@@ -88,12 +88,38 @@ def run_semgrep(target):
         data = json.loads(out.stdout or "{}")
     except json.JSONDecodeError:
         return None, "semgrep JSON 파싱 실패"
+    # el-unescaped-model-attr: JSTL 비출력 컨텍스트(c:if test/c:forEach items/c:set) 라인은
+    # HTML 출력이 아니므로 제외한다. semgrep pattern-not-regex는 매치 span만 보고, --json 의
+    # extra.lines 는 익명(비로그인) 사용 시 'requires login'으로 마스킹되므로, file:line 으로
+    # 실제 소스 라인을 읽어 판정한다(grep 폴백의 라인 기반 제외와 대칭).
+    _jstl_nonoutput = re.compile(
+        r'<c:(?:if|forEach|choose|when|set)\b[^>]*\b(?:test|items|select|var|target)\s*=\s*"[^"]*\$\{')
+    _line_cache = {}
+
+    def _src_line(path, lineno):
+        if not path or not lineno:
+            return ""
+        if path not in _line_cache:
+            try:
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    _line_cache[path] = fh.readlines()
+            except OSError:
+                _line_cache[path] = []
+        buf = _line_cache[path]
+        return buf[lineno - 1] if 0 < lineno <= len(buf) else ""
+
     findings = []
     for r in data.get("results", []):
+        rid = r.get("check_id", "").split(".")[-1]
+        path = r.get("path")
+        line_no = r.get("start", {}).get("line")
+        if rid == "sqisoft-jsp-el-unescaped-model-attr" and \
+                _jstl_nonoutput.search(_src_line(path, line_no)):
+            continue
         findings.append({
-            "file": r.get("path"),
-            "line": r.get("start", {}).get("line"),
-            "rule_id": r.get("check_id", "").split(".")[-1],
+            "file": path,
+            "line": line_no,
+            "rule_id": rid,
             "stack": r.get("extra", {}).get("metadata", {}).get("stack", "?"),
             "confidence": r.get("extra", {}).get("metadata", {}).get("confidence") or "needs-context",
             "snippet": (r.get("extra", {}).get("lines", "") or "").strip()[:200],
@@ -207,8 +233,14 @@ def run_fallback(target):
                         for rule_id, stack, _exts, rx in rules:
                             if rx.search(line):
                                 # FR-4 — 저장형 모델 EL은 c:out/escapeXml로 래핑되면 안전 → 후보 제외.
-                                if rule_id == "jsp-el-unescaped-model" and \
-                                        re.search(r'escapeXml|<c:out', line):
+                                # FR-4 — c:out/escapeXml 래핑은 안전. 또한 JSTL 비출력 컨텍스트
+                                # (c:if test / c:forEach items / c:set)의 EL은 HTML 출력이 아니므로
+                                # 제외한다(반복/조건 대상 오탐 제거).
+                                if rule_id == "jsp-el-unescaped-model" and (
+                                    re.search(r'escapeXml|<c:out', line) or
+                                    re.search(r'<c:(?:if|forEach|choose|when|set)\b[^>]*\b'
+                                              r'(?:test|items|select|var|target)\s*=\s*"[^"]*\$\{', line)
+                                ):
                                     continue
                                 # frontend — v-html '속성값'이 전부 sanitize/DOMPurify 래핑일 때만
                                 # 방어로 제외. 같은 줄에 미새니타이즈 v-html이 하나라도 있으면 후보
