@@ -1,13 +1,6 @@
 ---
 name: detecting-xss-vulnerabilities
-description: >-
-  SQIsoft 웹 애플리케이션에서 XSS(Cross-Site Scripting) 취약점을 검사한다.
-  사용자 입력이 HTML/JavaScript 컨텍스트에 이스케이프 없이 출력되는 반사형·저장형·DOM 기반
-  XSS를 탐지한다. 프로젝트 스택(Spring Boot 모던 / JSP·Servlet 레거시)을 자동 감지하여
-  스택별 Semgrep 룰로 1차 탐지하고, AI가 이스케이프 유무와 출력 컨텍스트를 검증한다.
-  JSP scriptlet <%=…%>·미이스케이프 EL 표현식·escapeXml="false"·JS 인라인 출력(게시판
-  저장형 핵심), Spring @ResponseBody HTML 반환·Thymeleaf th:utext·React
-  dangerouslySetInnerHTML·DOM innerHTML 할당(DOM XSS) 등을 찾는다.
+description: "Spring·JSP·프런트엔드 소스의 XSS를 정적으로 진단할 때 사용한다. 반사형·저장형·DOM 기반 출력 경로와 이스케이프를 검토한다."
 domain: cybersecurity
 subdomain: web-application-security
 tags: [xss, cross-site-scripting, cwe-79, owasp-a03, jsp, spring, thymeleaf, react, vue, nuxt, mybatis, sqisoft]
@@ -19,7 +12,7 @@ author: sqisoft-security
 license: Proprietary
 ---
 
-# XSS 취약점 검사 (Cross-Site Scripting)
+# XSS 보안 진단
 
 ## When to Use
 

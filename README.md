@@ -2,9 +2,9 @@
 
 # gx-security
 
-**GX 사업본부 웹 애플리케이션 보안 점검 플러그인 — 소스 진단부터 모의 침투까지**
+**웹 애플리케이션의 소스 코드 진단과 승인된 로컬·스테이징 환경의 동적 검증을 지원하는 보안 점검 워크플로.**
 
-정적 분석(SAST) + 동적 모의침투(DAST) 하이브리드 · 스택 자동 감지 · AI 오탐 제거
+정적 분석(SAST) · 동적 검증(DAST) · 기술 스택 식별 · 코드 문맥 기반 후보 검토
 
 `커맨드 3` · `스킬 17` (통합 1 · 진단 9 · 침투 7) · `v0.8.2` · Proprietary
 
@@ -35,12 +35,12 @@
 
 ## 개요
 
-`gx-security`는 SQIsoft GX 사업본부의 웹 애플리케이션(Spring Boot 모던 / JSP·Servlet 레거시)을 대상으로, 소스 코드에서 취약점 후보를 찾아내고(정적) 필요하면 실행 중인 스테이징/로컬에 실제 페이로드를 발사해(동적) 악용 가능성을 확정하는 보안 점검 플러그인입니다.
+`gx-security`는 Spring Boot·JSP·Servlet 기반 웹 애플리케이션의 보안 점검을 지원하는 Claude Code 플러그인입니다. 소스 코드에서 취약점 후보를 식별하고, 승인된 로컬·스테이징 환경에서 동적 검증을 수행해 관측 근거와 대응 방안을 정리합니다.
 
 - **스택 자동 감지** — 저장소 안에 두 스택이 섞여 있어도 디렉토리별로 판별해 맞는 룰을 적용합니다.
 - **AI 컨텍스트 검증** — 정적 스캐너(Semgrep 우선, 없으면 grep 폴백)가 도출한 후보를 Claude가 실제 코드 문맥으로 읽어 오탐을 거릅니다.
 - **fail-closed 안전 게이트** — 동적 발사 전 `tools/scope_guard.py`가 대상을 검증하고 운영/공인 대상은 코드 수준에서 차단합니다.
-- **4요소 리포트** — 확정 취약점마다 **① 취약한 점 · ② 이유 · ③ 뚫리는 방법 · ④ 해결법**을 심각도순으로 `reports/`에 정리합니다.
+- **4요소 리포트** — 확정 취약점마다 **① 취약점 · ② 발생 원인 · ③ 재현 절차 · ④ 대응 방안**을 심각도순으로 `reports/`에 정리합니다.
 
 ## 설치
 
@@ -159,21 +159,21 @@ CLI로 단독 실행도 됩니다 — `python scan_all.py <소스>` (Claude 없�
 
 | 스킬 | 설명 | 스크립트 |
 |---|---|---|
-| `auditing-web-application-security` | 진단 9종 + AI 검증 + (대상 URL이 있으면) 침투까지 한 번에 수행하는 오케스트레이터. `gx-audit` 커맨드가 사용 | `skills/auditing-web-application-security/scripts/audit.py` |
+| `auditing-web-application-security` | **웹 애플리케이션 보안 통합 점검** — 웹 애플리케이션의 전체 보안 점검을 요청할 때 사용한다. 소스 코드의 취약점 후보를 검토하고, 승인된 로컬·스테이징 URL이 있으면 동적 검증 결과를 통합 보고서로 정리한다. | `skills/auditing-web-application-security/scripts/audit.py` |
 
 ### 진단 — `detecting-*` (9개, 정적/SAST — 소스만 읽음, 완전 안전)
 
 | 스킬 | `--only` 키 | 검사 대상 | CWE / OWASP |
 |---|---|---|---|
-| `detecting-csrf-vulnerabilities` | `csrf` | 상태변경 엔드포인트의 토큰 미보호, `csrf().disable()`, 토큰 없는 JSP form, SameSite 미설정 쿠키 | CWE-352 |
-| `detecting-xss-vulnerabilities` | `xss` | 반사형·저장형·DOM XSS — JSP scriptlet/미이스케이프 EL, `th:utext`, `@ResponseBody` HTML, `dangerouslySetInnerHTML`, `innerHTML` | CWE-79 |
-| `detecting-sql-injection` | `sqli` | 문자열 연결 쿼리 — JSP `Statement` 연결, MyBatis `${}`(vs 안전한 `#{}`), JPA `@Query`/`JdbcTemplate` 연결, 동적 정렬·검색 컬럼명 | CWE-89 |
-| `detecting-file-upload-vulnerabilities` | `file-upload` | 웹쉘 업로드 — 확장자 화이트리스트 부재, 매직바이트 미검증, 웹루트 내부 저장, Content-Type만 신뢰, 이중 확장자 우회 | CWE-434 |
-| `detecting-path-traversal` | `path-traversal` | `../` 임의 파일 접근·다운로드, ZipSlip — `Resource`/`Path` 직접 반환, `filePath=` 파라미터 필터링 미흡 | CWE-22 / A01 |
-| `detecting-broken-access-control` | `access-control` | IDOR/BFLA/강제 브라우징 — PathVariable 소유권 미검증, `@PreAuthorize` 누락, `adminPaths` 미보호, 메뉴 숨김에만 의존 | A01 |
-| `detecting-auth-session-weaknesses` | `auth` | 세션 고정(재발급 누락), 약한 해시(BCrypt 미사용), JWT 시크릿 하드코딩·서명검증 우회, 쿠키 보안속성 누락, 세션 타임아웃 미설정 | CWE-287 / CWE-384 |
-| `detecting-sensitive-data-exposure` | `secrets` | 하드코딩 시크릿(DB·API 키·JWT), 개인정보 평문 저장·로그 출력, DTO 과다 필드 노출, 예외 스택트레이스 노출 | CWE-200 / CWE-798 |
-| `detecting-ssrf-and-open-redirect` | `ssrf` | 검증 없는 서버측 요청(`RestTemplate`/`WebClient`/`HttpURLConnection`), 미검증 리다이렉트(`sendRedirect`, `returnUrl`) | CWE-918 / CWE-601 |
+| `detecting-csrf-vulnerabilities` | **CSRF 보안 진단** — Spring·JSP 소스의 CSRF 보호를 정적으로 진단할 때 사용한다. 상태 변경 요청의 토큰 검증과 보안 설정에서 취약점 후보를 식별한다. | 상태변경 엔드포인트의 토큰 미보호, `csrf().disable()`, 토큰 없는 JSP form, SameSite 미설정 쿠키 | CWE-352 |
+| `detecting-xss-vulnerabilities` | **XSS 보안 진단** — Spring·JSP·프런트엔드 소스의 XSS를 정적으로 진단할 때 사용한다. 반사형·저장형·DOM 기반 출력 경로와 이스케이프를 검토한다. | 반사형·저장형·DOM XSS — JSP scriptlet/미이스케이프 EL, `th:utext`, `@ResponseBody` HTML, `dangerouslySetInnerHTML`, `innerHTML` | CWE-79 |
+| `detecting-sql-injection` | **SQL 인젝션 보안 진단** — Spring·JSP 소스의 SQL 인젝션(SQLi)을 정적으로 진단할 때 사용한다. 입력값의 쿼리 삽입 경로와 파라미터 바인딩을 검토한다. | 문자열 연결 쿼리 — JSP `Statement` 연결, MyBatis `${}`(vs 안전한 `#{}`), JPA `@Query`/`JdbcTemplate` 연결, 동적 정렬·검색 컬럼명 | CWE-89 |
+| `detecting-file-upload-vulnerabilities` | **파일 업로드 보안 진단** — Spring·JSP 소스의 파일 업로드 처리를 정적으로 진단할 때 사용한다. 파일 형식 검증, 저장 위치와 파일명 처리의 취약점 후보를 검토한다. | 웹쉘 업로드 — 확장자 화이트리스트 부재, 매직바이트 미검증, 웹루트 내부 저장, Content-Type만 신뢰, 이중 확장자 우회 | CWE-434 |
+| `detecting-path-traversal` | **경로 탐색 보안 진단** — Spring·JSP 소스의 파일 조회·다운로드 기능을 정적으로 진단할 때 사용한다. 사용자 입력에 의한 경로 탐색과 임의 파일 접근 가능성을 검토한다. | `../` 임의 파일 접근·다운로드, ZipSlip — `Resource`/`Path` 직접 반환, `filePath=` 파라미터 필터링 미흡 | CWE-22 / A01 |
+| `detecting-broken-access-control` | **접근통제 보안 진단** — Spring·JSP 소스의 접근통제를 정적으로 진단할 때 사용한다. 객체 소유권 검증(IDOR), 기능별 권한 검사(BFLA)와 관리자 경로 보호를 검토한다. | IDOR/BFLA/강제 브라우징 — PathVariable 소유권 미검증, `@PreAuthorize` 누락, `adminPaths` 미보호, 메뉴 숨김에만 의존 | A01 |
+| `detecting-auth-session-weaknesses` | **인증·세션 보안 진단** — Spring·JSP 소스의 인증·세션·JWT 설정을 정적으로 진단할 때 사용한다. 세션 고정, 비밀번호 해시와 쿠키 보안 속성의 취약점 후보를 검토한다. | 세션 고정(재발급 누락), 약한 해시(BCrypt 미사용), JWT 시크릿 하드코딩·서명검증 우회, 쿠키 보안속성 누락, 세션 타임아웃 미설정 | CWE-287 / CWE-384 |
+| `detecting-sensitive-data-exposure` | **민감정보 노출 진단** — 소스 코드와 설정의 민감정보 노출을 정적으로 진단할 때 사용한다. 하드코딩된 자격증명, 개인정보와 로그·응답의 정보 노출 후보를 검토한다. | 하드코딩 시크릿(DB·API 키·JWT), 개인정보 평문 저장·로그 출력, DTO 과다 필드 노출, 예외 스택트레이스 노출 | CWE-200 / CWE-798 |
+| `detecting-ssrf-and-open-redirect` | **SSRF·오픈 리다이렉트 진단** — 소스의 외부 요청과 리다이렉트 처리를 정적으로 진단할 때 사용한다. 사용자 입력 URL에 의한 SSRF와 오픈 리다이렉트 후보를 검토한다. | 검증 없는 서버측 요청(`RestTemplate`/`WebClient`/`HttpURLConnection`), 미검증 리다이렉트(`sendRedirect`, `returnUrl`) | CWE-918 / CWE-601 |
 
 각 스킬은 `python skills/detecting-<종류>/scripts/scan_*.py <소스>` 로 단독 실행할 수도 있습니다(`skills/detecting-<종류>/references/stack-patterns.md`가 AI 검증 기준).
 
@@ -181,13 +181,13 @@ CLI로 단독 실행도 됩니다 — `python scan_all.py <소스>` (Claude 없�
 
 | 스킬 | 확정 방식 | 스크립트 |
 |---|---|---|
-| `exploiting-sql-injection` | Error-based → Boolean-based Blind → Time-based Blind 순차 시도. sqlmap 설치 시 우선 사용, 없으면 수동 PoC 폴백 | `skills/exploiting-sql-injection/scripts/attack_sqli.py` |
-| `exploiting-xss-vulnerabilities` | 고유 마커 페이로드 주입 → HTTP 응답 반사 확인 + Playwright로 브라우저 실제 실행 확인(저장형·DOM) | `skills/exploiting-xss-vulnerabilities/scripts/attack_xss.py` |
-| `exploiting-broken-access-control` | 타 계정 토큰으로 관리자 API 호출(BFLA)·타인 리소스 조회(IDOR) → `2xx`=취약, `401/403`=방어(즉시 오탐 확정) | `skills/exploiting-broken-access-control/scripts/attack_access.py` |
-| `exploiting-auth-session` | JWT 변조(`alg=none`·서명 제거·역할 변조·만료) 발사, 로그아웃 후 토큰 재사용, 쿠키 보안속성(Secure/HttpOnly/SameSite) 점검 | `skills/exploiting-auth-session/scripts/attack_auth.py` |
-| `exploiting-ssrf-and-open-redirect` | 루프백 OOB canary 리스너로 콜백 수신 시 블라인드 SSRF 확정, `Location` 헤더가 외부 호스트면 오픈 리다이렉트 확정(모두 비파괴 GET) | `skills/exploiting-ssrf-and-open-redirect/scripts/attack_ssrf.py` (+ `oob_canary.py`) |
-| `exploiting-path-traversal-upload` | 경로조작은 응답 본문 파일 시그니처로 인밴드 확정(읽기전용). 업로드는 `--allow-destructive`일 때만 무해 마커(.jsp, 코드 없음)로 위험확장자 수용·웹루트 회수 확인 | `skills/exploiting-path-traversal-upload/scripts/attack_pathupload.py` |
-| `exploiting-with-burp` | (하이브리드) 접근통제·인증세션·SSRF·경로조작 4종을 Burp 프록시로 경유해 결정론·`scope_guard` 유지(히스토리 증거 축적) + JWT `base64` 변조·Collaborator 등 Burp 고유 강점만 MCP 도구로 심화. SQLi·XSS는 기존 경로 유지 | `skills/exploiting-with-burp/SKILL.md` (+ `tools/burp_preflight.py`) |
+| `exploiting-sql-injection` | **SQL 인젝션 동적 검증** — 승인된 로컬·스테이징 환경에서 정적 진단의 SQL 인젝션(SQLi) 후보를 동적으로 검증할 때 사용한다. 대상 범위를 확인하고 응답·조건·시간 차이의 근거를 수집한다. | `skills/exploiting-sql-injection/scripts/attack_sqli.py` |
+| `exploiting-xss-vulnerabilities` | **XSS 동적 검증** — 승인된 로컬·스테이징 환경에서 정적 진단의 XSS 후보를 검증할 때 사용한다. 대상 범위를 확인하고 고유 마커의 응답 반사와 실제 브라우저 실행을 구분해 관찰한다. | `skills/exploiting-xss-vulnerabilities/scripts/attack_xss.py` |
+| `exploiting-broken-access-control` | **접근통제 동적 검증** — 승인된 로컬·스테이징 환경에서 접근통제 취약점(IDOR·BFLA) 후보를 동적으로 검증할 때 사용한다. 대상 범위 확인 후 역할·소유자별 응답을 비교한다. | `skills/exploiting-broken-access-control/scripts/attack_access.py` |
+| `exploiting-auth-session` | **인증·세션 동적 검증** — 승인된 로컬·스테이징 환경에서 인증·세션·JWT 취약점 후보를 동적으로 검증할 때 사용한다. 대상 범위 확인 후 토큰 처리, 로그아웃과 쿠키 속성을 점검한다. | `skills/exploiting-auth-session/scripts/attack_auth.py` |
+| `exploiting-ssrf-and-open-redirect` | **SSRF·오픈 리다이렉트 동적 검증** — 승인된 로컬·스테이징 환경에서 SSRF와 오픈 리다이렉트 후보를 검증할 때 사용한다. 대상 범위를 확인하고 콜백 수신과 리다이렉트 응답을 관찰한다. | `skills/exploiting-ssrf-and-open-redirect/scripts/attack_ssrf.py` (+ `oob_canary.py`) |
+| `exploiting-path-traversal-upload` | **경로 탐색·업로드 동적 검증** — 승인된 로컬·스테이징 환경에서 경로 탐색과 업로드 취약점 후보를 검증할 때 사용한다. 대상 범위를 확인하고, 업로드는 명시적 허용 시 코드 없는 마커 파일로만 검증한다. | `skills/exploiting-path-traversal-upload/scripts/attack_pathupload.py` |
+| `exploiting-with-burp` | **Burp Suite 연계 동적 검증** — 승인된 로컬·스테이징 환경에서 Burp Suite MCP·프록시로 접근통제·인증·SSRF·경로 탐색·업로드를 심화 검증할 때 사용한다. 기존 범위 검사와 판정 절차를 유지한다. | `skills/exploiting-with-burp/SKILL.md` (+ `tools/burp_preflight.py`) |
 
 각 스킬은 `python skills/exploiting-<종류>/scripts/attack_*.py <URL> --param p` 로 단독 실행할 수 있습니다(`ATTACK_SAFETY.md`의 안전 게이트가 모든 발사 전에 강제됨).
 

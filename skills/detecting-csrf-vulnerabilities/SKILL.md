@@ -1,11 +1,6 @@
 ---
 name: detecting-csrf-vulnerabilities
-description: >-
-  SQIsoft 웹 애플리케이션에서 CSRF(Cross-Site Request Forgery) 취약점을 검사한다.
-  프로젝트 스택(Spring Boot 모던 / JSP·Servlet 레거시)을 자동 감지하여 스택에 맞는
-  Semgrep 룰로 1차 탐지하고, AI가 상태변경 엔드포인트의 토큰 보호 유무를 컨텍스트로
-  검증한다. Spring Security csrf().disable(), 토큰 없는 JSP form POST, 검증 없는 doPost,
-  SameSite 미설정 쿠키 등을 찾는다.
+description: "Spring·JSP 소스의 CSRF 보호를 정적으로 진단할 때 사용한다. 상태 변경 요청의 토큰 검증과 보안 설정에서 취약점 후보를 식별한다."
 domain: cybersecurity
 subdomain: web-application-security
 tags: [csrf, cwe-352, owasp-a01, spring-security, jsp, servlet, sqisoft]
@@ -17,7 +12,7 @@ author: sqisoft-security
 license: Proprietary
 ---
 
-# CSRF 취약점 검사 (Cross-Site Request Forgery)
+# CSRF 보안 진단
 
 ## When to Use
 

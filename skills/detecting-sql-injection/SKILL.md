@@ -1,12 +1,6 @@
 ---
 name: detecting-sql-injection
-description: >-
-  SQIsoft 웹 애플리케이션에서 SQL Injection(SQLi) 취약점을 검사한다.
-  사용자 입력이 SQL 쿼리에 파라미터 바인딩 없이 문자열 연결로 삽입되는 패턴을 탐지한다.
-  프로젝트 스택(Spring Boot 모던 / JSP·Servlet 레거시)을 자동 감지하여 스택별 Semgrep 룰로
-  1차 탐지하고, AI가 바인딩 방식과 입력 출처를 컨텍스트로 검증한다.
-  JSP scriptlet Statement 문자열 연결, MyBatis Mapper XML ${param}(vs 안전한 #{param}),
-  Spring JPA @Query 문자열 연결, JdbcTemplate 문자열 연결, 정렬·검색 컬럼명 동적 삽입 등을 찾는다.
+description: "Spring·JSP 소스의 SQL 인젝션(SQLi)을 정적으로 진단할 때 사용한다. 입력값의 쿼리 삽입 경로와 파라미터 바인딩을 검토한다."
 domain: cybersecurity
 subdomain: web-application-security
 tags: [sql-injection, sqli, cwe-89, owasp-a03, mybatis, jpa, jdbc, spring, jsp, servlet, sqisoft]
@@ -18,7 +12,7 @@ author: sqisoft-security
 license: Proprietary
 ---
 
-# SQL Injection 취약점 검사
+# SQL 인젝션 보안 진단
 
 ## When to Use
 

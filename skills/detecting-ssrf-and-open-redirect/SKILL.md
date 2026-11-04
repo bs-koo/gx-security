@@ -1,12 +1,6 @@
 ---
 name: detecting-ssrf-and-open-redirect
-description: >-
-  SQIsoft 웹 애플리케이션에서 SSRF(Server-Side Request Forgery)와 오픈 리다이렉트(Open Redirect)
-  취약점을 검사한다. 사용자 입력 URL을 서버측 HTTP 요청에 검증 없이 사용하는 패턴
-  (RestTemplate, WebClient, HttpURLConnection, URL.openStream)과, 사용자 입력을
-  그대로 리다이렉트 목적지로 사용하는 패턴(sendRedirect, "redirect:"+param, returnUrl/next 파라미터)을
-  탐지한다. 내부망·클라우드 메타데이터(169.254.169.254) 접근 및 피싱 경유지 악용을 방지한다.
-  CWE-918(SSRF), CWE-601(오픈 리다이렉트), OWASP A10:2021(SSRF), A01:2021(접근제어 실패)에 대응.
+description: "소스의 외부 요청과 리다이렉트 처리를 정적으로 진단할 때 사용한다. 사용자 입력 URL에 의한 SSRF와 오픈 리다이렉트 후보를 검토한다."
 domain: cybersecurity
 subdomain: web-application-security
 tags:
@@ -31,7 +25,7 @@ author: sqisoft-security
 license: Proprietary
 ---
 
-# SSRF / 오픈 리다이렉트 취약점 검사
+# SSRF·오픈 리다이렉트 진단
 
 ## When to Use
 
