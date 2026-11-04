@@ -1,12 +1,6 @@
 ---
 name: detecting-broken-access-control
-description: >-
-  SQIsoft 웹 애플리케이션에서 IDOR(Insecure Direct Object Reference)·BFLA(Broken Function-Level
-  Authorization)·강제 브라우징(Forced Browsing) 등 접근통제 취약점을 검사한다.
-  프로젝트 스택(Spring Boot 모던 / JSP·Servlet 레거시)을 자동 감지하여 스택별 Semgrep 룰로
-  1차 탐지하고, AI가 소유권 검증 유무·권한 체크 누락을 컨텍스트로 검증한다.
-  탐지 대상: PathVariable/파라미터 ID 소유권 미검증, 관리자 컨트롤러 @PreAuthorize 누락,
-  SecurityConfig adminPaths 미보호, JSP 관리자 URL 강제 브라우징, 메뉴 숨김에만 의존한 접근통제.
+description: "Spring·JSP 소스의 접근통제를 정적으로 진단할 때 사용한다. 객체 소유권 검증(IDOR), 기능별 권한 검사(BFLA)와 관리자 경로 보호를 검토한다."
 domain: cybersecurity
 subdomain: web-application-security
 tags:
@@ -36,7 +30,7 @@ author: sqisoft-security
 license: Proprietary
 ---
 
-# 접근통제 취약점 검사 (Broken Access Control / IDOR / BFLA)
+# 접근통제 보안 진단
 
 ## When to Use
 

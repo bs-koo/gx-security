@@ -1,12 +1,6 @@
 ---
 name: detecting-path-traversal
-description: >-
-  SQIsoft 웹 애플리케이션에서 경로 탐색(Path Traversal / Directory Traversal) 취약점을 검사한다.
-  파일 다운로드·뷰어·첨부파일 조회 기능에서 사용자 입력이 파일 경로에 그대로 삽입되어
-  ../를 이용한 임의 파일 접근(WEB-INF/web.xml, /etc/passwd 등) 또는 임의 파일 다운로드를
-  허용하는 패턴을 탐지한다. CWE-22, OWASP A01:2021 대응.
-  spring-modern(@RequestParam 파일명 → Resource/Path 직접 반환, ZipSlip)과
-  jsp-legacy(download.do?filePath= 파라미터 경로 필터링 미흡) 두 스택을 지원한다.
+description: "Spring·JSP 소스의 파일 조회·다운로드 기능을 정적으로 진단할 때 사용한다. 사용자 입력에 의한 경로 탐색과 임의 파일 접근 가능성을 검토한다."
 domain: cybersecurity
 subdomain: web-application-security
 tags:
@@ -28,7 +22,7 @@ author: sqisoft-security
 license: Proprietary
 ---
 
-# 경로 탐색(Path Traversal) 취약점 검사 (CWE-22 / Improper Limitation of a Pathname)
+# 경로 탐색 보안 진단
 
 ## When to Use
 

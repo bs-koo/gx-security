@@ -1,12 +1,6 @@
 ---
 name: detecting-auth-session-weaknesses
-description: >-
-  SQIsoft 웹 애플리케이션에서 인증(Authentication)·세션(Session)·JWT 관련 취약점을 검사한다.
-  프로젝트 스택(Spring Boot 모던 / JSP·Servlet 레거시)을 자동 감지하여 스택별 Semgrep 룰로
-  1차 탐지하고, AI가 세션 고정·약한 해시·JWT 설정 오류·쿠키 보안속성 누락을 컨텍스트로 검증한다.
-  탐지 대상: 세션 재발급 누락(세션 고정), SHA-256 단순 해시 비밀번호(솔트 약함/BCrypt 미사용),
-  JWT 시크릿 하드코딩·서명검증 우회 가능성, 쿠키 Secure/HttpOnly/SameSite 미설정,
-  Refresh Token 쿠키 보안속성 누락, 세션 타임아웃 미설정.
+description: "Spring·JSP 소스의 인증·세션·JWT 설정을 정적으로 진단할 때 사용한다. 세션 고정, 비밀번호 해시와 쿠키 보안 속성의 취약점 후보를 검토한다."
 domain: cybersecurity
 subdomain: web-application-security
 tags:
@@ -42,7 +36,7 @@ author: sqisoft-security
 license: Proprietary
 ---
 
-# 인증·세션·JWT 취약점 검사
+# 인증·세션 보안 진단
 
 ## When to Use
 

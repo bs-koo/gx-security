@@ -1,11 +1,6 @@
 ---
 name: detecting-sensitive-data-exposure
-description: >-
-  SQIsoft 웹 애플리케이션에서 민감정보 노출(Sensitive Data Exposure) 취약점을 검사한다.
-  하드코딩 시크릿(DB 비밀번호·API 키·JWT 시크릿·초기 비밀번호), 개인정보(주민번호·이메일·전화번호)
-  평문 저장·로그 출력, 응답 DTO 과다 필드 노출, 예외 스택트레이스 사용자 노출을 탐지한다.
-  properties/yml/xml/.java/.jsp 전 계층을 검사하며 환경변수·Vault placeholder는 오탐 제외한다.
-  CWE-200(정보노출), CWE-798(하드코딩 자격증명), OWASP A02:2021(암호화 실패)에 대응.
+description: "소스 코드와 설정의 민감정보 노출을 정적으로 진단할 때 사용한다. 하드코딩된 자격증명, 개인정보와 로그·응답의 정보 노출 후보를 검토한다."
 domain: cybersecurity
 subdomain: web-application-security
 tags:
@@ -30,7 +25,7 @@ author: sqisoft-security
 license: Proprietary
 ---
 
-# 민감정보 노출 검사 (Sensitive Data Exposure / Hardcoded Secrets)
+# 민감정보 노출 진단
 
 ## When to Use
 

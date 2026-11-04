@@ -1,5 +1,5 @@
 ---
-description: 취약점 진단 — 정적 분석(SAST)으로 소스에서 취약점 후보 도출 (안전, 앱 불필요) (gx-security)
+description: "소스 코드 보안 진단(SAST). 실행 중인 앱 없이 취약점 후보를 식별하고 코드 문맥과 대응 방안을 검토합니다."
 argument-hint: <소스경로> [취약점종류: csrf|xss|sqli|file-upload|path-traversal|access-control|auth|secrets|ssrf]
 ---
 

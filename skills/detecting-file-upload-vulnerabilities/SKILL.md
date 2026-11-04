@@ -1,11 +1,6 @@
 ---
 name: detecting-file-upload-vulnerabilities
-description: >-
-  SQIsoft 웹 애플리케이션에서 악성 파일 업로드(웹쉘 업로드, CWE-434) 취약점을 검사한다.
-  파일 업로드 기능이 있는 게시판·첨부파일·인증서 등록 화면에서 확장자 화이트리스트 부재,
-  매직바이트 미검증, 웹루트 내부 저장, Content-Type만 신뢰, 원본 파일명 그대로 사용,
-  이중 확장자 우회 등의 패턴을 탐지한다. spring-modern(Spring Boot + MultipartFile)과
-  jsp-legacy(JSP/Servlet + commons-fileupload) 두 스택을 지원한다.
+description: "Spring·JSP 소스의 파일 업로드 처리를 정적으로 진단할 때 사용한다. 파일 형식 검증, 저장 위치와 파일명 처리의 취약점 후보를 검토한다."
 domain: cybersecurity
 subdomain: web-application-security
 tags:
@@ -27,7 +22,7 @@ author: sqisoft-security
 license: Proprietary
 ---
 
-# 악성 파일 업로드 취약점 검사 (CWE-434 / Unrestricted Upload of File with Dangerous Type)
+# 파일 업로드 보안 진단
 
 ## When to Use
 
