@@ -3,6 +3,8 @@
 tools/dyn_session.py — 동적 침투 스킬 공용 엔진.
 로그인 자동화·토큰 보관·인증 HTTP·표준 출력·scope 위임을 제공한다.
 모든 exploiting-* 스킬이 공유하며, 클래스별 공격 로직은 포함하지 않는다.
+Legacy specialist path: hostname preflight does not enforce destination IPs.
+Release checks use gxsec.transport and trusted readiness instead.
 """
 import sys
 import os
@@ -32,21 +34,12 @@ def _burp_proxies():
 
 
 def _proxy_kwargs():
-    """프록시 활성 시 requests 호출에 병합할 kwargs({proxies, verify}), 비활성 시 빈 dict.
-    Burp가 TLS를 MITM하므로 프록시 경유 시 verify=False가 필요하다(로컬/스테이징 한정).
-    verify=False가 유발하는 InsecureRequestWarning을 프록시 활성 시 1회만 억제한다(엣지 B)."""
+    """Keep TLS verification enabled; explicitly trust a local Burp CA if supplied."""
     proxies = _burp_proxies()
     if not proxies:
         return {}
-    global _burp_warned
-    if not _burp_warned:
-        try:
-            import urllib3
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        except Exception:
-            pass
-        _burp_warned = True
-    return {"proxies": proxies, "verify": False}
+    ca = os.environ.get("SECURITY_PLUGIN_BURP_CA", "").strip()
+    return {"proxies": proxies, "verify": ca or True}
 
 
 def mask_token(tok):
@@ -270,6 +263,8 @@ def emit(result, as_json):
             verdict = f"[발사실패: {f['error']}]"
         elif f.get("vulnerable"):
             verdict = "[취약 후보]"
+        elif f.get("undetermined") or f.get("validation") == "undetermined":
+            verdict = "[미확정]"
         else:
             verdict = "[방어/정상]"
         print(f"  {verdict} {f.get('kind')} {f.get('method')} {f.get('path')} "

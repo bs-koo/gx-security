@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gx-security.local/schemas/exception.json",
+  "title": "gx-security scoped risk acceptance v1",
+  "description": "Names or flags in this record do not prove approval. A separate protected policy must bind its canonical digest.",
+  "type": "object",
+  "required": [
+    "id",
+    "finding_id",
+    "owner",
+    "reason",
+    "expires_at",
+    "source_revision",
+    "scope_hash"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "finding_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scope_hash": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

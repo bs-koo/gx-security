@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gx-security.local/schemas/result.json",
+  "title": "gx-security immutable run snapshot v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "project_id",
+    "profile",
+    "source",
+    "checks",
+    "findings",
+    "started_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]{1,128}$"
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "profile": {
+      "enum": [
+        "check",
+        "static-release",
+        "release",
+        "source-review"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "scope_hash"
+      ],
+      "properties": {
+        "hash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dirty": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "scope_hash": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "$ref": "check.json"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "finding.json"
+      }
+    },
+    "reviews": {
+      "type": "array"
+    },
+    "exceptions": {
+      "type": "array",
+      "items": {
+        "$ref": "exception.json"
+      }
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "gate": {
+      "type": "object",
+      "required": [
+        "status",
+        "exit_code",
+        "blockers",
+        "incomplete"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "PASS",
+            "BLOCK",
+            "INCOMPLETE",
+            "PASS_WITH_EXCEPTION"
+          ]
+        },
+        "exit_code": {
+          "enum": [
+            0,
+            1,
+            2,
+            3,
+            130
+          ]
+        },
+        "blockers": {
+          "type": "array"
+        },
+        "incomplete": {
+          "type": "array"
+        }
+      }
+    }
+  }
+}

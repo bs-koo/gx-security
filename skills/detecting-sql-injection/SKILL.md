@@ -1,18 +1,29 @@
 ---
 name: detecting-sql-injection
-description: "Spring·JSP 소스의 SQL 인젝션(SQLi)을 정적으로 진단할 때 사용한다. 입력값의 쿼리 삽입 경로와 파라미터 바인딩을 검토한다."
+description: >-
+  SQIsoft 웹 애플리케이션에서 SQL Injection(SQLi) 취약점을 검사한다.
+  사용자 입력이 SQL 쿼리에 파라미터 바인딩 없이 문자열 연결로 삽입되는 패턴을 탐지한다.
+  프로젝트 스택(Spring Boot 모던 / JSP·Servlet 레거시)을 자동 감지하여 스택별 Semgrep 룰로
+  1차 탐지하고, AI가 바인딩 방식과 입력 출처를 컨텍스트로 검증한다.
+  JSP scriptlet Statement 문자열 연결, MyBatis Mapper XML ${param}(vs 안전한 #{param}),
+  Spring JPA @Query 문자열 연결, JdbcTemplate 문자열 연결, 정렬·검색 컬럼명 동적 삽입 등을 찾는다.
 domain: cybersecurity
 subdomain: web-application-security
 tags: [sql-injection, sqli, cwe-89, owasp-a03, mybatis, jpa, jdbc, spring, jsp, servlet, sqisoft]
 cwe: [CWE-89]
 owasp: [A03:2021-Injection]
 stacks: [spring-modern, jsp-legacy]
-version: "0.8.2"
+version: "0.10.0"
 author: sqisoft-security
 license: Proprietary
 ---
 
-# SQL 인젝션 보안 진단
+> Release-check contract (0.10.0): use the common gxsec CLI for developer checks and release evidence. Legacy commands below are expert/reference paths, not proof of release completion. Preserve candidate vs verified vs incomplete states; never treat status 200, reflection, a helper name, or an annotation alone as a confirmed exploit/defense. Credentials use references/stdin; no plain passwords/tokens in argv or chat. Required scope/readiness/authentication/confinement evidence is enforced by the new release path.
+
+
+SEF 또는 공통 방어가 관련된 후보는 [공유 SEF 문맥 검토](../checking-release-security/references/sef-context.md)를 읽고 공통 CLI 결과를 사용한다. 아래 전문가용 판정·오탐 표기는 검토 제안이며 원본 finding의 검증 상태·심각도·ID를 바꾸거나 보호된 독립 검토를 대체하지 않는다.
+
+# SQL Injection 취약점 검사
 
 ## When to Use
 

@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.10.0] - 2026-11-05
+
+- 통합 점검에 코드 선조사·업무 의도 질문·답변 기반 조사·후속 질문 흐름 추가. 모름·보류를 지원하며 보고서 설명만 요청한 경우는 읽기 유지.
+- `discuss` 명령과 Windows Docker 연결, 원래 실행·발견·소스에 묶인 불변 대화 revision 및 별도 HTML·Markdown·JSON 공유본 추가. 답변은 사용자 진술, 조사 결과는 제안이며 기존 판정·승인·예외를 변경하지 않음.
+- SEF public/private/혼합 구성을 식별하고 관리자 권한·JWT 목적·메뉴와 객체·새 경로·파일 경계를 읽기 전용으로 점검하는 필수 검사 추가.
+- MyBatis include·property의 호출별 문맥, 제한된 SQL parameter binding·DOMPurify 흐름을 기존 후보의 찬반 근거와 미확정 질문으로 연결. 자동 반증이나 예외 승인으로 사용하지 않음.
+- 검토 묶음과 관측 기반 manifest 공유, 보호된 조직 baseline 비교, 소스·범위·분석기 digest 연결 및 근거 변경 추적.
+- 통합 `gx-security` 스킬과 Claude 단축 명령 추가. 자연어 의도에 따라 기존 점검·재검증·결과 해석으로 연결하고 매 프로젝트의 setup/init 호출 없이 내부 준비 확인. 등록된 호스트에서 관련 요청에 적용하며 무관한 작업은 가로채지 않음.
+- 기존 CLI와 통합 진입점을 포함한 22개 스킬에 SEF 흐름 연결, HTML/Markdown/SARIF의 문맥 표시와 마스킹된 추가 산출물.
+- Docker 실행기에 로컬 실행 환경·이미지 확인과 원래 상태의 재검증 전달을 추가. 자동 pull 없이 누락 항목 안내, doctor의 프로젝트 결과 폴더 생성 제거. 보고서 설명만 요청하면 새 검사·설치 없이 기존 결과만 확인.
+- 준비 확인은 알려진 제어 파일·빌드 신호의 부분 미리보기로 제한해 전체 저장소·이력 복사 지연을 줄임. 정식 검사의 전체 입력 계약은 유지.
+- 이전 SEF 후보가 사라져도 자동 해결로 처리하지 않으며, 현재 소스·분석 계약에 연결된 독립 검토를 요구. 기존 동적 스킬의 403 즉시 반증·sqlmap 자동 실행 설명도 실제 지원 범위에 맞게 정정.
+- Gradle·Nuxt·Next 생성 캐시를 명시적인 기본 범위 제외에 추가. .env와 빌드 선언은 계속 검사.
+- 합성 회귀와 실제 읽기 전용 재파일럿의 결과·한계는 구현 현황 문서에 기록. 경고 감소를 정밀도 향상으로 환산하지 않음.
+
+## [0.9.0] - Unreleased
+
+- 공통 CLI: 준비·변경분·출시·결과 공유·수정 재검증, 명시적인 PASS/BLOCK/INCOMPLETE/예외 판정.
+- Semgrep/OSV/Gitleaks adapter, 스캔 범위·버전·DB provenance, 마스킹된 SQLite 이력·불변 snapshot.
+- 실제 규칙 경로의 frontend/JSP/권한·시크릿 누락과 scanner 오류·빈 범위 전파 보수.
+- 제한 HTTP 전송·인증·소유권 oracle, 신뢰 정책·배포 버전·격리 증거 기반 동적 계획/실행.
+- 개발자·QA·PM 공유본, JSON/SARIF·증거 manifest, 고정 엔진 해시·Python 의존성 lock·Docker 실행 경로.
+- 사업부 사용자 파일럿·선택 외부 엔진 실환경 검증은 별도 현황 문서로 추적. 출시 완료 선언 아님.
+
 이 프로젝트의 주요 변경 사항을 기록합니다.
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르며,
 버전 체계는 [Semantic Versioning](https://semver.org/lang/ko/)을 준수합니다.

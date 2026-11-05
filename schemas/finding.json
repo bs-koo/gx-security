@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gx-security.local/schemas/finding.json",
+  "title": "gx-security finding v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "finding_id",
+    "fingerprint",
+    "category",
+    "severity",
+    "validation",
+    "lifecycle",
+    "locations",
+    "observations",
+    "evidence_refs"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "finding_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "semantic_rule_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1
+    },
+    "severity": {
+      "enum": [
+        "Critical",
+        "High",
+        "Medium",
+        "Low",
+        "Info",
+        null
+      ]
+    },
+    "validation": {
+      "enum": [
+        "candidate",
+        "source-verified",
+        "runtime-verified",
+        "refuted",
+        "undetermined"
+      ]
+    },
+    "lifecycle": {
+      "enum": [
+        "open",
+        "remediation-proposed",
+        "fixed-verified",
+        "reopened"
+      ]
+    },
+    "locations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "module": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "observations": {
+      "type": "array"
+    },
+    "evidence_refs": {
+      "type": "array"
+    },
+    "remediation": {
+      "type": [
+        "object",
+        "string"
+      ]
+    },
+    "file_hash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "expected_file_hash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "analysis_contract_hash": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "normalized_result_hash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

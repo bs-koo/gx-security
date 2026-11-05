@@ -28,6 +28,8 @@ if _PLUGIN_ROOT not in sys.path:
     sys.path.insert(0, _PLUGIN_ROOT)
 from tools import io_utf8  # noqa: E402  (UTF-8 콘솔 강제 — Windows cp949 크래시 방지, Task 1)
 io_utf8.configure()
+from tools.scanner_contract import ScannerContract, result_exit_code  # noqa: E402
+contract = ScannerContract()
 
 RULES = os.path.join(os.path.dirname(HERE), "rules", "sqli.yml")
 
@@ -69,12 +71,12 @@ def run_semgrep(target):
     cmd = ["semgrep", "--config", RULES, "--json", "--quiet",
            "--exclude", ".dev", "--exclude", ".omc", "--exclude", ".humanize", target]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+        out = contract.run_semgrep(cmd, capture_output=True, text=True, timeout=600,
                              encoding="utf-8", errors="replace")
     except (subprocess.TimeoutExpired, OSError) as e:
-        return None, f"semgrep 실행 실패: {e}"
+        return None, f"semgrep 실행 실패: {type(e).__name__}"
     if out.returncode not in (0, 1):  # 1 = findings 있음
-        return None, f"semgrep 오류(rc={out.returncode}): {out.stderr[:300]}"
+        return None, f"semgrep 오류(rc={out.returncode}): (diagnostic details retained in execution metadata)"
     try:
         data = json.loads(out.stdout or "{}")
     except json.JSONDecodeError:
@@ -186,29 +188,32 @@ def _is_mybatis_xml(path: str) -> bool:
 def run_fallback(target):
     findings = []
     for root, dirs, files in os.walk(target):
-        dirs[:] = [d for d in dirs if d not in
-                   (".git", "node_modules", "build", "target", "dist", ".gradle",
-                    ".dev", ".omc", ".humanize", ".idea", ".vscode")]
+        dirs[:] = contract.filter_dirs(root, dirs, (".git", "node_modules", "build", "target", "dist", ".gradle",
+                    ".dev", ".omc", ".humanize", ".idea", ".vscode"))
         for f in files:
             ext = os.path.splitext(f)[1].lower()
             path = os.path.join(root, f)
 
             # XML 파일은 MyBatis 맥락 경로만 검사 (Spring/Maven 설정 XML 오탐 방지)
             if ext == ".xml" and not _is_mybatis_xml(path):
+                contract.record_ignored(path, "not_mybatis_xml")
                 continue
 
             rules = [r for r in FALLBACK_PATTERNS if ext in r[2]]
             if not rules:
+                contract.record_ignored(os.path.join(root, f), "unsupported_extension")
                 continue
 
             try:
                 with open(path, encoding="utf-8", errors="replace") as fh:
+                    contract.record_file(path)
                     # FR-1 — 직전줄 버퍼. 2줄 인접 조립+실행(변수 상관) 판정에 사용.
                     prev = ""
                     for i, line in enumerate(fh, 1):
                         # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해
                         # 매칭을 조용히 스킵한다(성능 가드).
                         if len(line) > _MAX_LINE_LEN:
+                            contract.record_ignored(path, "line_too_long", line=i)
                             # 초과 라인은 prev를 비워 2줄 전 라인과의 오결합을 차단한다.
                             prev = ""
                             continue
@@ -241,6 +246,7 @@ def run_fallback(target):
                         # 정상 라인은 다음 반복의 직전줄로 보관(모든 반복 종료 시 갱신).
                         prev = line
             except OSError:
+                contract.record_read_error(path)
                 continue
     return findings
 
@@ -276,6 +282,7 @@ def main():
         print(f"오류: 디렉토리가 아닙니다 — {args.target}", file=sys.stderr)
         sys.exit(2)
 
+    contract.reset()
     stacks = detect_stacks(args.target)
     engine = "semgrep" if (shutil.which("semgrep") and not os.environ.get("GXSEC_NO_SEMGREP")) else "grep-fallback"
 
@@ -299,6 +306,8 @@ def main():
         "note": "후보 목록입니다. 최종 취약/오탐 판정은 SKILL.md 2단계 AI 검증으로 수행하세요. "
                 "MyBatis #{} 는 안전(오탐), ${}는 입력 출처·allowlist 확인 필수.",
     }
+    contract.enrich(result)
+    findings = result["candidates"]
     if warnings:
         result["warnings"] = warnings
 
@@ -318,6 +327,8 @@ def main():
         print("\n※ 후보일 뿐입니다. 2단계 AI 컨텍스트 검증 필요")
         print("  (#{} → 오탐, ${} → 입력 출처·ORDER BY allowlist 확인).")
 
+    return result_exit_code(result)
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

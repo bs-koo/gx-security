@@ -65,7 +65,7 @@ class TestBuildTargets(unittest.TestCase):
 class TestBfla(unittest.TestCase):
     # run_bfla는 무토큰 대조 오라클 도입 후 anon→user 순으로 request를 2회 호출한다.
     @patch("tools.dyn_session.request")
-    def test_bfla_2xx_is_vulnerable(self, mock_req):
+    def test_bfla_2xx_is_undetermined_without_oracle(self, mock_req):
         # anon(무토큰) 거부(401) + 일반 토큰 2xx → 역할우회 취약.
         mock_req.side_effect = [
             {"status": 401, "body": "", "elapsed": 0.01},    # anon
@@ -73,7 +73,8 @@ class TestBfla(unittest.TestCase):
         ]
         t = {"kind": "bfla", "method": "GET", "path": "/adm/v1/users"}
         out = attack_access.run_bfla("http://localhost:7171", t, "NORMALTOK")
-        self.assertTrue(out["vulnerable"])
+        self.assertFalse(out["vulnerable"])
+        self.assertEqual(out["validation"], "undetermined")
         self.assertEqual(out["status"], 200)
 
     @patch("tools.dyn_session.request")
@@ -88,7 +89,7 @@ class TestBfla(unittest.TestCase):
         self.assertFalse(out["vulnerable"])
 
     @patch("tools.dyn_session.request")
-    def test_bfla_anon_denied_user_2xx_is_vulnerable(self, mock_req):
+    def test_bfla_anon_denied_user_2xx_needs_oracle(self, mock_req):
         # anon 401 + user 200 → 역할우회 취약(note 없음, anon_status 노출).
         mock_req.side_effect = [
             {"status": 401, "body": "", "elapsed": 0.01},    # anon
@@ -96,9 +97,9 @@ class TestBfla(unittest.TestCase):
         ]
         t = {"kind": "bfla", "method": "GET", "path": "/adm/v1/users"}
         out = attack_access.run_bfla("http://localhost:7171", t, "NORMALTOK")
-        self.assertTrue(out["vulnerable"])
+        self.assertFalse(out["vulnerable"])
         self.assertEqual(out["anon_status"], 401)
-        self.assertIsNone(out["note"])
+        self.assertTrue(out["note"])
 
     @patch("tools.dyn_session.request")
     def test_bfla_public_endpoint_anon_2xx_not_vulnerable(self, mock_req):
@@ -117,7 +118,7 @@ class TestBfla(unittest.TestCase):
 class TestIdor(unittest.TestCase):
     # run_idor는 공개리소스 대조 도입 후 anon→B 순으로 request를 2회 호출한다.
     @patch("tools.dyn_session.request")
-    def test_idor_anon_denied_b_2xx_is_vulnerable(self, mock_req):
+    def test_idor_anon_denied_b_2xx_needs_owner_oracle(self, mock_req):
         # anon(무토큰) 401 + B(타인) 토큰 200 → IDOR 취약.
         mock_req.side_effect = [
             {"status": 401, "body": "", "elapsed": 0.01},              # anon
@@ -125,9 +126,10 @@ class TestIdor(unittest.TestCase):
         ]
         t = {"kind": "idor", "method": "GET", "path": "/api/v1/users/{id}"}
         out = attack_access.run_idor("http://localhost:7171", t, "BTOK", "A-USER-1")
-        self.assertTrue(out["vulnerable"])
+        self.assertFalse(out["vulnerable"])
+        self.assertEqual(out["validation"], "undetermined")
         self.assertEqual(out["anon_status"], 401)
-        self.assertIsNone(out["note"])
+        self.assertTrue(out["note"])
         url_arg = mock_req.call_args[0][1]  # 마지막(B) 호출 url
         self.assertIn("/api/v1/users/A-USER-1", url_arg)
 
@@ -211,7 +213,8 @@ class TestSoft200EvidenceCard(unittest.TestCase):
             {"status": 200, "body": "data", "elapsed": 0.0, "headers": {}},    # user 2xx
         ]
         out = attack_access.run_bfla("http://localhost:7171", t, "NORMALTOK")
-        self.assertTrue(out["vulnerable"])
+        self.assertFalse(out["vulnerable"])
+        self.assertTrue(out["undetermined"])
         self.assertIn("evidence_expectation", out)
         self.assertIn("contrast", out["evidence_expectation"])
 
@@ -224,7 +227,7 @@ class TestSoft200EvidenceCard(unittest.TestCase):
         ]
         out = attack_access.run_bfla("http://localhost:7171", t, "NORMALTOK")
         self.assertFalse(out["vulnerable"])
-        self.assertNotIn("evidence_expectation", out)
+        self.assertIn("evidence_expectation", out)
 
 
 if __name__ == "__main__":

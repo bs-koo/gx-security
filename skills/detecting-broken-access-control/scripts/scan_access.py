@@ -28,6 +28,8 @@ if _PLUGIN_ROOT not in sys.path:
     sys.path.insert(0, _PLUGIN_ROOT)
 from tools import io_utf8  # noqa: E402  (UTF-8 콘솔 강제 — Windows cp949 크래시 방지, Task 1)
 io_utf8.configure()
+from tools.scanner_contract import ScannerContract, result_exit_code  # noqa: E402
+contract = ScannerContract()
 
 RULES = os.path.join(os.path.dirname(HERE), "rules", "access-control.yml")
 
@@ -64,12 +66,12 @@ def run_semgrep(target):
     cmd = ["semgrep", "--config", RULES, "--json", "--quiet",
            "--exclude", ".dev", "--exclude", ".omc", "--exclude", ".humanize", target]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+        out = contract.run_semgrep(cmd, capture_output=True, text=True, timeout=600,
                              encoding="utf-8", errors="replace")
     except (subprocess.TimeoutExpired, OSError) as e:
-        return None, f"semgrep 실행 실패: {e}"
+        return None, f"semgrep 실행 실패: {type(e).__name__}"
     if out.returncode not in (0, 1):  # 1 = findings 있음
-        return None, f"semgrep 오류(rc={out.returncode}): {out.stderr[:300]}"
+        return None, f"semgrep 오류(rc={out.returncode}): (diagnostic details retained in execution metadata)"
     try:
         data = json.loads(out.stdout or "{}")
     except json.JSONDecodeError:
@@ -84,6 +86,22 @@ def run_semgrep(target):
             "confidence": r.get("extra", {}).get("metadata", {}).get("confidence") or "needs-context",
             "snippet": (r.get("extra", {}).get("lines", "") or "").strip()[:200],
         })
+        if "pathvariable" in findings[-1]["rule_id"] or "getparameter-id" in findings[-1]["rule_id"]:
+            try:
+                with open(r["path"], encoding="utf-8", errors="replace") as source:
+                    code_lines = _to_code_lines(source.read())
+                first = r["start"]["line"]
+                last = min(r.get("end", {}).get("line", first), len(code_lines))
+                location = next((i for i in range(first, last + 1)
+                                 if "@PathVariable" in code_lines[i - 1]), first)
+                if 0 < location <= len(code_lines):
+                    start, end = _enclosing_method(code_lines, location)
+                    findings[-1]["context"] = _build_context(code_lines, location, start, end)
+                    if _has_enforcement(code_lines, start, end):
+                        findings[-1]["confidence"] = "enforcement-detected-verify"
+            except OSError:
+                # The candidate is retained even if its source disappeared.
+                findings[-1]["context"] = {"source_available": False}
     return findings, None
 
 
@@ -248,24 +266,27 @@ def _build_context(code_lines, i, start, end):
 def run_fallback(target):
     findings = []
     for root, dirs, files in os.walk(target):
-        dirs[:] = [d for d in dirs if d not in
-                   (".git", "node_modules", "build", "target", "dist", ".gradle",
-                    ".dev", ".omc", ".humanize", ".idea", ".vscode")]
+        dirs[:] = contract.filter_dirs(root, dirs, (".git", "node_modules", "build", "target", "dist", ".gradle",
+                    ".dev", ".omc", ".humanize", ".idea", ".vscode"))
         for f in files:
             ext = os.path.splitext(f)[1].lower()
             rules = [r for r in FALLBACK_PATTERNS if ext in r[2]]
             if not rules:
+                contract.record_ignored(os.path.join(root, f), "unsupported_extension")
                 continue
             path = os.path.join(root, f)
             try:
                 with open(path, encoding="utf-8", errors="replace") as fh:
+                    contract.record_file(path)
                     lines = fh.readlines()
             except OSError:
+                contract.record_read_error(path)
                 continue
             code_lines = _to_code_lines("".join(lines))  # 주석 제거본(집행 신호·brace·context용)
             for i, line in enumerate(lines, 1):
                 # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해 스킵
                 if len(line) > _MAX_LINE_LEN:
+                    contract.record_ignored(path, "line_too_long", line=i)
                     continue
                 for rule_id, stack, _exts, rx in rules:
                     if not rx.search(line):
@@ -295,9 +316,8 @@ def check_admin_controllers_without_preauthorize(target):
     """
     findings = []
     for root, dirs, files in os.walk(target):
-        dirs[:] = [d for d in dirs if d not in
-                   (".git", "node_modules", "build", "target", "dist", ".gradle",
-                    ".dev", ".omc", ".humanize", ".idea", ".vscode")]
+        dirs[:] = contract.filter_dirs(root, dirs, (".git", "node_modules", "build", "target", "dist", ".gradle",
+                    ".dev", ".omc", ".humanize", ".idea", ".vscode"))
         for f in files:
             if not f.endswith(".java"):
                 continue
@@ -305,6 +325,7 @@ def check_admin_controllers_without_preauthorize(target):
             try:
                 content = open(path, encoding="utf-8", errors="replace").read()
             except OSError:
+                contract.record_read_error(path)
                 continue
             # 관리자 매핑 패턴이 있고 @PreAuthorize가 없는 파일
             has_adm_mapping = bool(re.search(
@@ -357,6 +378,7 @@ def main():
         print(f"오류: 디렉토리가 아닙니다 — {args.target}", file=sys.stderr)
         sys.exit(2)
 
+    contract.reset()
     stacks = detect_stacks(args.target)
     engine = "semgrep" if (shutil.which("semgrep") and not os.environ.get("GXSEC_NO_SEMGREP")) else "grep-fallback"
 
@@ -395,6 +417,8 @@ def main():
             "AuthInterceptor mode 설정을 코드로 직접 확인하세요."
         ),
     }
+    contract.enrich(result)
+    findings = result["candidates"]
     if warnings:
         result["warnings"] = warnings
 
@@ -416,6 +440,8 @@ def main():
             " (소유권 검증, AuthInterceptor mode, DB 룰 테이블 유무)."
         )
 
+    return result_exit_code(result)
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

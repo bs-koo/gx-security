@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gx-security.local/schemas/offline-database.json",
+  "title": "OSV offline advisory snapshot manifest v1",
+  "description": "Prepare independently outside the source tree. File hashes must equal every offline ZIP in the database directory.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "files"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "advisory_as_of": {
+      "type": "string"
+    },
+    "files": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      }
+    }
+  }
+}

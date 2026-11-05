@@ -1,0 +1,6 @@
+# Refresh only with the rule/engine compatibility and quality checks.
+requests==2.34.2
+PyYAML==6.0.3
+semgrep==1.172.0
+setuptools>=75
+wheel

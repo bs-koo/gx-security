@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gx-security.local/schemas/project.json",
+  "title": "gx-security untrusted project profile v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "project": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "modules": {
+          "type": "array"
+        }
+      }
+    },
+    "data_mode": {
+      "const": "local-only"
+    },
+    "tools": {
+      "type": "object"
+    },
+    "profiles": {
+      "type": "object"
+    },
+    "target": {
+      "type": "object"
+    },
+    "auth": {
+      "type": "object"
+    },
+    "discovery": {
+      "type": "object"
+    },
+    "budgets": {
+      "type": "object"
+    },
+    "sca": {
+      "type": "object"
+    },
+    "_trusted_policy": false,
+    "_credentials": false,
+    "_state_dir": false,
+    "policy": false,
+    "trusted_approvals": false,
+    "approvals": false,
+    "exceptions": false,
+    "reviews": false,
+    "_inventory": false,
+    "_scan_scope": false,
+    "_sca_runtime": false,
+    "_source_boundary": false,
+    "_snapshot_object": false,
+    "_snapshot_provenance": false,
+    "framework_baseline": false,
+    "framework_baselines": false,
+    "framework_policy": false
+  }
+}

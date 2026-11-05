@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gx-security.local/schemas/runtime-tool-manifest.json",
+  "title": "Protected runtime tool provenance v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "tools"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "tools": {
+      "type": "object",
+      "required": [
+        "semgrep",
+        "osv",
+        "gitleaks",
+        "git",
+        "python"
+      ],
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "executable",
+          "sha256",
+          "version"
+        ],
+        "properties": {
+          "executable": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

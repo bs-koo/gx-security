@@ -28,8 +28,11 @@ if _PLUGIN_ROOT not in sys.path:
     sys.path.insert(0, _PLUGIN_ROOT)
 from tools import io_utf8  # noqa: E402  (UTF-8 콘솔 강제 — Windows cp949 크래시 방지, Task 1)
 io_utf8.configure()
+from tools.scanner_contract import ScannerContract, result_exit_code  # noqa: E402
+contract = ScannerContract()
 
 RULES = os.path.join(os.path.dirname(HERE), "rules", "xss.yml")
+FRONTEND_RULES = os.path.join(os.path.dirname(HERE), "rules", "xss-frontend.yml")
 
 # 초대형 단일 라인(minified 등)에 폴백 정규식을 적용하면 O(n²) 백트래킹으로
 # 사실상 멈출 수 있다(ReDoS). 이 길이를 넘는 라인은 매칭을 조용히 스킵한다.
@@ -73,27 +76,23 @@ def run_semgrep(target):
         "*.min.js", "jquery*.js", "bootstrap*.js", "datatables*.js",
         "tinymce*.js", "codemirror*.js", "highcharts*.js",
     ]
-    cmd = ["semgrep", "--config", RULES, "--json", "--quiet"]
+    cmd = ["semgrep", "--config", RULES, "--config", FRONTEND_RULES, "--json", "--quiet"]
     for _ex in _SEMGREP_EXCLUDES:
         cmd += ["--exclude", _ex]
     cmd.append(target)
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+        out = contract.run_semgrep(cmd, capture_output=True, text=True, timeout=600,
                              encoding="utf-8", errors="replace")
     except (subprocess.TimeoutExpired, OSError) as e:
-        return None, f"semgrep 실행 실패: {e}"
+        return None, f"semgrep 실행 실패: {type(e).__name__}"
     if out.returncode not in (0, 1):  # 1 = findings 있음
-        return None, f"semgrep 오류(rc={out.returncode}): {out.stderr[:300]}"
+        return None, f"semgrep 오류(rc={out.returncode}): (diagnostic details retained in execution metadata)"
     try:
         data = json.loads(out.stdout or "{}")
     except json.JSONDecodeError:
         return None, "semgrep JSON 파싱 실패"
-    # el-unescaped-model-attr: JSTL 비출력 컨텍스트(c:if test/c:forEach items/c:set) 라인은
-    # HTML 출력이 아니므로 제외한다. semgrep pattern-not-regex는 매치 span만 보고, --json 의
-    # extra.lines 는 익명(비로그인) 사용 시 'requires login'으로 마스킹되므로, file:line 으로
-    # 실제 소스 라인을 읽어 판정한다(grep 폴백의 라인 기반 제외와 대칭).
-    _jstl_nonoutput = re.compile(
-        r'<c:(?:if|forEach|choose|when|set)\b[^>]*\b(?:test|items|select|var|target)\s*=\s*"[^"]*\$\{')
+    # Semgrep may mask extra.lines for unauthenticated users. Inspect the
+    # matched expression's actual source span, preserving mixed-line output.
     _line_cache = {}
 
     def _src_line(path, lineno):
@@ -113,9 +112,19 @@ def run_semgrep(target):
         rid = r.get("check_id", "").split(".")[-1]
         path = r.get("path")
         line_no = r.get("start", {}).get("line")
-        if rid == "sqisoft-jsp-el-unescaped-model-attr" and \
-                _jstl_nonoutput.search(_src_line(path, line_no)):
-            continue
+        if rid == "sqisoft-jsp-el-unescaped-model-attr":
+            source_line = _src_line(path, line_no)
+            col = r.get("start", {}).get("col")
+            end_col = r.get("end", {}).get("col")
+            # Only the matched expression can be suppressed. Another safe tag
+            # on the same line says nothing about this output expression.
+            if (isinstance(col, int) and isinstance(end_col, int)
+                    and _jsp_match_is_safe(source_line, col - 1, end_col - 1)):
+                continue
+        if rid == "sqisoft-vue-v-html-unsanitized":
+            vals = [v for _q, v in _VHTML_ATTR.findall(_src_line(path, line_no))]
+            if vals and all(_VHTML_SANITIZER.search(v) for v in vals):
+                continue
         findings.append({
             "file": path,
             "line": line_no,
@@ -212,23 +221,40 @@ _VHTML_ATTR = re.compile(r'v-html\s*=\s*(["\'])(.*?)\1')
 _VHTML_SANITIZER = re.compile(r'DOMPurify|\bsanitize\b|\bpurify\b|escapeHtml', re.I)
 
 
+def _jsp_match_is_safe(line, start, end):
+    """Recognize the output/nonoutput tag containing this specific EL span."""
+    for tag in re.finditer(r'<c:(out|if|forEach|choose|when|set)\b[^>]*>', line):
+        if tag.start() <= start and end <= tag.end():
+            if tag.group(1) == "out":
+                if not re.search(r'escapeXml\s*=', tag.group(0), re.I):
+                    return True
+                setting = re.search(r'escapeXml\s*=\s*(["\'])(.*?)\1', tag.group(0), re.I)
+                return bool(setting and setting.group(2).lower() == "true")
+            return True
+    return False
+
+
 def run_fallback(target):
     findings = []
     for root, dirs, files in os.walk(target):
-        dirs[:] = [d for d in dirs if d not in _EXCLUDE_DIRS]
+        dirs[:] = contract.filter_dirs(root, dirs, _EXCLUDE_DIRS)
         for f in files:
             if _EXCLUDE_FILE_PATTERNS.search(f):
+                contract.record_ignored(os.path.join(root, f), "excluded_filename")
                 continue
             ext = os.path.splitext(f)[1].lower()
             rules = [r for r in FALLBACK_PATTERNS if ext in r[2]]
             if not rules:
+                contract.record_ignored(os.path.join(root, f), "unsupported_extension")
                 continue
             path = os.path.join(root, f)
             try:
                 with open(path, encoding="utf-8", errors="replace") as fh:
+                    contract.record_file(path)
                     for i, line in enumerate(fh, 1):
                         # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해 스킵
                         if len(line) > _MAX_LINE_LEN:
+                            contract.record_ignored(path, "line_too_long", line=i)
                             continue
                         for rule_id, stack, _exts, rx in rules:
                             if rx.search(line):
@@ -236,12 +262,9 @@ def run_fallback(target):
                                 # FR-4 — c:out/escapeXml 래핑은 안전. 또한 JSTL 비출력 컨텍스트
                                 # (c:if test / c:forEach items / c:set)의 EL은 HTML 출력이 아니므로
                                 # 제외한다(반복/조건 대상 오탐 제거).
-                                if rule_id == "jsp-el-unescaped-model" and (
-                                    re.search(r'escapeXml|<c:out', line) or
-                                    re.search(r'<c:(?:if|forEach|choose|when|set)\b[^>]*\b'
-                                              r'(?:test|items|select|var|target)\s*=\s*"[^"]*\$\{', line)
-                                ):
-                                    continue
+                                if rule_id == "jsp-el-unescaped-model":
+                                    if all(_jsp_match_is_safe(line, m.start(), m.end()) for m in rx.finditer(line)):
+                                        continue
                                 # frontend — v-html '속성값'이 전부 sanitize/DOMPurify 래핑일 때만
                                 # 방어로 제외. 같은 줄에 미새니타이즈 v-html이 하나라도 있으면 후보
                                 # 유지(줄 전체가 아니라 속성값 스코프로 판정 — 코드리뷰 finding).
@@ -255,6 +278,7 @@ def run_fallback(target):
                                     "snippet": line.strip()[:200],
                                 })
             except OSError:
+                contract.record_read_error(path)
                 continue
     return findings
 
@@ -290,6 +314,7 @@ def main():
         print(f"오류: 디렉토리가 아닙니다 — {args.target}", file=sys.stderr)
         sys.exit(2)
 
+    contract.reset()
     stacks = detect_stacks(args.target)
     engine = "semgrep" if (shutil.which("semgrep") and not os.environ.get("GXSEC_NO_SEMGREP")) else "grep-fallback"
 
@@ -313,6 +338,8 @@ def main():
         "note": "후보 목록입니다. 최종 취약/오탐 판정은 SKILL.md 2단계 AI 검증으로 수행하세요. "
                 "특히 fn:escapeXml() / <c:out> / th:text 래핑 여부를 반드시 확인하세요.",
     }
+    contract.enrich(result)
+    findings = result["candidates"]
     if warnings:
         result["warnings"] = warnings
 
@@ -332,6 +359,8 @@ def main():
         print("\n※ 후보일 뿐입니다. 2단계 AI 컨텍스트 검증 필요")
         print("  (fn:escapeXml / <c:out> 래핑 → 오탐, escapeXml=false / innerHTML → 요주의).")
 
+    return result_exit_code(result)
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

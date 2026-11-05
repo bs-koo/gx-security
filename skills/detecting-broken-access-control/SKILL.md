@@ -1,6 +1,12 @@
 ---
 name: detecting-broken-access-control
-description: "Spring·JSP 소스의 접근통제를 정적으로 진단할 때 사용한다. 객체 소유권 검증(IDOR), 기능별 권한 검사(BFLA)와 관리자 경로 보호를 검토한다."
+description: >-
+  SQIsoft 웹 애플리케이션에서 IDOR(Insecure Direct Object Reference)·BFLA(Broken Function-Level
+  Authorization)·강제 브라우징(Forced Browsing) 등 접근통제 취약점을 검사한다.
+  프로젝트 스택(Spring Boot 모던 / JSP·Servlet 레거시)을 자동 감지하여 스택별 Semgrep 룰로
+  1차 탐지하고, AI가 소유권 검증 유무·권한 체크 누락을 컨텍스트로 검증한다.
+  탐지 대상: PathVariable/파라미터 ID 소유권 미검증, 관리자 컨트롤러 @PreAuthorize 누락,
+  SecurityConfig adminPaths 미보호, JSP 관리자 URL 강제 브라우징, 메뉴 숨김에만 의존한 접근통제.
 domain: cybersecurity
 subdomain: web-application-security
 tags:
@@ -25,12 +31,17 @@ owasp:
 stacks:
   - spring-modern
   - jsp-legacy
-version: "0.8.2"
+version: "0.10.0"
 author: sqisoft-security
 license: Proprietary
 ---
 
-# 접근통제 보안 진단
+> Release-check contract (0.10.0): use the common gxsec CLI for developer checks and release evidence. Legacy commands below are expert/reference paths, not proof of release completion. Preserve candidate vs verified vs incomplete states; never treat status 200, reflection, a helper name, or an annotation alone as a confirmed exploit/defense. Credentials use references/stdin; no plain passwords/tokens in argv or chat. Required scope/readiness/authentication/confinement evidence is enforced by the new release path.
+
+
+SEF 또는 공통 방어가 관련된 후보는 [공유 SEF 문맥 검토](../checking-release-security/references/sef-context.md)를 읽고 공통 CLI 결과를 사용한다. 아래 전문가용 판정·오탐 표기는 검토 제안이며 원본 finding의 검증 상태·심각도·ID를 바꾸거나 보호된 독립 검토를 대체하지 않는다.
+
+# 접근통제 취약점 검사 (Broken Access Control / IDOR / BFLA)
 
 ## When to Use
 

@@ -1,113 +1,45 @@
-# 운영정책 (Operations Policy)
+# gx-security 운영 0.10.0
 
-gx-security를 사업부 공통으로 도입할 때 지켜야 하는 운영 규정. 대상 범위·스테이징 등록·자격증명 취급·파괴적 작업·산출물 보관을 다룬다. 안전 게이트의 실제 동작(`tools/scope_guard.py`)과 자격증명 노출 한계(`ATTACK_SAFETY.md`)를 그대로 반영하므로, 코드가 바뀌면 이 문서도 함께 갱신해야 한다. **동적(침투) 기능을 실행하기 전 반드시 숙지한다.**
+## 배포와 업데이트
 
-## 1. 대상 범위 원칙
+프리뷰를 로컬 또는 승인된 CI에서 사용합니다. 원격 저장소 push·서비스 배포·자동화 등록은 이 도구의 기본 동작이 아닙니다. Python bundle·엔진·규칙·DB는 각각 버전과 해시를 기록하며 검사 도중 자동 업데이트하지 않습니다.
 
-- 운영(production) 대상에는 **절대 사용 금지**. 로컬(loopback)과 사내에 등록한 스테이징만 대상으로 한다.
-- 모든 동적 발사(`attack_*.py`)는 발사 전에 `tools/scope_guard.py`의 `assert_in_scope()`를 반드시 거친다. 내부 판정 함수 `classify()`는 4단계 우선순위로 동작하며, 먼저 해당하는 규칙이 항상 뒤 규칙보다 우선한다.
+Windows 기본 경로는 고정 Linux 컨테이너입니다. source는 읽기 전용으로 연결하고 결과와 state는 별도 쓰기 경로에 둡니다. Docker socket을 검사 컨테이너에 제공하지 않습니다. --network none은 정적 경로의 기본이며 DB는 검사 전에 준비합니다.
 
-| 순서 | 판정 | 조건 | 결과 |
-|---|---|---|---|
-| ① deny | `prod`/`production`/`www.` 패턴 호스트, `SECURITY_PLUGIN_DENY_HOSTS` 등록 호스트, 링크로컬/클라우드 메타데이터(`169.254.0.0/16`), `0.0.0.0/8`, IPv6 링크로컬(`fe80::/10`) | 항상 차단 — `--authorized`+`SECURITY_PLUGIN_AUTHORIZED=1`로도 못 뚫음 |
-| ② IP 판정 | loopback(`127.0.0.0/8`, `::1`)은 항상 허용. 사설망(`10/8`·`172.16/12`·`192.168/16`·`fc00::/7`)은 기본 `needs-authorization`(`SECURITY_PLUGIN_ALLOW_PRIVATE=1`이면 허용). 공인 IP는 `needs-authorization` | 정수/16진/8진 표기 위장(예 `127.0.0.1`→`2130706433`)과 IPv4-mapped IPv6(`::ffff:...`)도 실제 대역으로 환산해 판정한다 |
-| ③ allow | `SECURITY_PLUGIN_ALLOW_HOSTS` 등록 호스트, `localhost`, 예약 TLD(`.localhost`/`.local`/`.test`/`.example`/`.invalid`) | 허용 |
-| ④ needs-authorization (기본값) | 위 어디에도 해당하지 않는 공인 도메인/IP, `ALLOW_PRIVATE` 미설정 사설 IP | `--authorized` + `SECURITY_PLUGIN_AUTHORIZED=1` 이중 충족이 없으면 차단 |
+## 통합 세션 진입점
 
-- 호스트 파싱에 실패하는 입력(빈 문자열, URL이 아닌 값 등)도 deny로 수렴한다(fail-closed) — 판정이 애매하면 차단이 원칙이다.
-- 공개 TLD(`.dev`/`.qa` 등)이거나 이름에 `staging`/`dev`가 들어 있다는 사실만으로는 자동 허용되지 않는다. 반드시 아래 §2·§3의 절차를 따른다.
-- ③의 `SECURITY_PLUGIN_ALLOW_HOSTS`는 **호스트명 매칭에만 적용**된다. 대상 문자열이 IP로 파싱되면 ②에서 먼저 판정이 끝나므로, IP 리터럴을 `ALLOW_HOSTS`에 넣어도 사설망 기본 차단을 우회하지 못한다.
+사용자는 등록된 통합 스킬 `gx-security`로 요청합니다. Claude Code의 짧은 명령은 `/gx-security:gx`, Codex의 명시 호출은 `$gx-security`입니다. 호스트가 스킬을 제공하는 환경에서는 관련 자연어 요청으로도 선택될 수 있습니다. 폴더를 여는 것만으로 플러그인이 설치되거나 모든 세션에 강제 적용된다고 가정하지 않습니다. 현재 0.10.0 로컬 프리뷰의 배포·등록 상태는 실제 설치본에서 확인합니다.
 
-## 2. 사내 스테이징 등록 절차
+프로젝트마다 setup 호출이나 설정 파일 생성은 요구하지 않습니다. 실제 검사 전에 가벼운 준비 확인을 수행하고 기존 설정·상태를 사용하며 설정이 없으면 기본값으로 실행합니다. 저장된 setup 완료 플래그를 실행 파일·버전·승인 근거 대신 사용하지 않습니다. 무관한 개발 작업은 이 흐름을 적용하지 않고, 결과 설명 요청은 기존 보고서만 읽습니다.
 
-사내에서 상시 점검하는 스테이징 호스트는 매번 `--authorized` 승인을 거치지 않도록 환경변수로 미리 등록한다.
+기존 실행 경로·상태를 우선 존중합니다. 준비된 Windows Docker 이미지가 있으면 호스트 Python 없이 사용할 수 있고, 직접 실행은 필요한 Python·패키지·보호된 runtime 근거를 확인한 뒤 선택합니다. Docker 실행기는 daemon·로컬 Linux 이미지 가용성을 확인하고 누락 시 준비 필요로 종료하며 자동 pull을 하지 않습니다. doctor는 결과 폴더를 만들지 않습니다. OS 도구 설치·고정 이미지 준비·DB 다운로드는 별도의 준비 행동이며, 기존 승인을 재사용하고 미결정 선택만 확인합니다.
 
-```bash
-# 쉼표로 여러 개 등록 가능. 정확매칭(단일 라벨 내부 호스트명 포함) 또는 .suffix(도메인) 매칭.
-export SECURITY_PLUGIN_ALLOW_HOSTS="staging.gx-internal.com,intranet-app01"
-```
+통합 스킬을 포함한 22개 스킬 중 기존 네 목적 명령은 호환 진입점으로 유지합니다. 의도가 명확한 검사·재검증을 시작하기 위해 반복 인터뷰를 요구하지 않습니다. 질문 없이 준비를 확인하는 동작이 동적 실행·외부 전송·위험 수용 권한을 새로 부여하지는 않습니다.
 
-- **정확매칭**: 목록 값과 호스트가 완전히 같으면 허용한다. 도메인이 없는 내부 호스트명(예 `intranet-app01`)도 이 방식으로 등록할 수 있다.
-- **suffix 매칭**: 목록 값이 점(`.`)을 포함한 도메인이면 그 하위 서브도메인도 모두 허용한다(`staging.gx-internal.com` 등록 시 `foo.staging.gx-internal.com`도 허용).
-- **과대 suffix 방지**: `com`처럼 라벨 하나만 등록해도 `evil.com`은 열리지 않는다 — suffix 매칭은 점을 포함한 등록값에만 적용되어 라벨 경계를 지킨다.
+## 신뢰 정책
 
-사설망(`10.x`/`172.16.x`/`192.168.x`) 스테이징은 별도 정책 결정이 필요하다:
+프로젝트 gxsec.yaml은 비밀 없는 요청 설정입니다. 필수 검사 제거·엔진 실행 파일 변경·외부 전송·위험 수용을 승인할 수 없습니다. --policy는 검사 source 밖의 보호된 파일을 가리켜야 합니다. 해당 파일과 그 생성·승인 권한은 조직이 보호해야 합니다. CLI가 승인자의 실제 신원을 대신 인증하지 않습니다.
 
-- `SECURITY_PLUGIN_ALLOW_PRIVATE=1`은 **사설 대역 전체**를 한 번에 여는 스위치다. **사내 운영계가 사설망 IP를 쓸 수 있으므로**, 공인 IP가 아니라는 사실만으로 스테이징이라고 보장할 수 없다. 따라서 **기본적으로 설정하지 않는 것을 권고**한다.
-- 대신 사설망 스테이징이라도 호스트/도메인이 고정돼 있으면 위 `SECURITY_PLUGIN_ALLOW_HOSTS`로 개별 등록하는 방식을 우선한다 — 어떤 대상이 열려 있는지 목록으로 남아 감사 가능하다.
-- 사설 IP가 유동적(DHCP 등)이라 개별 등록이 불가능한 경우에만, 예외적으로 팀 합의 하에 `SECURITY_PLUGIN_ALLOW_PRIVATE=1`을 한시적으로 사용하고 점검이 끝나면 즉시 해제한다.
-- `SECURITY_PLUGIN_ALLOW_PRIVATE=1`을 설정해도 링크로컬/메타데이터(`169.254.0.0/16`)는 열리지 않는다 — §1 ①에서 이미 절대 차단 대상이다.
+trusted_approvals는 승인 대상 record_id·canonical JSON digest·kind·역할을 묶습니다. 검토·예외 기록은 revision과 scope_hash,근거를 포함합니다. dirty tree에는 commit 대신 working-tree content hash를 사용해 승인을 재사용하지 못하게 합니다.
 
-## 3. 공인 대상 승인
+0.10의 문맥이 붙은 발견은 현재 `normalized_result_hash`도 검토·반증·위험 수용 기록에 연결합니다. 문맥·분석기·coverage 계약이 바뀌면 이전 승인은 재사용되지 않습니다. `review-packets.json`은 검토 제안이고 `framework-baseline.json`은 현재 소스 관측입니다. 조직 baseline 일치만으로 발견을 승인하거나 면제하지 않습니다.
 
-공인 도메인/IP(사설망도 미등록 상태면 동일하게)는 기본 `needs-authorization`이며, 아래 두 가지를 **동시에** 충족해야 통과한다.
+공식 release에는 clean checkout·artifact digest·보호된 CI 근거와 필수 수동 검토가 필요합니다. 기본 수동 항목은 role-matrix,sensitive-data,external-side-effects,business-logic입니다. 단순 이름 입력이나 프로젝트 내부 JSON은 승인 증거가 아닙니다.
 
-```bash
-export SECURITY_PLUGIN_AUTHORIZED=1
-python skills/exploiting-sql-injection/scripts/attack_sqli.py "https://api.company.com/search" --param q --authorized
-```
+## 권한과 조치
 
-1. 환경변수 `SECURITY_PLUGIN_AUTHORIZED=1`
-2. 실행 시 `--authorized` 플래그
+개발자가 수정·분석·근거 초안을 작성하고 QA/독립 기술 검토자가 시나리오와 적용 불가를 확인합니다. High/Critical 반증에는 security-reviewer 역할이, 위험 수용에는 security-owner+project-owner 역할이 필요합니다. 역할은 보호된 승인 절차에서 매핑합니다.
 
-- 둘 중 하나만 있으면 여전히 차단된다(이중 게이트, 우발적 오발사 방지).
-- **소유자 책임**: 이 이중 승인은 "권한 있는 대상임을 절차적으로 확인했다"는 코드 수준 게이트일 뿐, 실제 소유권과 테스트 승인 여부에 대한 책임은 실행한 운영자에게 있다. SQIsoft 사업부가 소유하지 않았거나 테스트 승인을 받지 않은 대상에는 이 옵션을 쓰지 않는다.
-- §1 ①의 deny(운영 의심 호스트, 링크로컬/메타데이터)는 이 이중 승인으로도 뚫리지 않는다 — 항상 최우선으로 차단된다.
+예외는 finding·revision·scope에 한정되며 담당·사유·만료가 필요합니다. 만료나 범위 변경을 자동 통과시키지 않습니다. baseline은 이력 표시 기준이며 기존 고위험 항목의 면제가 아닙니다.
 
-## 4. 자격증명 취급 규정 (MUST)
+## 결과 보관과 공유
 
-`attack_*.py`·`audit.py`는 계정 자격증명(비밀번호·토큰)을 세 경로로 받으며, 동시에 지정하면 **stdin > 환경변수 > 직접 인자** 순으로 우선한다. 경로마다 노출 정도가 다르다:
+직접 실행의 상태는 `.gxsec/state.sqlite3`와 runs snapshot, 공유본은 `.gxsec/reports/<run-id>`입니다. Windows Docker 실행기의 기본 상태는 `.gxsec-container/state`, 최신 공유본은 `.gxsec-container/report`입니다. 별도 Output을 사용했다면 그 아래의 `state`와 `report`를 그대로 사용합니다. 재검증 시 실행 경로만 보고 새 상태 저장소로 전환하지 않습니다.
 
-- **직접 인자**(`--token-a`, `--user-a-pw`, `--user-a-id` 등, 하위호환용)는 아래 경로로 **평문 노출**된다:
-  - 프로세스 목록 — 리눅스/macOS `ps aux`·`ps -ef`, Windows 작업관리자/`tasklist`
-  - 리눅스 `/proc/<pid>/cmdline`
-  - 셸 히스토리 — `~/.bash_history`, `~/.zsh_history`, PowerShell `PSReadLine` 히스토리 파일
+공유본은 마스킹된 result.json에서 동일한 판정으로 생성합니다. snapshot은 불변이며 변경은 새 run으로 기록합니다. 상태·key·DB·보고서 경로의 저장소 유도 symlink를 거부합니다. 기존 결과를 설명할 때는 해당 결과의 시각·revision·범위를 밝히며 현재 소스가 다시 검사된 것으로 표현하지 않습니다.
 
-  같은 호스트를 쓰는 다른 사용자나 이후 세션이 그대로 읽을 수 있다.
+원문 자격증명을 대화·파일·argv에 넣지 않습니다. 보존기한과 접근권한은 사내 규정으로 설정합니다. 로컬 개발 결과를 공식 승인으로 재포장하지 않습니다. 외부 파일 공유는 수신자·권한이 정해진 별도 절차로 수행합니다.
 
-- **환경변수 이름 전달**(`--user-a-pw-env <VAR>`·`--token-a-env <VAR>` 등)은 인자로 변수 **이름**만 넘기므로 위 프로세스 목록·`cmdline` 노출은 없다. 다만 비밀값은 여전히 프로세스의 환경변수 블록에 실제로 존재해 환경변수 조회 경로(리눅스 `/proc/<pid>/environ` 등)로는 노출될 수 있고, 값을 최초로 설정하는 `export`/`$env:` 명령 자체가 히스토리에 남을 수 있다 — **프로세스 노출이 잔존**한다.
+## 유지보수
 
-- **`--creds-stdin`**은 stdin에서 JSON을 1회 읽어 처리하므로 프로세스 인자·환경변수 어디에도 비밀이 남지 않는다 — 세 경로 중 **프로세스 노출을 완전히 없애는 유일한 방식**이다. 다만 입력 시 `echo`로 비밀을 직접 타이핑하면 그 명령 자체가 셸 히스토리에는 남을 수 있다(프로세스 노출과는 별개 채널) — 완전히 피하려면 임시 파일 리다이렉트 등을 쓴다. 구체적 명령은 [RUNBOOK-dynamic.md](RUNBOOK-dynamic.md) §2를 참고한다.
-
-**v0.5.0부터 지원됨**: 위 환경변수 이름 전달(`--user-a-pw-env`/`--token-a-env` 등)과 `--creds-stdin` 경로는 attack 4종(`exploiting-auth-session`·`exploiting-broken-access-control`·`exploiting-ssrf-and-open-redirect`·`exploiting-path-traversal-upload`)과 `audit.py`에 모두 배선되어 있다. `audit.py`는 이 경로로 받은 비밀을 내부에서 발사하는 자식 프로세스에도 cmd 인자 평문이 아닌 환경변수로 전달한다. **`--creds-stdin`을 기본으로 쓰고**, 자동화 스크립트 등에서 stdin 파이프 연결이 어려운 경우에만 `--*-env`로 대체한다(위 잔존 노출 한계를 감수하는 선택). 스택별 로그인 프로파일(`--login-profile`)을 포함한 전체 사용 절차는 [RUNBOOK-dynamic.md](RUNBOOK-dynamic.md)를 참고한다.
-
-**현재 유효한 완화책(필수 — 입력 경로와 무관하게 적용)**:
-- **단일 운영자 전용 격리 호스트**에서만 실행한다 — 공유·멀티유저 호스트에서는 절대 실행하지 않는다.
-- 운영 계정과 분리된 **전용 테스트 계정**만 사용한다(실사용자 계정·운영 자격증명은 절대 사용 금지).
-- 가능하면 히스토리를 남기지 않는 세션(예: `HISTFILE=` 비움, PowerShell 히스토리 비활성화)에서 실행한다.
-- 가능하면 **`--creds-stdin`을 우선 사용**한다 — 프로세스 노출이 없는 유일한 입력 경로다.
-
-**무효한 완화책(직접 인자에서 착각하지 말 것)**:
-- 직접 인자에 셸 변수를 대입하는 방식(`--token-a "$TOKEN"`)은 프로세스 목록 노출을 막지 **못한다**. 셸이 실행(execve) 전에 `$TOKEN`을 실제 값으로 확장하므로 `/proc/<pid>/cmdline`에는 결국 평문이 그대로 실린다. 셸 히스토리 노출만 일부 완화될 뿐이다. 이 패턴 대신 **`--token-a-env TOKEN`**(값이 아니라 변수 **이름**을 전달)을 쓰면 최소한 `cmdline` 노출은 막을 수 있다 — 위 "환경변수 이름 전달" 항목을 따른다.
-
-## 5. 파괴적 작업
-
-기본은 **비파괴**다. 모든 `exploiting-*` 스킬은 원칙적으로 탐지용 페이로드만 발사하며 데이터를 변경·삭제하지 않는다. 유일한 예외는 `exploiting-path-traversal-upload`의 업로드 확인이며, 대상 서버에 실제 파일을 기록한다.
-
-```bash
-python skills/exploiting-path-traversal-upload/scripts/attack_pathupload.py \
-    "https://staging.gx-internal.com" --upload-target "/api/v1/files" \
-    --allow-destructive --authorized
-```
-
-- `--allow-destructive` 플래그가 없으면 업로드 검사 자체가 스킵된다(코드 레벨 차단 — `attack_pathupload.py`가 플래그 부재 시 검사를 건너뛰고 "--allow-destructive 필요"만 보고).
-- **사람 승인 없이 이 플래그를 켜지 않는다** — 실행 전 운영자가 대상 소유권과 실행 필요성을 확인하고 승인한 뒤에만 실행한다.
-- 업로드하는 마커 파일은 코드가 없는 무해한 표식이다: 파일명 `gxmarker_<6바이트 hex nonce>.jsp`, 내용은 `GXMARKER-<nonce>` 텍스트뿐(코드 실행 시도 없음).
-
-**leftover 마커 파일 수동 삭제 절차** (자동 정리 기능은 없다):
-
-1. 실행 결과(콘솔/`--json` 출력)의 `leftover` 필드 또는 `[정리 필요] 업로드된 마커 파일: ...` 메시지에서 업로드된 파일명(`gxmarker_*.jsp`)을 확인한다.
-2. 대상 서버에 SSH/FTP/관리자 콘솔 등으로 접속해 업로드 디렉터리(또는 회수에 성공한 웹루트 경로)에서 해당 파일을 찾는다.
-3. 파일을 수동으로 삭제한다 — 회수 조회(`--retrieve-base`)에 성공해 취약점이 확정된 경우에도 서버의 실물 파일은 스크립트가 지우지 않고 그대로 남는다.
-4. 삭제 완료 여부를 점검 리포트(`reports/`)에 기록한다.
-
-## 6. 점검 산출물 취급
-
-- 점검 리포트(`reports/`)와 동적 공격 증거(`evidence/`, 스크린샷·HAR 등 `*.har`)는 `.gitignore`로 형상관리에서 제외된다 — 취약점 위치·시크릿 등 민감정보를 담고 있어 저장소에 커밋하지 않는다.
-- 현재는 **로컬 보관만** 지원한다. 팀 단위 중앙 이력관리·티켓 연동은 아직 없다.
-- 중앙 보관 방안(별도 저장소/티켓 첨부/사내 위키 연동 중 결정)은 **v0.7.0(Phase 4, 작업 O5)에서 확정 예정**이다.
-- 그 전까지는 점검 완료 후 운영자가 필요 시 리포트를 수동으로 팀에 공유한다(예: 티켓 첨부).
-
----
-
-관련 문서: [README.md](../README.md)(개요·설정) · [RUNBOOK-dynamic.md](RUNBOOK-dynamic.md)(동적 점검 실전 런북 — 이 정책을 실제 명령으로 구체화) · [ATTACK_SAFETY.md](../ATTACK_SAFETY.md)(공격형 스킬 안전 수칙 원문) · [severity-rubric.md](severity-rubric.md)(심각도 판정 기준)
+core/schema,규칙,동적 정책과 릴리스의 담당을 지정하고 최소 2인 리뷰 체계를 권장합니다. 정기 업데이트에서는 기존 회귀·실제 엔진 smoke·새 품질 corpus를 확인합니다. 정확도·시간 목표는 실제 사업부 holdout/사용자 파일럿 전에는 달성했다고 표기하지 않습니다.

@@ -1,16 +1,26 @@
 ---
 name: auditing-web-application-security
-description: "웹 애플리케이션의 전체 보안 점검을 요청할 때 사용한다. 소스 코드의 취약점 후보를 검토하고, 승인된 로컬·스테이징 URL이 있으면 동적 검증 결과를 통합 보고서로 정리한다."
+description: >-
+  SQIsoft 웹 애플리케이션을 정적·동적 한 번에 통합 점검하는 오케스트레이터 스킬.
+  소스 경로(필수)와 실행 중인 스테이징/로컬 URL(선택)을 받아, 9종 취약점(CSRF·XSS·SQLi·
+  파일업로드·Path Traversal·접근통제·인증세션·민감정보·SSRF)을 정적 스캐너로 일괄 도출하고
+  AI가 오탐을 거른 뒤, 대상 URL이 있으면 실제 페이로드를 발사해 악용을 확정하여 통합 리포트를
+  만든다. "전체 점검", "보안 점검", "취약점 다 봐줘" 요청 시 이 스킬을 쓴다.
 domain: cybersecurity
 subdomain: web-application-security
 tags: [audit, owasp, sast, dast, orchestrator, sqisoft, full-scan]
 stacks: [spring-modern, jsp-legacy]
-version: "0.8.2"
+version: "0.10.0"
 author: sqisoft-security
 license: Proprietary
 ---
 
-# 웹 애플리케이션 보안 통합 점검
+> Release-check contract (0.10.0): use the common gxsec CLI for developer checks and release evidence. Legacy commands below are expert/reference paths, not proof of release completion. Preserve candidate vs verified vs incomplete states; never treat status 200, reflection, a helper name, or an annotation alone as a confirmed exploit/defense. Credentials use references/stdin; no plain passwords/tokens in argv or chat. Required scope/readiness/authentication/confinement evidence is enforced by the new release path.
+
+
+SEF 또는 공통 방어가 관련된 후보는 [공유 SEF 문맥 검토](../checking-release-security/references/sef-context.md)를 읽고 공통 CLI 결과를 사용한다. 아래 전문가용 판정·오탐 표기는 검토 제안이며 원본 finding의 검증 상태·심각도·ID를 바꾸거나 보호된 독립 검토를 대체하지 않는다.
+
+# 웹 애플리케이션 보안 통합 점검 (정적 + 동적 한 번에)
 
 이 스킬은 개별 `detecting-*`(정적)·`exploiting-*`(동적) 스킬을 **하나로 오케스트레이션**한다.
 사용자가 "이 프로젝트 전체 점검해줘"라고 하면 단계별 호출 없이 이 스킬 하나로 끝까지 수행한다.

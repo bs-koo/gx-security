@@ -5,6 +5,32 @@
 # 특히 ${...} placeholder와 실제 평문 값 구분은 AI 검증 단계에서 확정한다.
 
 rules:
+  - id: sqisoft-hardcoded-credential-dotenv
+    languages: [generic]
+    severity: ERROR
+    message: Plaintext credential in an environment configuration file requires review.
+    metadata:
+      cwe: CWE-798
+      owasp: A02:2021
+      stack: configuration
+      confidence: needs-context
+    paths:
+      include: [".env", ".env.*", "*.env"]
+    pattern-regex: '(?im)^\s*(?:export\s+)?[\w]*(?:password|passwd|pwd|secret|api_?key|access_?token|auth_?token)[\w]*\s*=\s*["'']?(?!\$)(?!["'']?\s*(?:#|$))[^\s"'']{4,}'
+
+  - id: sqisoft-hardcoded-credential-frontend
+    languages: [generic]
+    severity: ERROR
+    message: Plaintext credential in frontend source requires review and removal from the client bundle.
+    metadata:
+      cwe: CWE-798
+      owasp: A02:2021
+      stack: frontend
+      confidence: needs-context
+    paths:
+      include: ["*.js", "*.ts", "*.jsx", "*.tsx", "*.mjs", "*.cjs", "*.vue"]
+    pattern-regex: '(?i)\b[\w]*(?:password|passwd|pwd|secret|api_?key|access_?token|auth_?token)[\w]*\s*[=:]\s*["''](?!\$\{)[^"'']{6,}["'']'
+
   # ───────────────────────── 공통 — 하드코딩 자격증명 ─────────────────────────
 
   - id: sqisoft-hardcoded-password-assignment
@@ -225,6 +251,15 @@ rules:
         - "*.xml"
         - "*.json"
         - "*.env"
+        - ".env"
+        - ".env.*"
+        - "*.js"
+        - "*.ts"
+        - "*.jsx"
+        - "*.tsx"
+        - "*.mjs"
+        - "*.cjs"
+        - "*.vue"
         - "*.conf"
         - "*.config"
     pattern-regex: '\bAKIA[0-9A-Z]{16}\b'
@@ -250,6 +285,15 @@ rules:
         - "*.xml"
         - "*.json"
         - "*.env"
+        - ".env"
+        - ".env.*"
+        - "*.js"
+        - "*.ts"
+        - "*.jsx"
+        - "*.tsx"
+        - "*.mjs"
+        - "*.cjs"
+        - "*.vue"
         - "*.conf"
         - "*.config"
     pattern-regex: '\bghp_[0-9A-Za-z]{20,}\b'
@@ -278,6 +322,15 @@ rules:
         - "*.xml"
         - "*.json"
         - "*.env"
+        - ".env"
+        - ".env.*"
+        - "*.js"
+        - "*.ts"
+        - "*.jsx"
+        - "*.tsx"
+        - "*.mjs"
+        - "*.cjs"
+        - "*.vue"
         - "*.conf"
         - "*.config"
     pattern-regex: '-----BEGIN\s+(?:RSA|EC|DSA|OPENSSH|PGP|ENCRYPTED)?\s*PRIVATE KEY-----'
@@ -303,6 +356,15 @@ rules:
         - "*.xml"
         - "*.json"
         - "*.env"
+        - ".env"
+        - ".env.*"
+        - "*.js"
+        - "*.ts"
+        - "*.jsx"
+        - "*.tsx"
+        - "*.mjs"
+        - "*.cjs"
+        - "*.vue"
         - "*.conf"
         - "*.config"
     # ${...} 플레이스홀더는 (?!\$\{) 로 제외

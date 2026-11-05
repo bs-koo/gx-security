@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gx-security.local/schemas/discussion.json",
+  "title": "gx-security source-bound user intent discussion v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "session_id", "run_id", "project_id", "revision", "authority", "run_digest", "source_binding", "packet_bindings", "questions", "parent_digest", "session_digest", "created_at", "updated_at"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "session_id": {"$ref": "#/$defs/identity"},
+    "run_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "project_id": {"type": "string", "minLength": 1},
+    "revision": {"type": "integer", "minimum": 0, "maximum": 1024},
+    "authority": {"const": "discussion-only"},
+    "run_digest": {"$ref": "#/$defs/digest"},
+    "source_binding": {"type": "object"},
+    "packet_bindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_id", "normalized_result_hash", "packet_digest"],
+        "properties": {
+          "finding_id": {"type": "string", "minLength": 1},
+          "normalized_result_hash": {"$ref": "#/$defs/digest"},
+          "packet_digest": {"$ref": "#/$defs/digest"}
+        }
+      }
+    },
+    "questions": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/question"}},
+    "parent_digest": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/digest"}]},
+    "session_digest": {"$ref": "#/$defs/digest"},
+    "created_at": {"type": "string", "minLength": 1, "maxLength": 64},
+    "updated_at": {"type": "string", "minLength": 1, "maxLength": 64}
+  },
+  "$defs": {
+    "identity": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$"},
+    "digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "text": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "hash", "line"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "hash": {"$ref": "#/$defs/digest"},
+        "line": {"type": "integer", "minimum": 1},
+        "end_line": {"type": "integer", "minimum": 1}
+      }
+    },
+    "answer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["answer_status", "answer", "respondent", "provenance", "recorded_at"],
+      "properties": {
+        "answer_status": {"enum": ["answered", "unknown", "deferred"]},
+        "answer": {"type": "string", "maxLength": 8192},
+        "respondent": {"type": "string", "minLength": 1, "maxLength": 256},
+        "provenance": {"const": "user-reported"},
+        "recorded_at": {"type": "string", "minLength": 1, "maxLength": 64}
+      }
+    },
+    "assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_id", "outcome", "summary", "evidence_refs", "remaining_questions", "authority", "recorded_at"],
+      "properties": {
+        "finding_id": {"type": "string", "minLength": 1},
+        "outcome": {"enum": ["consistent", "mismatch", "unresolved"]},
+        "summary": {"$ref": "#/$defs/text"},
+        "evidence_refs": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/reference"}},
+        "remaining_questions": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/text"}},
+        "authority": {"const": "proposal-only"},
+        "recorded_at": {"type": "string", "minLength": 1, "maxLength": 64}
+      }
+    },
+    "question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["question_id", "finding_ids", "prompt", "purpose", "code_refs", "options", "parent_question_id", "answer", "assessments"],
+      "properties": {
+        "question_id": {"$ref": "#/$defs/identity"},
+        "finding_ids": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "prompt": {"$ref": "#/$defs/text"},
+        "purpose": {"$ref": "#/$defs/text"},
+        "code_refs": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/reference"}},
+        "options": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/text"}},
+        "parent_question_id": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/identity"}]},
+        "answer": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/answer"}]},
+        "assessments": {"type": "array", "description": "One current observation per finding; previous observations remain in immutable revisions.", "uniqueItems": true, "maxItems": 1024, "items": {"$ref": "#/$defs/assessment"}}
+      }
+    }
+  }
+}

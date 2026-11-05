@@ -69,7 +69,10 @@ def run_static(source):
         return None, str(e)[:150]
 
 
-def run_dynamic(target, params, authorized):
+def run_dynamic(target, params, authorized, *, creds=None, secret_env_names=None,
+                auth_mode="bearer", id_field=None, pw_field=None, success_path=None,
+                login_path=None, body_template=None, token_path=None,
+                content_type="form", inject_path=None, method="get", data=None):
     results = []
     for vuln, script in DYNAMIC.items():
         if not os.path.exists(script):
@@ -80,9 +83,23 @@ def run_dynamic(target, params, authorized):
                 cmd += ["--param", param]
             if authorized:
                 cmd += ["--authorized"]
+            cmd += ["--content-type", content_type, "--method", method]
+            if inject_path:
+                cmd += ["--inject-path", inject_path]
+            if data:
+                cmd += ["--data", data]
+            credentials = creds or {}
+            child_env = os.environ.copy()
+            for key, flag in (("token_a", "token-a"), ("user_a_pw", "user-a-pw")):
+                _add_secret_arg(cmd, child_env, flag, key, credentials.get(key),
+                                {**_SECRET_ENV_VARS, **(secret_env_names or {})})
+            if credentials.get("user_a_id"):
+                cmd += ["--user-a-id", credentials["user_a_id"]]
+            _append_auth_mode(cmd, auth_mode, id_field, pw_field, success_path, login_path,
+                              body_template, token_path)
             try:
                 out = subprocess.run(cmd, capture_output=True, text=True,
-                                     encoding="utf-8", errors="replace", timeout=600)
+                                     encoding="utf-8", errors="replace", timeout=600, env=child_env)
                 # 안전게이트 차단 시 비-JSON(차단 메시지)일 수 있음 → 안전 파싱
                 try:
                     data = json.loads(out.stdout or "{}")
@@ -797,6 +814,10 @@ def main():
     ap.add_argument("source", help="검사 대상 소스 디렉토리")
     ap.add_argument("--target", help="실행 중인 대상 URL(스테이징/로컬). 주면 동적 공격 수행")
     ap.add_argument("--params", help="동적 공격 대상 파라미터(쉼표구분, 예: id,q,search)")
+    ap.add_argument("--content-type", choices=["form", "json"], default="form")
+    ap.add_argument("--inject-path", help="SQLi/XSS JSON 주입 경로(예: data.query)")
+    ap.add_argument("--method", choices=["get", "post"], default="get")
+    ap.add_argument("--data", help="SQLi/XSS 추가 form 데이터")
     ap.add_argument("--authorized", action="store_true", help="공인 대상 명시 승인(소유자 책임)")
     # 접근통제(BFLA/IDOR) 동적 연계용 테스트 계정/토큰 (개선 D)
     ap.add_argument("--user-a-id"); ap.add_argument("--user-a-pw")
@@ -908,7 +929,6 @@ def main():
             [p.strip() for p in args.params.split(",") if p.strip()] or None
             if args.params else None
         )
-        report["phases"]["dynamic"] = run_dynamic(args.target, params, args.authorized)
         creds = {"user_a_id": args.user_a_id, "user_a_pw": args.user_a_pw,
                  "user_b_id": args.user_b_id, "user_b_pw": args.user_b_pw,
                  "token_a": args.token_a, "token_b": args.token_b,
@@ -924,6 +944,10 @@ def main():
                    "pw_field": args.pw_field, "success_path": args.success_path,
                    "login_path": args.login_path,
                    "body_template": args.body_template, "token_path": args.token_path}
+        report["phases"]["dynamic"] = run_dynamic(
+            args.target, params, args.authorized, creds=creds, secret_env_names=secret_env_names,
+            content_type=args.content_type, inject_path=args.inject_path, method=args.method,
+            data=args.data, **_cookie)
         report["phases"]["access_dynamic"] = run_access_dynamic(
             args.target, report["phases"]["static"], creds, args.authorized,
             secret_env_names=secret_env_names, **_cookie)
@@ -1003,7 +1027,7 @@ def main():
     elif acc.get("confidence") == "dynamic":
         res = acc.get("result", {})
         fcount = len(res.get("findings", [])) if isinstance(res, dict) else 0
-        print(f"[접근통제] 동적 확정 발사 완료 — findings {fcount}건")
+        print(f"[접근통제] 동적 관측 완료 — findings {fcount}건 (신원·리소스 oracle 검토 필요)")
     elif acc.get("error"):
         print(f"[접근통제] 오류: {acc['error']}")
     elif acc.get("skipped"):
@@ -1017,7 +1041,7 @@ def main():
     elif au.get("confidence") == "static-only":  # 과대표기 방지(AC-2)
         print(f"[인증] 정적 추정(동적 미확정) — {au.get('note')}")
     elif au.get("confidence") in ("partial", "dynamic"):
-        label = "부분 발사(쿠키만)" if au["confidence"] == "partial" else "동적 확정 발사"
+        label = "부분 발사(쿠키만)" if au["confidence"] == "partial" else "동적 관측 발사"
         print(f"[인증] {label}")
         for f in au.get("result", {}).get("findings", []):  # finding별 취약/방어(FR-4)
             # 우선순위 skipped > error > vulnerable. error finding(발사 예외 격리)을
@@ -1040,7 +1064,7 @@ def main():
                         if v.get("error"):  # variant 발사 예외도 '방어'로 은폐 금지
                             print(f"        · {v.get('variant')}: ⚠ 오류: {v.get('error')}")
                             continue
-                        mark = "🔴 취약" if v.get("vulnerable") else "방어"
+                        mark = _verdict_label(v)
                         print(f"        · {v.get('variant')}(HTTP {v.get('status')}): {mark}")
     elif au.get("error"):
         print(f"[인증] 오류: {au['error']}")

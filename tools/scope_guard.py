@@ -2,7 +2,8 @@
 """
 공격형(exploiting-*) 스킬 공용 안전 게이트.
 
-실제 공격 페이로드를 발사하기 전에 대상이 '권한 있는 테스트 범위'인지 강제 검증한다.
+레거시 전문가 경로에서 발사 전 호스트·scheme의 입력 적합성을 확인한다.
+DNS 목적지/IP·redirect·환경 격리 보장은 아니다. 새 출시 경로는 gxsec.transport를 사용한다.
 모든 attack_*.py 는 발사 전에 반드시 assert_in_scope() 를 호출하며, 이 함수는
 모든 비허용 입력을 ScopeError 로 정규화한다(파싱 실패 포함 → fail-closed).
 
@@ -14,7 +15,7 @@
 - 정수형 IP 표기(십진/16진/8진)도 IP로 해석(127.0.0.1 → 2130706433 등 위장 차단).
 - 자동 허용 도메인: localhost 및 RFC 예약 TLD(.localhost/.local/.test/.example/.invalid)만.
   공개 TLD(.dev/.qa 등)와 'staging'/'dev' 부분일치는 자동 허용하지 않는다.
-- 사내 스테이징은 SECURITY_PLUGIN_ALLOW_HOSTS(쉼표구분, 정확매칭 또는 suffix)로 명시 등록.
+- 사내 스테이징은 SECURITY_PLUGIN_ALLOW_HOSTS(쉼표구분, 정확매칭)로 명시 등록.
 - 운영 의심(prod/production/www) 및 SECURITY_PLUGIN_DENY_HOSTS: 항상 차단(우선).
 - 그 외 공인 도메인/IP: '권한 필요'(--authorized + SECURITY_PLUGIN_AUTHORIZED=1 동시 충족 시만).
 """
@@ -72,9 +73,16 @@ class ScopeError(Exception):
 def _host_from(target: str) -> str:
     """호스트를 소문자·후행점 제거로 정규화. 파싱 실패 시 '' 반환(→ deny 수렴)."""
     try:
+        if not isinstance(target, str) or re.search(r"[\x00-\x20\x7f\\]", target):
+            return ""
         if "://" not in target:
             target = "http://" + target
-        host = urlparse(target).hostname or ""
+        parsed = urlparse(target)
+        if parsed.scheme not in {"http", "https"} or parsed.username is not None or parsed.password is not None or parsed.fragment:
+            return ""
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            return ""
+        host = parsed.hostname or ""
     except (ValueError, TypeError):
         return ""
     return host.strip().rstrip(".").lower()
@@ -138,11 +146,9 @@ def classify(target: str) -> tuple[str, str]:
                 return "needs-authorization", f"사설 IP(사내 운영 가능 — 기본 차단): {host}"
         return "needs-authorization", f"공인 IP: {host}"
 
-    # ③ 명시 허용 호스트(환경변수) — 정확매칭은 단일 라벨(내부 호스트명)도 허용하되,
-    #    suffix 매칭은 도메인(점 포함, ≥2 라벨)만 허용한다. "com" 같은 과대 suffix가
-    #    evil.com 을 여는 풋건을 차단한다(코드리뷰 M8).
+    # ③ Explicit host entries match exactly and never grant subdomain scope.
     for entry in _env_list("SECURITY_PLUGIN_ALLOW_HOSTS"):
-        if host == entry or ("." in entry and host.endswith("." + entry)):
+        if host == entry:
             return "allow", f"허용 목록(SECURITY_PLUGIN_ALLOW_HOSTS): {host}"
 
     # ③ localhost 및 RFC 예약 TLD만 자동 허용

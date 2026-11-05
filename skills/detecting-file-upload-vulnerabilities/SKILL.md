@@ -1,6 +1,11 @@
 ---
 name: detecting-file-upload-vulnerabilities
-description: "Spring·JSP 소스의 파일 업로드 처리를 정적으로 진단할 때 사용한다. 파일 형식 검증, 저장 위치와 파일명 처리의 취약점 후보를 검토한다."
+description: >-
+  SQIsoft 웹 애플리케이션에서 악성 파일 업로드(웹쉘 업로드, CWE-434) 취약점을 검사한다.
+  파일 업로드 기능이 있는 게시판·첨부파일·인증서 등록 화면에서 확장자 화이트리스트 부재,
+  매직바이트 미검증, 웹루트 내부 저장, Content-Type만 신뢰, 원본 파일명 그대로 사용,
+  이중 확장자 우회 등의 패턴을 탐지한다. spring-modern(Spring Boot + MultipartFile)과
+  jsp-legacy(JSP/Servlet + commons-fileupload) 두 스택을 지원한다.
 domain: cybersecurity
 subdomain: web-application-security
 tags:
@@ -17,12 +22,17 @@ tags:
 cwe: [CWE-434]
 owasp: [A04:2021-Insecure-Design, A05:2021-Security-Misconfiguration]
 stacks: [spring-modern, jsp-legacy]
-version: "0.8.2"
+version: "0.10.0"
 author: sqisoft-security
 license: Proprietary
 ---
 
-# 파일 업로드 보안 진단
+> Release-check contract (0.10.0): use the common gxsec CLI for developer checks and release evidence. Legacy commands below are expert/reference paths, not proof of release completion. Preserve candidate vs verified vs incomplete states; never treat status 200, reflection, a helper name, or an annotation alone as a confirmed exploit/defense. Credentials use references/stdin; no plain passwords/tokens in argv or chat. Required scope/readiness/authentication/confinement evidence is enforced by the new release path.
+
+
+SEF 또는 공통 방어가 관련된 후보는 [공유 SEF 문맥 검토](../checking-release-security/references/sef-context.md)를 읽고 공통 CLI 결과를 사용한다. 아래 전문가용 판정·오탐 표기는 검토 제안이며 원본 finding의 검증 상태·심각도·ID를 바꾸거나 보호된 독립 검토를 대체하지 않는다.
+
+# 악성 파일 업로드 취약점 검사 (CWE-434 / Unrestricted Upload of File with Dangerous Type)
 
 ## When to Use
 

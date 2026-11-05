@@ -30,6 +30,8 @@ if _PLUGIN_ROOT not in sys.path:
     sys.path.insert(0, _PLUGIN_ROOT)
 from tools import io_utf8  # noqa: E402  (UTF-8 콘솔 강제 — Windows cp949 크래시 방지, Task 1)
 io_utf8.configure()
+from tools.scanner_contract import ScannerContract, result_exit_code  # noqa: E402
+contract = ScannerContract()
 
 RULES = os.path.join(os.path.dirname(HERE), "rules", "file-upload.yml")
 
@@ -67,12 +69,12 @@ def run_semgrep(target):
     cmd = ["semgrep", "--config", RULES, "--json", "--quiet",
            "--exclude", ".dev", "--exclude", ".omc", "--exclude", ".humanize", target]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+        out = contract.run_semgrep(cmd, capture_output=True, text=True, timeout=600,
                              encoding="utf-8", errors="replace")
     except (subprocess.TimeoutExpired, OSError) as e:
-        return None, f"semgrep 실행 실패: {e}"
+        return None, f"semgrep 실행 실패: {type(e).__name__}"
     if out.returncode not in (0, 1):  # 1 = findings 있음
-        return None, f"semgrep 오류(rc={out.returncode}): {out.stderr[:300]}"
+        return None, f"semgrep 오류(rc={out.returncode}): (diagnostic details retained in execution metadata)"
     try:
         data = json.loads(out.stdout or "{}")
     except json.JSONDecodeError:
@@ -139,21 +141,24 @@ ZIPSLIP_CONTEXT_KEYWORD = re.compile(r"ZipEntry|ZipInputStream|ZipFile")
 def run_fallback(target):
     findings = []
     for root, dirs, files in os.walk(target):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        dirs[:] = contract.filter_dirs(root, dirs, SKIP_DIRS)
         for fname in files:
             ext = os.path.splitext(fname)[1].lower()
             applicable = [r for r in FALLBACK_PATTERNS if ext in r[2]]
             if not applicable:
+                contract.record_ignored(os.path.join(root, fname), "unsupported_extension")
                 continue
             fpath = os.path.join(root, fname)
             try:
                 with open(fpath, encoding="utf-8", errors="replace") as fh:
+                    contract.record_file(fpath)
                     lines = fh.readlines()
                 file_content = "".join(lines)
 
                 for i, line in enumerate(lines, 1):
                     # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해 스킵
                     if len(line) > _MAX_LINE_LEN:
+                        contract.record_ignored(fpath, "line_too_long", line=i)
                         continue
                     for rule_id, stack, _exts, rx in applicable:
                         if not rx.search(line):
@@ -173,6 +178,7 @@ def run_fallback(target):
                             "snippet": line.strip()[:200],
                         })
             except OSError:
+                contract.record_read_error(fpath)
                 continue
     return findings
 
@@ -208,6 +214,7 @@ def main():
         print(f"오류: 디렉토리가 아닙니다 — {args.target}", file=sys.stderr)
         sys.exit(2)
 
+    contract.reset()
     stacks = detect_stacks(args.target)
     engine = "semgrep" if (shutil.which("semgrep") and not os.environ.get("GXSEC_NO_SEMGREP")) else "grep-fallback"
 
@@ -234,6 +241,8 @@ def main():
             "저장 경로가 웹루트 밖인지를 코드+설정 파일로 추적해야 합니다."
         ),
     }
+    contract.enrich(result)
+    findings = result["candidates"]
     if warnings:
         result["warnings"] = warnings
 
@@ -255,6 +264,8 @@ def main():
             "  안전 패턴(validateFile/FileValidator 선행 + 웹루트 밖 저장)은 오탐 처리하세요."
         )
 
+    return result_exit_code(result)
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

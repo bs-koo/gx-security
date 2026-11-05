@@ -51,6 +51,8 @@ def _semgrep_usable():
     windows는 PyPI 네이티브 휠 부재로 실행파일은 있어도(shutil.which 통과) semgrep-core 미탑재라
     `semgrep --version`이 rc!=0으로 실패한다 → 이 경우 semgrep 경로 테스트를 skip해
     grep-fallback 강등으로 engine 단언이 실패하는 것을 막는다. ubuntu(rc=0)에선 검증을 유지한다."""
+    if os.environ.get("GXSEC_NO_SEMGREP"):
+        return False
     exe = shutil.which("semgrep")
     if not exe:
         return False
@@ -271,14 +273,11 @@ class TestSqliGoldenset(unittest.TestCase):
 
 
 @unittest.skipUnless(_SEMGREP_OK, "semgrep 미가용 → 스킵(ubuntu semgrep-tests에서 검증)")
-class TestIdorPreAuthorizeExclusion(unittest.TestCase):
-    """IDOR 룰이 @PreAuthorize 권한 핸들러를 semgrep 경로에서 제외하는지 검증(Task 8).
+class TestIdorPreAuthorizeContext(unittest.TestCase):
+    """Authorization annotations do not prove object ownership.
 
-    접근통제는 정적으로 권한 충분성을 확정할 수 없으나, 명시적 @PreAuthorize/@Secured가
-    붙은 핸들러는 최소한의 권한 게이트가 있으므로 semgrep 경로에서 제외한다(표현식 부실
-    여부는 동적 exploiting-broken-access-control이 확정). 무방비(@PreAuthorize 없음) 핸들러는
-    계속 탐지되어 silent FN이 없음을 함께 검증한다. golden set safe==0 방식은 fallback의
-    silent-FN-방지(후보 유지+confidence 하향) 설계와 충돌하므로 이 전용 테스트로 검증한다."""
+    Preserve the candidate for context review in both scanner engines.
+    """
     _RULE = "sqisoft-spring-pathvariable-id-no-ownership-check"
     _PREAUTH = (
         "import org.springframework.web.bind.annotation.GetMapping;\n"
@@ -308,9 +307,9 @@ class TestIdorPreAuthorizeExclusion(unittest.TestCase):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
-    def test_preauthorize_excluded(self):
-        self.assertNotIn(self._RULE, self._rule_ids(self._PREAUTH),
-                         "@PreAuthorize 권한 핸들러는 semgrep 경로에서 제외되어야 한다")
+    def test_preauthorize_preserves_ownership_candidate(self):
+        self.assertIn(self._RULE, self._rule_ids(self._PREAUTH),
+                      "@PreAuthorize alone cannot establish object ownership")
 
     def test_bare_still_detected(self):
         self.assertIn(self._RULE, self._rule_ids(self._BARE),

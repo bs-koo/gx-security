@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gx-security.local/schemas/check.json",
+  "title": "gx-security check v1",
+  "type": "object",
+  "required": [
+    "id",
+    "status",
+    "required",
+    "coverage",
+    "errors"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "degraded",
+        "partial",
+        "failed",
+        "skipped",
+        "unsupported",
+        "cancelled",
+        "incomplete",
+        "not_applicable"
+      ]
+    },
+    "required": {
+      "type": "boolean"
+    },
+    "errors": {
+      "type": "array"
+    },
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "eligible": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scanned": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scope": {
+          "enum": [
+            "full",
+            "diff",
+            "partial",
+            "changed"
+          ]
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "requested_scope": {
+          "enum": [
+            "diff",
+            "full"
+          ]
+        }
+      }
+    },
+    "engine": {
+      "type": "object"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "required": [
+        "copy_verified",
+        "stable_after_scan",
+        "digest"
+      ],
+      "properties": {
+        "copy_verified": {
+          "type": "boolean"
+        },
+        "stable_after_scan": {
+          "type": "boolean"
+        },
+        "digest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "input_file_hashes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "history": {
+          "type": "object",
+          "properties": {
+            "required": {
+              "type": "boolean"
+            },
+            "status": {
+              "enum": [
+                "complete",
+                "incomplete",
+                "not_available"
+              ]
+            },
+            "refs_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          }
+        }
+      }
+    }
+  }
+}

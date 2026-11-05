@@ -5,15 +5,15 @@
     "email": "bonseung@sqisoft.com"
   },
   "metadata": {
-    "description": "웹 애플리케이션의 소스 코드 진단과 승인된 로컬·스테이징 환경의 동적 검증을 지원하는 보안 점검 워크플로.",
-    "version": "0.8.2"
+    "description": "Guided project security checks with automatic readiness and shared evidence.",
+    "version": "0.10.0"
   },
   "plugins": [
     {
       "name": "gx-security",
       "source": "./",
-      "description": "웹 애플리케이션의 소스 코드 진단과 승인된 로컬·스테이징 환경의 동적 검증을 지원하는 보안 점검 워크플로.",
-      "version": "0.8.2",
+      "description": "One guided entry for readiness, security checks, result review and same-state retesting with developer/QA/PM reports.",
+      "version": "0.10.0",
       "author": {
         "name": "bs-koo"
       },

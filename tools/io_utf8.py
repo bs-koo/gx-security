@@ -20,6 +20,7 @@ import io
 import json
 import os
 import sys
+from tools.redaction import redact
 
 
 def configure():
@@ -57,7 +58,7 @@ def emit_json(obj, *, indent=2):
     이 분기 앞에 버퍼링된 print()를 추가하지 말 것(추가한다면 먼저
     sys.stdout.flush()할 것).
     """
-    data = json.dumps(obj, ensure_ascii=False, indent=indent)
+    data = json.dumps(redact(obj), ensure_ascii=False, indent=indent)
     buf = getattr(sys.stdout, "buffer", None)
     if buf is not None:
         buf.write(data.encode("utf-8"))

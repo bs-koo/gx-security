@@ -29,10 +29,10 @@ class TestClassifyNoEnv(unittest.TestCase):
              "foo.test", "x.localhost", "y.local", "z.example", "w.invalid"]
     # 위장 IP(정수/16진/IPv4-mapped)·와일드카드·운영패턴·빈 문자열 → 절대 차단
     DENY = ["169.254.169.254", "2852039166", "0xa9fea9fe", "[::ffff:169.254.169.254]",
-            "0.0.0.0", "www.company.com", "prod.company.com", "production.company.com", ""]
+            "0.0.0.0", "www.company.com", "prod.company.com", "production.company.com", "", "not a url"]
     # 사설망·공인 IP/도메인 → 자동 허용 안 함(기본 차단, 승인 필요)
     NEEDS = ["10.0.0.5", "192.168.1.1", "8.8.8.8", "api.company.com",
-             "staging.company.com", "not a url"]
+             "staging.company.com"]
 
     def test_allow(self):
         for h in self.ALLOW:
@@ -61,9 +61,9 @@ class TestClassifyEnv(unittest.TestCase):
         with patch.dict(os.environ, {"SECURITY_PLUGIN_ALLOW_PRIVATE": "1"}, clear=True):
             self.assertEqual(classify("169.254.169.254")[0], "deny")
 
-    def test_allow_hosts_suffix_and_exact(self):
+    def test_allow_hosts_exact_only(self):
         with patch.dict(os.environ, {"SECURITY_PLUGIN_ALLOW_HOSTS": "example.com"}, clear=True):
-            self.assertEqual(classify("api.example.com")[0], "allow")   # suffix
+            self.assertEqual(classify("api.example.com")[0], "needs-authorization")
             self.assertEqual(classify("example.com")[0], "allow")       # exact
             self.assertEqual(classify("notexample.com")[0], "needs-authorization")  # 라벨경계
 

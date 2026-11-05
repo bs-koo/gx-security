@@ -79,7 +79,7 @@ class TestIsJwt(unittest.TestCase):
 
 class TestRunJwtTamper(unittest.TestCase):
     @patch("tools.dyn_session.request")
-    def test_2xx_variant_is_vulnerable(self, mock_req):
+    def test_2xx_variant_is_undetermined_without_oracle(self, mock_req):
         # before=200(정상토큰), anon=401(무토큰 → 인증 적용 확인), 변조 200 → 취약
         mock_req.side_effect = [
             {"status": 200, "body": "{}", "elapsed": 0.0, "headers": {}},  # before
@@ -87,7 +87,8 @@ class TestRunJwtTamper(unittest.TestCase):
         ] + [{"status": 200, "body": "{}", "elapsed": 0.0, "headers": {}} for _ in range(4)]
         tok = _make_jwt({"alg": "HS256"}, {"sub": "u", "roles": ["USER"]})
         out = attack_auth.run_jwt_tamper("http://h", "/api/v1/users/me", tok)
-        self.assertTrue(out["vulnerable"])
+        self.assertFalse(out["vulnerable"])
+        self.assertEqual(out["validation"], "undetermined")
 
     @patch("tools.dyn_session.request")
     def test_403_all_is_defended(self, mock_req):
@@ -124,7 +125,7 @@ class TestRunJwtTamper(unittest.TestCase):
 
 class TestTokenReuse(unittest.TestCase):
     @patch("tools.dyn_session.request")
-    def test_reuse_after_logout_vulnerable(self, mock_req):
+    def test_reuse_after_logout_needs_identity_oracle(self, mock_req):
         mock_req.side_effect = [
             {"status": 200, "body": "", "elapsed": 0.0, "headers": {}},  # before
             {"status": 401, "body": "", "elapsed": 0.0, "headers": {}},  # anon(무토큰 → 인증 적용 확인)
@@ -132,8 +133,9 @@ class TestTokenReuse(unittest.TestCase):
             {"status": 200, "body": "", "elapsed": 0.0, "headers": {}},  # after
         ]
         out = attack_auth.run_token_reuse("http://h", "/api/v1/users/me", "T", "/api/v1/auth/logout")
-        self.assertTrue(out["vulnerable"])
-        self.assertNotIn("undetermined", out)  # opaque 토큰은 무상태 게이트 미해당(회귀)
+        self.assertFalse(out["vulnerable"])
+        self.assertEqual(out["validation"], "undetermined")
+        self.assertTrue(out["undetermined"])  # opaque 2xx also needs an identity/resource oracle
 
     @patch("tools.dyn_session.request")
     def test_stateless_jwt_reuse_is_undetermined(self, mock_req):

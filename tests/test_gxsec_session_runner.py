@@ -1,0 +1,385 @@
+"""Exercise the Windows session runner without engines, network or project code."""
+import base64
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import time
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+RUNNER = ROOT / 'scripts/gxsec.ps1'
+POWERSHELL = shutil.which('powershell.exe') if os.name == 'nt' else None
+CSC = Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+pytestmark = pytest.mark.skipif(not POWERSHELL or not CSC.exists(), reason='Windows PowerShell and .NET fixture compiler required')
+IMAGE_ID = 'sha256:' + 'f' * 64
+
+
+FAKE_DOCKER = r'''
+using System;
+using System.IO;
+using System.Text;
+using System.Threading;
+class FakeDocker {
+    static int Main(string[] args) {
+        string line = "";
+        foreach (string arg in args) {
+            if (line.Length > 0) line += "\t";
+            line += Convert.ToBase64String(Encoding.UTF8.GetBytes(arg));
+        }
+        File.AppendAllText(Environment.GetEnvironmentVariable("GXSEC_FAKE_LOG"), line + "\n");
+        if (args.Length > 0 && args[0] == "info") {
+            string mode = Environment.GetEnvironmentVariable("GXSEC_FAKE_DAEMON");
+            if (mode == "timeout") Thread.Sleep(20000);
+            if (mode == "down") { Console.Error.WriteLine("PRETEND_SECRET_SHOULD_NOT_LEAK"); return 1; }
+            Console.WriteLine(mode == "windows" ? "windows" : "linux");
+            return 0;
+        }
+        if (args.Length > 1 && args[0] == "image" && args[1] == "inspect") {
+            string mode = Environment.GetEnvironmentVariable("GXSEC_FAKE_IMAGE");
+            if (mode == "missing") { Console.Error.WriteLine("PRETEND_SECRET_SHOULD_NOT_LEAK"); return 1; }
+            Console.WriteLine("sha256:" + new String('f', 64) + "|" + (mode == "windows" ? "windows" : "linux"));
+            return 0;
+        }
+        if (args.Length > 0 && args[0] == "run") {
+            Console.WriteLine("{\"fixture\":\"docker-run\"}");
+            string code = Environment.GetEnvironmentVariable("GXSEC_FAKE_RUN_EXIT");
+            return code == null ? 0 : Int32.Parse(code);
+        }
+        Console.Error.WriteLine("Unexpected fake Docker operation");
+        return 90;
+    }
+}
+'''
+
+
+@pytest.fixture(scope='module')
+def fake_docker(tmp_path_factory):
+    directory = tmp_path_factory.mktemp('docker-cli')
+    source = directory / 'FakeDocker.cs'
+    source.write_text(FAKE_DOCKER, encoding='utf-8')
+    executable = directory / 'docker.exe'
+    built = subprocess.run([str(CSC), '/nologo', '/target:exe', '/out:' + str(executable), str(source)],
+                           capture_output=True, text=True, timeout=30)
+    assert built.returncode == 0, built.stdout + built.stderr
+    return executable
+
+
+@pytest.fixture
+def case(tmp_path, fake_docker):
+    source = tmp_path / 'project [literal] with spaces'
+    source.mkdir()
+    (source / 'App.java').write_text('class App {}\n', encoding='utf-8')
+    log = tmp_path / 'docker-argv.log'
+    environment = os.environ.copy()
+    environment.update({'PATH': str(fake_docker.parent), 'GXSEC_FAKE_LOG': str(log),
+                        'GXSEC_FAKE_DAEMON': '', 'GXSEC_FAKE_IMAGE': '', 'GXSEC_FAKE_RUN_EXIT': '0'})
+    return source, log, environment
+
+
+def invoke(case, *arguments, timeout=30):
+    source, _, environment = case
+    return subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                           '-File', str(RUNNER), '-Source', str(source), *arguments],
+                          env=environment, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout)
+
+
+def calls(case):
+    log = case[1]
+    if not log.exists():
+        return []
+    return [[base64.b64decode(part).decode('utf-8') for part in line.split('\t')]
+            for line in log.read_text(encoding='utf-8').splitlines()]
+
+
+def incomplete(result, reason):
+    assert result.returncode == 2, result.stdout + result.stderr
+    data = json.loads(result.stdout)
+    assert data['status'] == 'INCOMPLETE' and data['phase'] == 'preparation', data
+    assert data['reason'] == reason, data
+    assert 'PRETEND_SECRET_SHOULD_NOT_LEAK' not in result.stdout + result.stderr
+
+
+def test_doctor_uses_ready_local_image_without_creating_or_mounting_output(case):
+    result = invoke(case, '-Action', 'doctor')
+    assert result.returncode == 0, result.stdout + result.stderr
+    operations = calls(case)
+    assert [row[0] for row in operations] == ['info', 'image', 'run']
+    run = operations[-1]
+    assert '--pull' in run and run[run.index('--pull') + 1] == 'never'
+    assert IMAGE_ID in run and run[run.index(IMAGE_ID) + 1:] == ['doctor', '--source', '/workspace', '--json']
+    assert not any('target=/results' in arg for arg in run)
+    assert not (case[0] / '.gxsec-container').exists()
+
+
+def test_release_preserves_literal_mounts_security_options_and_state(case):
+    output = case[0].parent / 'shared reports ; literal'
+    result = invoke(case, '-Action', 'release', '-Output', str(output), '-Json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert run[:3] == ['run', '--rm', '--pull']
+    for name, value in [('--network', 'none'), ('--cap-drop', 'ALL'), ('--security-opt', 'no-new-privileges')]:
+        assert run[run.index(name) + 1] == value
+    assert '--read-only' in run
+    assert 'type=bind,source=' + str(case[0]) + ',target=/workspace,readonly' in run
+    assert 'type=bind,source=' + str(output) + ',target=/results' in run
+    assert run[run.index(IMAGE_ID) + 1:] == ['release', '/workspace', '--profile', 'static-release',
+        '--state-dir', '/results/state', '--output', '/results/report', '--json']
+    assert output.is_dir()
+
+
+def test_check_preserves_base_as_one_argument(case):
+    result = invoke(case, '-Action', 'check', '-Base', 'feature/demo;literal')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert run[run.index('--base') + 1] == 'feature/demo;literal'
+
+
+def test_check_defaults_to_check_profile(case):
+    result = invoke(case, '-Action', 'check')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert run[run.index('--profile') + 1] == 'check'
+
+
+def test_check_preserves_an_explicit_profile(case):
+    result = invoke(case, '-Action', 'check', '-Profile', 'static-release')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert run[run.index('--profile') + 1] == 'static-release'
+
+
+def test_retest_uses_original_id_profile_and_same_output_state(case):
+    output = case[0] / '.gxsec-container'
+    (output / 'state').mkdir(parents=True)
+    marker = output / 'state/history-marker'
+    marker.write_text('existing-state', encoding='utf-8')
+    database = output / 'state/state.sqlite3'
+    database.write_bytes(b'opaque-existing-state')
+    result = invoke(case, '-Action', 'retest', '-FindingId', 'GXSEC-0123456789abcdef0123',
+                    '-RunId', '20261105T120000Z-old', '-Profile', 'check', '-Json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert run[run.index(IMAGE_ID) + 1:] == ['retest', 'GXSEC-0123456789abcdef0123', '--source', '/workspace',
+        '--profile', 'check', '--state-dir', '/results/state', '--output', '/results/report',
+        '--run-id', '20261105T120000Z-old', '--json']
+    assert marker.read_text(encoding='utf-8') == 'existing-state'
+    assert database.read_bytes() == b'opaque-existing-state'
+
+
+@pytest.mark.parametrize('run_id', [None, 'previous-release-run'])
+def test_retest_without_explicit_profile_defers_to_saved_run(case, run_id):
+    state = case[0] / '.gxsec-container/state'
+    state.mkdir(parents=True)
+    (state / 'state.sqlite3').write_bytes(b'opaque-existing-state')
+    arguments = ['-Action', 'retest', '-FindingId', 'GXSEC-0123456789abcdef0123', '-Json']
+    if run_id:
+        arguments += ['-RunId', run_id]
+    result = invoke(case, *arguments)
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert '--profile' not in run, 'An omitted profile must be inherited by the CLI from saved history'
+    assert run[run.index('--state-dir') + 1] == '/results/state'
+    if run_id:
+        assert run[run.index('--run-id') + 1] == run_id
+
+
+def test_retest_without_saved_state_does_not_create_a_new_store(case):
+    incomplete(invoke(case, '-Action', 'retest', '-FindingId', 'GXSEC-0123456789abcdef0123', '-Json'),
+               'previous_state_unavailable')
+    assert calls(case) == []
+    assert not (case[0] / '.gxsec-container').exists()
+
+
+@pytest.mark.parametrize('code', [1, 2, 3, 137])
+def test_engine_exit_codes_are_preserved(case, code):
+    case[2]['GXSEC_FAKE_RUN_EXIT'] = str(code)
+    result = invoke(case, '-Action', 'release')
+    assert result.returncode == code, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(('arguments', 'reason'), [
+    (['-Action', 'retest'], 'invalid_arguments'),
+    (['-Action', 'release', '-FindingId', 'GXSEC-synthetic'], 'invalid_arguments'),
+    (['-Action', 'release', '-RunId', 'previous'], 'invalid_arguments'),
+    (['-Action', 'release', '-Base', 'HEAD~1'], 'invalid_arguments'),
+    (['-Action', 'retest', '-FindingId', '--policy'], 'invalid_arguments'),
+    (['-Action', 'check', '-Base', '--bad-option'], 'invalid_arguments'),
+    (['-Action', 'retest', '-FindingId', 'GXSEC-synthetic', '-RunId', '../other'], 'invalid_arguments'),
+    (['-Action', 'unknown'], 'invalid_arguments'),
+    (['-Image', '--pull'], 'invalid_arguments'),
+])
+def test_invalid_arguments_fail_before_docker_or_source_output(case, arguments, reason):
+    incomplete(invoke(case, *arguments, '-Json'), reason)
+    assert calls(case) == []
+    assert not (case[0] / '.gxsec-container').exists()
+
+
+def test_missing_docker_is_preparation_incomplete_without_output(case):
+    case[2]['PATH'] = ''
+    incomplete(invoke(case, '-Action', 'release', '-Json'), 'docker_cli_unavailable')
+    assert not (case[0] / '.gxsec-container').exists()
+
+
+@pytest.mark.parametrize(('variable', 'value', 'reason', 'expected_calls'), [
+    ('GXSEC_FAKE_DAEMON', 'down', 'docker_unavailable', 1),
+    ('GXSEC_FAKE_DAEMON', 'windows', 'docker_linux_required', 1),
+    ('GXSEC_FAKE_IMAGE', 'missing', 'image_unavailable', 2),
+    ('GXSEC_FAKE_IMAGE', 'windows', 'image_linux_required', 2),
+])
+def test_unready_runtime_never_scans_pulls_or_creates_output(case, variable, value, reason, expected_calls):
+    case[2][variable] = value
+    incomplete(invoke(case, '-Action', 'release', '-Json'), reason)
+    operations = calls(case)
+    assert len(operations) == expected_calls
+    assert not any(row[0] in {'pull', 'build', 'run'} for row in operations)
+    assert not (case[0] / '.gxsec-container').exists()
+
+
+def test_docker_probe_has_bounded_wait(case):
+    case[2]['GXSEC_FAKE_DAEMON'] = 'timeout'
+    started = time.monotonic()
+    incomplete(invoke(case, '-Action', 'doctor', '-Json', timeout=17), 'docker_probe_timeout')
+    assert time.monotonic() - started < 14
+    assert len(calls(case)) == 1
+
+
+def test_docker_executable_from_project_is_never_executed(case, fake_docker):
+    local_bin = case[0] / 'bin'
+    local_bin.mkdir()
+    shutil.copy2(fake_docker, local_bin / 'docker.exe')
+    case[2]['PATH'] = str(local_bin)
+    incomplete(invoke(case, '-Action', 'doctor', '-Json'), 'untrusted_docker_location')
+    assert calls(case) == []
+
+
+def test_output_file_is_rejected_before_docker_probe(case):
+    output = case[0].parent / 'not-a-directory'
+    output.write_text('preserve', encoding='utf-8')
+    incomplete(invoke(case, '-Output', str(output), '-Json'), 'invalid_output')
+    assert output.read_text(encoding='utf-8') == 'preserve'
+    assert calls(case) == []
+
+
+def discussion_state(case, run_id='previous-run'):
+    output = case[0] / '.gxsec-container'
+    state = output / 'state'
+    (state / 'runs').mkdir(parents=True)
+    (state / 'state.sqlite3').write_bytes(b'opaque-existing-state')
+    (state / 'runs' / (run_id + '.json')).write_text('{}', encoding='utf-8')
+    return output
+
+
+def test_discuss_uses_original_saved_run_without_overwriting_scan_report(case):
+    output = discussion_state(case)
+    report = output / 'report/result.json'
+    report.parent.mkdir()
+    report.write_text('immutable scan report', encoding='utf-8')
+    result = invoke(case, '-Action', 'discuss', '-RunId', 'previous-run', '-Json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert run[run.index(IMAGE_ID) + 1:] == ['discuss', 'previous-run', '--source', '/workspace',
+        '--state-dir', '/results/state', '--json']
+    assert '--profile' not in run and '--output' not in run
+    assert run[run.index('--network') + 1] == 'none'
+    assert run[run.index('--pull') + 1] == 'never'
+    assert '--read-only' in run
+    assert report.read_text(encoding='utf-8') == 'immutable scan report'
+
+
+def test_discuss_passes_record_as_literal_readonly_mount(case):
+    discussion_state(case)
+    record = case[0].parent / '응답 [literal] ; question.json'
+    payload = '{"expected_revision": 1, "type": "answer", "answer": "본인 자료"}'
+    record.write_text(payload, encoding='utf-8')
+    result = invoke(case, '-Action', 'discuss', '-RunId', 'previous-run',
+                    '-SessionId', 'session-123', '-Record', str(record), '-Json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert 'type=bind,source=' + str(record) + ',target=/discussion-input/record.json,readonly' in run
+    assert run[run.index(IMAGE_ID) + 1:] == ['discuss', 'previous-run', '--source', '/workspace',
+        '--state-dir', '/results/state', '--session-id', 'session-123',
+        '--record', '/discussion-input/record.json', '--json']
+    assert record.read_text(encoding='utf-8') == payload
+
+
+@pytest.mark.parametrize('seed_database,seed_snapshot', [(False, False), (True, False), (False, True)])
+def test_discuss_missing_original_state_does_not_create_store_or_probe_docker(case, seed_database, seed_snapshot):
+    output = case[0] / '.gxsec-container'
+    if seed_database or seed_snapshot:
+        (output / 'state/runs').mkdir(parents=True)
+    if seed_database:
+        (output / 'state/state.sqlite3').write_bytes(b'original')
+    if seed_snapshot:
+        (output / 'state/runs/previous-run.json').write_text('{}', encoding='utf-8')
+    before = sorted(str(p.relative_to(output)) for p in output.rglob('*')) if output.exists() else []
+    incomplete(invoke(case, '-Action', 'discuss', '-RunId', 'previous-run', '-Json'),
+               'previous_state_unavailable')
+    assert calls(case) == []
+    after = sorted(str(p.relative_to(output)) for p in output.rglob('*')) if output.exists() else []
+    assert after == before
+
+
+@pytest.mark.parametrize('arguments', [
+    ['-Action', 'discuss'],
+    ['-Action', 'discuss', '-RunId', 'previous-run', '-Profile', 'static-release'],
+    ['-Action', 'discuss', '-RunId', 'previous-run', '-Base', 'HEAD'],
+    ['-Action', 'discuss', '-RunId', 'previous-run', '-FindingId', 'GXSEC-test'],
+    ['-Action', 'discuss', '-RunId', '../escape'],
+    ['-Action', 'discuss', '-RunId', 'previous-run', '-SessionId', '../escape'],
+    ['-Action', 'discuss', '-RunId', 'previous-run', '-Record', 'answer.json'],
+    ['-Action', 'release', '-SessionId', 'session-123'],
+    ['-Action', 'doctor', '-Record', 'answer.json'],
+])
+def test_discussion_arguments_are_rejected_before_any_files_or_docker(case, arguments):
+    incomplete(invoke(case, *arguments, '-Json'), 'invalid_arguments')
+    assert calls(case) == []
+    assert not (case[0] / '.gxsec-container').exists()
+
+
+@pytest.mark.parametrize('record_kind', ['missing', 'directory', 'comma'])
+def test_discuss_invalid_record_is_rejected_before_docker(case, record_kind):
+    discussion_state(case)
+    record = case[0].parent / ('record,extra.json' if record_kind == 'comma' else 'record.json')
+    if record_kind == 'directory':
+        record.mkdir()
+    elif record_kind == 'comma':
+        record.write_text('{}', encoding='utf-8')
+    incomplete(invoke(case, '-Action', 'discuss', '-RunId', 'previous-run', '-SessionId', 'session-123',
+                      '-Record', str(record), '-Json'), 'invalid_record')
+    assert calls(case) == []
+
+
+@pytest.mark.parametrize('link_kind', ['record', 'run'])
+def test_discuss_reparse_inputs_are_never_forwarded_to_docker(case, link_kind):
+    output = discussion_state(case)
+    original = case[0].parent / 'outside.json'
+    original.write_text('{}', encoding='utf-8')
+    if link_kind == 'run':
+        link = output / 'state/runs/previous-run.json'
+        link.unlink()
+        arguments = []
+        reason = 'previous_state_unavailable'
+    else:
+        link = case[0].parent / 'record-link.json'
+        arguments = ['-SessionId', 'session-123', '-Record', str(link)]
+        reason = 'invalid_record'
+    try:
+        link.symlink_to(original)
+    except OSError:
+        pytest.skip('symlink creation unavailable on this host')
+    incomplete(invoke(case, '-Action', 'discuss', '-RunId', 'previous-run', *arguments, '-Json'), reason)
+    assert calls(case) == []
+    assert original.read_text(encoding='utf-8') == '{}'
+
+
+def test_discuss_show_forwards_only_saved_session_identity(case):
+    discussion_state(case)
+    result = invoke(case, '-Action', 'discuss', '-RunId', 'previous-run', '-SessionId', 'session-123', '-Json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert run[run.index(IMAGE_ID) + 1:] == ['discuss', 'previous-run', '--source', '/workspace',
+        '--state-dir', '/results/state', '--session-id', 'session-123', '--json']
