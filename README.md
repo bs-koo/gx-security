@@ -1,121 +1,140 @@
+<div align="center">
+
 # GX Security
 
-## 코드에서 찾고, 실행 근거로 확인하세요.
+**한 번의 요청으로, 출시 전 보안 점검과 결과 공유.**
 
-Spring·JSP 웹 애플리케이션의 취약점 후보를 찾고, 필요한 경우 승인된 로컬·스테이징 환경에서 재현 여부를 확인합니다.
-결과는 **취약점 · 발생 원인 · 재현 절차 · 대응 방안**으로 정리합니다.
+개발자가 실행하고 QA·PM과 함께 결과를 읽는 Claude Code·Codex 보안 점검 플러그인입니다.
 
-**Claude Code 플러그인 · 커맨드 3개 · 스킬 17개**
+[![Preview](https://img.shields.io/badge/preview-0.10.0-141413)](#시작하기) [![Published](https://img.shields.io/badge/published-0.8.2-666666)](#설치와-배포-상태)
 
-[동작 방식](#어떻게-동작하나요) · [스킬](#스킬-구성) · [설치](#설치하고-시작하기) · [실전 가이드](USAGE.md)
+[동작 방식](#플러그인-동작) · [시작하기](#시작하기) · [결과](#점검-결과) · [스킬](#스킬-구성) · [소개 페이지](https://bs-koo.github.io/gx-security/)
 
-## 어떻게 동작하나요?
+</div>
 
-**소스 진단 → 코드 문맥 검토 → 선택적 동적 검증 → 보고서**
+> **0.10.0 프리뷰 기준 안내입니다.** 공개 marketplace 배포본은 현재 **0.8.2**입니다. 통합 스킬은 0.10.0 실행기·스킬이 설치·등록된 세션에서 사용합니다.
 
-1. **후보를 찾습니다.** 기술 스택을 식별하고 9개 정적 진단 스킬로 소스를 분석합니다.
-2. **코드 문맥을 검토합니다.** Claude가 입력·처리·출력 경로와 보안 설정을 읽어 후보를 검토합니다.
-3. **실행으로 확인합니다.** URL·표적 옵션·계정 등 조건이 갖춰진 항목은 대상 범위 확인 후 동적으로 검증합니다.
-4. **근거를 남깁니다.** 발견 사항과 재현 근거·대응 방안을 `reports/`에 정리합니다.
+## 플러그인 동작
 
-### 무엇부터 실행하면 되나요?
+```text
+요청 → 준비 확인 → 보안 검사 → 근거 검토 → 보고서·재검증
+```
 
-| 필요한 작업 | 커맨드 | 입력 |
+1. **프로젝트를 확인합니다.** 현재 폴더 또는 지정한 소스와 기존 설정·이력을 읽습니다.
+2. **필요한 준비를 확인합니다.** 실행 환경이 없으면 준비 방법을 안내하고 필요한 선택만 묻습니다.
+3. **후보와 근거를 정리합니다.** 코드·의존성·시크릿·SEF 기반을 검사하고 방어 근거와 미확인 조건을 함께 남깁니다.
+4. **결과를 공유합니다.** 개발자 조치·QA 확인표·PM 보고서를 만들고 수정 후에는 같은 이력으로 재검증합니다.
+
+**프로젝트마다 setup을 호출할 필요는 없습니다.** 설정 파일이 없으면 기본값으로 진행합니다.
+
+<a id="통합-스킬로-시작"></a>
+
+## 시작하기
+
+프로젝트 폴더에서 세션을 열고 통합 스킬 하나에 요청합니다.
+
+### Claude Code
+
+```text
+/gx-security:gx 현재 프로젝트 출시 전에 보안 점검하고 QA·PM 보고서 만들어줘
+```
+
+### Codex
+
+```text
+$gx-security 현재 프로젝트 출시 전에 보안 점검하고 QA·PM 보고서 만들어줘
+```
+
+등록된 스킬을 호스트가 발견할 수 있으면 자연어로도 요청할 수 있습니다.
+
+| 요청 예 | 하는 일 |
+|---|---|
+| “출시 전에 보안 점검해줘” | 준비 확인 후 정적 출시 점검 |
+| “변경한 부분 봐줘” | 변경 기준을 기록하고 보수적으로 소스 재검사 |
+| “이 발견 ID를 수정했어. 다시 확인해줘” | 이전 실행·발견 ID·검사 범위를 이어 재검증 |
+| “지난 보고서 설명해줘” | 저장된 결과만 읽고 설명 |
+
+<a id="설치하고-시작하기"></a>
+<a id="설치와-배포-상태"></a>
+<a id="새-노트북에서-사용"></a>
+
+<details>
+<summary>설치와 배포 상태 · 처음 쓰는 노트북</summary>
+
+2026-11-05 기준입니다.
+
+| 버전 | 상태 | 시작점 |
 |---|---|---|
-| 소스에서 취약점 후보 찾기 | `/gx-security:gx-diagnose` | 소스 경로 |
-| 실행 중인 앱의 후보 검증 | `/gx-security:gx-pentest` | 승인된 대상 URL·표적 옵션 |
-| 진단과 검증을 함께 요청 | `/gx-security:gx-audit` | 소스 경로, 선택적 대상 URL |
+| **0.8.2** | 공개 marketplace 설치본 · 스킬 17개 | 기존 `gx-diagnose`·`gx-audit`·`gx-pentest` |
+| **0.10.0** | 별도 로컬 프리뷰 · 스킬 22개 | 실행기·스킬 패키지 등록 후 통합 `gx-security` |
 
-동적 검증은 승인된 대상과 필요한 입력이 있을 때 수행합니다. 실행하지 못한 항목은 정적 추정·미검증 상태로 구분합니다.
-CLI 스캐너의 후보 출력과 Claude 검토를 거친 최종 보고서는 구분해야 합니다.
-
-## 스킬 구성
-
-### 통합 점검 · 1개
-
-[`auditing-web-application-security`](skills/auditing-web-application-security/SKILL.md)가 소스 진단과 선택적 동적 검증을 연결하고 결과를 통합합니다.
-
-### 정적 진단 · 9개
-
-실행 중인 앱 없이 소스 코드와 설정에서 취약점 후보를 찾습니다.
-
-| 스킬 | 확인하는 내용 |
-|---|---|
-| [`detecting-csrf-vulnerabilities`](skills/detecting-csrf-vulnerabilities/SKILL.md) | CSRF 보호 설정과 상태 변경 요청 |
-| [`detecting-xss-vulnerabilities`](skills/detecting-xss-vulnerabilities/SKILL.md) | 출력 경로·이스케이프·DOM XSS |
-| [`detecting-sql-injection`](skills/detecting-sql-injection/SKILL.md) | SQL 조립과 파라미터 바인딩 |
-| [`detecting-file-upload-vulnerabilities`](skills/detecting-file-upload-vulnerabilities/SKILL.md) | 파일 형식 검증·저장 경로·파일명 처리 |
-| [`detecting-path-traversal`](skills/detecting-path-traversal/SKILL.md) | 파일 조회·다운로드의 경로 검증 |
-| [`detecting-broken-access-control`](skills/detecting-broken-access-control/SKILL.md) | 객체 소유권과 기능별 접근 권한 |
-| [`detecting-auth-session-weaknesses`](skills/detecting-auth-session-weaknesses/SKILL.md) | 인증·세션·JWT·쿠키 설정 |
-| [`detecting-sensitive-data-exposure`](skills/detecting-sensitive-data-exposure/SKILL.md) | 자격증명·개인정보·응답과 로그 노출 |
-| [`detecting-ssrf-and-open-redirect`](skills/detecting-ssrf-and-open-redirect/SKILL.md) | 외부 요청 URL과 리다이렉트 목적지 |
-
-### 동적 검증 · 7개
-
-대상 범위를 확인한 뒤 요청·응답과 실행 결과를 관찰합니다. Burp 연계 스킬은 기존 검증을 심화하는 역할입니다.
-
-| 스킬 | 확인하는 내용 |
-|---|---|
-| [`exploiting-sql-injection`](skills/exploiting-sql-injection/SKILL.md) | 응답·조건·시간 차이로 SQLi 후보 검증 |
-| [`exploiting-xss-vulnerabilities`](skills/exploiting-xss-vulnerabilities/SKILL.md) | 마커 반사와 브라우저 실행을 구분해 확인 |
-| [`exploiting-broken-access-control`](skills/exploiting-broken-access-control/SKILL.md) | 역할·소유자별 접근 결과 비교 |
-| [`exploiting-auth-session`](skills/exploiting-auth-session/SKILL.md) | 토큰·로그아웃·쿠키 동작 확인 |
-| [`exploiting-ssrf-and-open-redirect`](skills/exploiting-ssrf-and-open-redirect/SKILL.md) | 콜백 수신과 리다이렉트 응답 확인 |
-| [`exploiting-path-traversal-upload`](skills/exploiting-path-traversal-upload/SKILL.md) | 경로 탐색·업로드 후보 검증 |
-| [`exploiting-with-burp`](skills/exploiting-with-burp/SKILL.md) | Burp Suite MCP·프록시 연계 검증 |
-
-## 설치하고 시작하기
-
-Claude Code에서 설치합니다.
+현재 공개 설치본은 다음과 같이 설치합니다. 프리뷰의 통합 호출과는 구분합니다.
 
 ```text
 /plugin marketplace add bs-koo/gx-security
 /plugin install gx-security@gx-security
+/gx-security:gx-diagnose .
 ```
 
-프로젝트 소스를 지정해 정적 진단부터 시작할 수 있습니다.
+프리뷰는 실행기와 스킬이 함께 필요합니다. 스킬 파일 하나만 복사하거나 기존 marketplace를 설치해도 새 실행 환경이 함께 준비되는 것은 아닙니다.
 
-```text
-/gx-security:gx-diagnose ./my-app
-```
+- **Windows Docker 준비됨:** 호스트 Python 없이 진행할 수 있습니다.
+- **직접 실행 환경 준비됨:** Python·의존성·보호된 엔진 정보를 확인해 사용합니다.
+- **실행 환경 없음:** 필요한 설치 선택을 한 번 확인합니다. 도구·이미지를 묵시적으로 설치하지 않습니다.
 
-소스와 승인된 로컬 앱을 함께 제공하면 통합 점검을 요청할 수 있습니다.
+플러그인 등록은 노트북에서 한 번 필요합니다. 취약점 DB·확정 의존성 자료·조직 정책은 별도 준비 항목입니다.
 
-```text
-/gx-security:gx-audit ./my-app http://localhost:8080
-```
+</details>
 
-동적 검증에는 항목별 URL·파라미터·테스트 계정 등의 추가 입력이 필요합니다.
-자세한 조합은 [사용 가이드](USAGE.md)를 참고하세요.
+<a id="결과-읽기"></a>
 
-CLI로 정적 후보를 수집할 수도 있습니다.
+## 점검 결과
 
-```bash
-python scan_all.py ./my-app
-```
+| 판정 | 의미 |
+|---|---|
+| `PASS` | 선택한 검사 범위의 필수 조건 충족 |
+| `BLOCK` | 확인된 차단 사유 조치 필요 |
+| `INCOMPLETE` | 준비·검사 범위·근거·후보 검토 중 미완료 항목 존재 |
+| `PASS_WITH_EXCEPTION` | 유효하게 승인된 예외 포함 |
 
-정적 스캔은 Semgrep을 우선 사용하며 없으면 기본 스캐너로 동작합니다. 진단 범위와 결과가 달라질 수 있으므로
-[설치·Windows 실행 안내](REFERENCE.md#정적-정밀도-표준-권장)를 확인하세요.
+| 읽는 사람 | 파일 | 확인할 내용 |
+|---|---|---|
+| 개발자 | `developer.md` | 위치·근거·수정·재검증 |
+| QA | `qa-checklist.md` | 확인 조건·기대 결과 |
+| PM | `report.html` | 판정·범위·미완료 사유 |
 
-## 사용 전 알아둘 점
+<details>
+<summary>보고서 위치와 함께 제공되는 파일</summary>
 
-- 동적 검증은 권한 있는 보안 테스트에 사용합니다. `scope_guard`가 허용 범위를 검사하며, 데이터 변경 작업은 별도 허용과 사람 승인이 필요합니다.
-- 엔드포인트를 자동 수집하지 않습니다. URL·파라미터 등 표적을 직접 제공해야 합니다.
-- JSON 본문 주입은 SQLi만 지원하며, 다른 동적 검증은 GET·form 요청을 사용합니다.
-- 결과에는 오탐·미탐이 있을 수 있습니다. 미검증 항목이나 콜백 미수신을 안전 판정으로 해석하지 않습니다.
-- 보고서와 증적은 민감정보를 포함할 수 있어 기본 형상관리 대상에서 제외합니다.
+- 직접 실행: `<프로젝트>/.gxsec/reports/<실행ID>/report.html`
+- Windows Docker: `<프로젝트>/.gxsec-container/report/report.html`
+- Docker에서 출력을 별도 지정하면 `<지정 폴더>/report/`, 상태는 같은 상위 폴더의 `state/`
+
+같은 폴더에 JSON·SARIF 결과, 검토 묶음, 기반 관측과 무결성 목록을 포함해 총 9개 파일을 만듭니다. Docker의 `report`는 최신 공유본으로 갱신되고 `state`의 이력은 유지합니다.
+
+</details>
+
+후보와 확정된 취약점은 구분합니다. 정적 중심 `PASS`와 문맥의 반대 근거 제안은 전체 출시 승인이나 공식 반증을 대신하지 않습니다.
+
+## 점검 범위
+
+| 영역 | 확인하는 내용 |
+|---|---|
+| 코드 | Spring·JSP·프론트엔드의 보안 후보와 방어 근거 |
+| 의존성·시크릿 | 라이브러리 취약점과 코드·이력의 자격증명 후보 |
+| SEF 기반 | public/private 구성, 관리자 권한·토큰 용도·객체 귀속·경로·파일 경계 |
+| 후보 문맥 | MyBatis 호출별 치환, 제한된 SQL 바인딩·Vue/DOMPurify 근거 |
+
+기본은 정적 점검입니다. 동적 검증은 승인된 대상·계정·합성 데이터·실행 조건을 갖춘 범위에서만 진행합니다. 검사 누락과 미확인 조건은 결과에 남깁니다.
+
+## 스킬 구성
+
+프리뷰는 **통합 진입점 1개 + 목적별 내부 절차 4개 + 기존 전문 스킬 17개**, 총 22개입니다. 사용자는 통합 진입점 하나로 시작하면 됩니다.
+
+기존 명령과 정적 진단 9종·전문 동적 검증 7종은 호환 자산으로 유지합니다. 개별 구성과 실행 옵션은 [공개 설치본 실행 참고서](REFERENCE.md)를 확인하세요.
 
 ## 더 알아보기
 
-| 문서 | 내용 |
-|---|---|
-| [실전 사용 가이드](USAGE.md) | 옵션·시나리오·동적 검증 조건·FAQ |
-| [실행 참고서](REFERENCE.md) | 설치 환경·커맨드별 상세 동작·지원 범위·설정·테스트 |
-| [안전 수칙](ATTACK_SAFETY.md) | 대상 범위와 자격증명 취급 |
-| [운영 정책](docs/OPERATIONS.md) | 스테이징 등록·격리 환경 관리 |
-| [동적 점검 런북](docs/RUNBOOK-dynamic.md) | 계정 입력·로그인·항목별 검증 절차 |
-| [심각도 기준](docs/severity-rubric.md) | Critical·High·Medium·Low 판정 |
-| [변경 이력](CHANGELOG.md) | 버전별 변경 사항 |
+[소개·사용 흐름](https://bs-koo.github.io/gx-security/) · [상세 사용법](USAGE.md) · [실행 참고서](REFERENCE.md) · [안전 수칙](ATTACK_SAFETY.md) · [운영 정책](docs/OPERATIONS.md) · [변경 이력](CHANGELOG.md)
 
-<sub>Proprietary · GX 사업본부 사내용 · v0.8.2</sub>
+<sub>Proprietary · SQIsoft GX · 0.10.0 프리뷰 안내</sub>
