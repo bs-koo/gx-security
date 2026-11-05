@@ -1,7 +1,7 @@
 {
   "name": "gx-security",
-  "description": "웹 애플리케이션의 소스 코드 진단과 승인된 로컬·스테이징 환경의 동적 검증을 지원하는 보안 점검 워크플로.",
-  "version": "0.8.2",
+  "description": "One guided security entry for developers: automatic readiness, checks, result review and retesting with shared evidence and QA/PM reports.",
+  "version": "0.10.0",
   "author": {
     "name": "SQIsoft Security"
   },

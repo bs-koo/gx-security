@@ -1,228 +1,123 @@
-# gx-security 사용 가이드
+# gx-security 사용법 0.10.0
 
-SQIsoft 사업부 웹앱 보안 점검 툴킷 **gx-security**의 실전 사용법.
-개요·정체성은 [README.md](README.md), 안전 수칙은 [ATTACK_SAFETY.md](ATTACK_SAFETY.md) 참고.
+## 1. 프로젝트 세션에서 통합 스킬 사용
 
----
+플러그인·스킬이 등록된 Claude Code 또는 Codex에서 대상 프로젝트 폴더를 엽니다. 현재 로컬 0.10.0 작업본이 원격 marketplace나 다른 사람의 호스트에 이미 배포됐다고 가정하지 않습니다.
 
-## 0. 두 가지 사용 방식
-
-gx-security는 **CLI 독립 실행**과 **Claude Code AI 운전** 두 가지로 쓸 수 있다.
-
-| 방식 | 언제 | 결과 |
-|---|---|---|
-| **AI 운전 (권장)** | 평소 점검, 오탐까지 걸러진 리포트가 필요할 때 | 정적+동적+오탐제거+4요소 리포트 자동 |
-| **CLI 독립** | 빠른 후보 확인, CI 연동, 스크립트 자동화 | 후보 목록(오탐 포함, AI 검증 전) |
-
----
-
-## 1. 설치 / 활성화
-
-### 방식 A — 설치 없이 바로 (가장 간단)
-Claude Code 세션에서 자연어로 호출:
-> "gx-security로 `D:\SQ\sqisoft-sef-2026` 점검해줘"
-
-### 방식 B — 플러그인으로 정식 설치 (재사용·팀 배포)
-```
-/plugin marketplace add bs-koo/gx-security
-/plugin install gx-security@gx-security
+```text
+Claude Code: /gx-security:gx 현재 프로젝트 보안 점검해줘
+Codex:       $gx-security 현재 프로젝트 보안 점검해줘
 ```
 
-### 방식 C — CLI만 (Python)
-```bash
-cd D:\SQ\security-plugin
-python scan_all.py <소스경로>          # 정적 통합
-python skills/auditing-web-application-security/scripts/audit.py <소스> --target <URL>
-```
-> **semgrep 설치를 표준으로 한다**(`pip install -r requirements-dev.txt`). 없으면 grep 폴백으로 동작하나 recall이 낮아 미탐 위험이 크다.
+호스트가 스킬을 발견할 수 있으면 자연어 요청으로도 선택될 수 있습니다. 사용자에게 여러 전문 스킬 이름이나 매 프로젝트의 setup 호출을 요구하지 않습니다. 보안과 무관한 개발 요청을 가로채지는 않습니다.
 
----
-
-## 2. 빠른 시작 — 통합 점검 한 방
-
-가장 쉬운 경로는 **통합 오케스트레이터** 하나다.
-
-```bash
-# 정적만 (앱 안 띄워도 됨)
-python skills/auditing-web-application-security/scripts/audit.py "D:\SQ\sqisoft-sef-2026"
-
-# 정적 + 동적 (실행 중인 로컬/스테이징 필요)
-python skills/auditing-web-application-security/scripts/audit.py \
-    "D:\SQ\sqisoft-sef-2026" --target "http://localhost:8080" --params id,q,search
-```
-
-또는 Claude에게:
-> "gx-security로 sef-2026 전체 점검해줘 (로컬 http://localhost:8080)"
-→ 스택 자동감지 → 정적 9종 → AI 오탐 제거 → 동적 발사 → **통합 4요소 리포트** (`reports/`에 저장)
-
----
-
-## 3. 표준 점검 사이클 (펜테스트 흐름)
-
-```
-0. 준비    로컬 기동(./gradlew bootRun 등) + 테스트 데이터
-1. 정적    audit.py / scan_all.py        → 후보 "지도"
-2. 검증    AI가 코드 읽고 오탐 제거        → 확정 후보 + URL/파라미터
-3. 동적    exploiting-* 실제 발사          → 악용 확정 + 증거
-4. 리포트  reports/*.md (4요소 + Evidence)
-5. 수정 → 6. 재점검(같은 스킬 다시) → 안 뚫리면 종료
-```
-
----
-
-## 4. 시나리오별 사용
-
-| 시점 | 명령 / 한 마디 |
+| 요청 | 통합 진입점의 처리 |
 |---|---|
-| **코드 짜는 중 / 커밋 전** | "방금 바꾼 게시판 코드 XSS·SQLi만 봐줘" (특정 스킬) |
-| **PR 올리기 전** | `audit.py <소스> --target http://localhost:8080 --params ...` (해당 도메인 전체) |
-| **릴리스 전** | `scan_all.py <소스>` 전체 스윕 → High 이상만 동적 검증 |
-| **신규 프로젝트 온보딩** | `scan_all.py <소스>` 로 보안 부채 전체 파악 |
+| “출시 전에 점검해줘” | 실행 준비를 확인한 뒤 기본 정적 출시 점검 |
+| “이번 변경사항 점검해줘” | 변경 기준을 기록하고 보수적으로 소스 재검사 |
+| “이 항목 수정했어, 다시 확인해줘” | 기존 발견 ID·프로파일·상태 저장소를 이어 재검증 |
+| “지난 보고서 설명만 해줘” | 저장된 보고서를 읽고 결과·미완료 사유 설명 |
 
-### 특정 취약점만 보기
-```bash
-# 정적 단일
-python skills/detecting-sql-injection/scripts/scan_sqli.py "D:\SQ\sqisoft-sef-2026"
-# 동적 단일 (실행 중 대상)
-python skills/exploiting-sql-injection/scripts/attack_sqli.py "http://localhost:8080/board?id=1" --param id
+명시한 경로 또는 현재 작업 폴더를 검사 대상으로 사용합니다. 목적과 대상이 분명하면 바로 진행합니다. 빈 호출의 목적, 여러 프로젝트·발견 중 선택, 처음 필요한 도구 설치 방식처럼 실제로 미결정인 정보만 묻습니다. 기존의 유효한 사용자 선택·승인을 다시 요구하지 않습니다.
+
+실제 검사 전에 실행 준비를 내부에서 확인합니다. 기존 설정이 있으면 읽고, 없으면 기본 설정으로 실행하므로 `gxsec.yaml` 생성은 필수 단계가 아닙니다. 설정 저장을 요청하지 않았는데 `init`을 실행하거나 `.gitignore`를 변경하지 않습니다. 기존 보고서 해석만 요청했을 때는 준비 확인·검사·설치를 시작하지 않습니다.
+
+Windows에서는 사용할 수 있는 기존 Docker 경로와 상태를 존중하고, 준비된 로컬 고정 이미지가 있으면 호스트 Python 없이 실행할 수 있습니다. 직접 실행 경로는 Python·필요 패키지·보호된 runtime manifest와 검사 엔진이 실제 준비됐는지 확인합니다. 환경이 없으면 준비 항목과 가능한 방법을 설명하고 필요한 선택만 확인합니다. OS 도구 설치·이미지 pull·취약점 DB 다운로드를 묵시적으로 수행하지 않습니다. 환경 확인이 보안 점검 완료를 의미하지는 않습니다.
+
+기존 `gx-setup`, `gx-check`, `gx-release`, `gx-retest`와 네 목적 스킬은 호환 진입점입니다. 통합 스킬을 포함한 22개 스킬 중 사용자가 평소 기억할 진입점은 `gx-security` 하나입니다.
+
+## 2. 고정 컨테이너
+
+```text
+docker build --platform linux/amd64 -t gx-security:0.10.0 .
 ```
 
-### 일부만 통합 실행
-```bash
-python scan_all.py "D:\SQ\sqisoft-sef-2026" --only csrf,sqli,xss
+통합 스킬이 실행 경로를 선택하며 다음 명령은 직접 실행하거나 환경을 준비하는 담당자용입니다. Windows는 `scripts/gxsec.ps1 -Source <source>`를 사용합니다. 실행 전에 Docker 상태와 로컬 Linux 이미지를 확인하고, 이미지가 없으면 자동 pull 없이 준비 필요로 종료합니다. 소스는 읽기 전용이고 검사 컨테이너는 네트워크를 사용하지 않습니다. 신규 OSV DB는 별도 준비하고 읽기 전용 mount로 연결합니다. 컨테이너 내부 경로와 PC 경로는 다르므로 프로파일의 DB 경로도 맞춰야 합니다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/gxsec.ps1 -Source D:\project -Action doctor -Json
+powershell -ExecutionPolicy Bypass -File scripts/gxsec.ps1 -Source D:\project -Action release -Json
+powershell -ExecutionPolicy Bypass -File scripts/gxsec.ps1 -Source D:\project -Action check -Base HEAD~1 -Json
+powershell -ExecutionPolicy Bypass -File scripts/gxsec.ps1 -Source D:\project -Action retest -FindingId <finding-id> -Profile <original-profile> -RunId <previous-run-id> -Json
 ```
 
-### 인증·세션·JWT 동적 점검
-JWT 변조·토큰 재사용·쿠키 속성을 실제로 확정하려면, 통합 오케스트레이터에 테스트 계정과 보호 엔드포인트(`--probe`)를 함께 넘긴다.
-```bash
-python skills/auditing-web-application-security/scripts/audit.py "D:\SQ\sqisoft-sef-2026" \
-    --target http://localhost:8080 \
-    --user-a-id <id> --user-a-pw <pw> \
-    --probe /api/v1/users/me --json
-```
-- **판정 3단계** (계정/probe 조합에 따라 갈린다):
-  - **`dynamic`(전체 발사)** — 로그인 계정(`--user-a-id/pw`)과 `--probe`가 모두 있을 때. JWT 변조·토큰 재사용·쿠키 속성을 실제 발사한다.
-  - **`partial`(쿠키만)** — **로그인 계정(`--user-a-id/pw`)만 있고 `--probe`가 없을 때**. 로그인 응답의 Set-Cookie로 쿠키 속성만 발사하고, JWT·재사용은 정적 추정에 머문다.
-  - **`static-only`(정적 추정)** — 계정이 전무하거나, **`--token-a`로 토큰만 넘길 때**. `--token-a`는 로그인 단계를 생략해 Set-Cookie가 없으므로 쿠키 검사도 건너뛴다 → `--probe`가 없으면 발사 0건으로 `static-only`다(`--probe`가 함께 있으면 JWT·재사용은 발사되어 `dynamic`). 즉 "계정만 있으면 무조건 partial"이 아니라, **partial은 실제 로그인(`--user-a-id/pw`)일 때만** 성립한다.
-- **한계**: `audit.py` 경유 인증 동적은 `--probe`로 보호 엔드포인트를 **직접 지정**해야 한다(`--scan` 자동 추출은 `attack_auth.py` 단독 실행 전용). 또한 **sef-2026 로그인 프리셋**(`/api/v1/auth/login`, 토큰 경로 `data.accessToken`)을 전제로 한다. 비표준 로그인 API는 `skills/exploiting-auth-session/scripts/attack_auth.py`를 단독 실행하고 `--login-path`·`--body-template`·`--token-path`로 로그인 형식을 지정한다.
-- **병렬 실행 주의(로그아웃)**: 토큰 재사용 검사는 대상 계정을 로그아웃시켜 세션을 무효화한다. 서버가 전체 세션 로그아웃(모든 기기 무효화)·refresh 회전 방식이면 같은 계정을 쓰는 다른 세션이 끊긴다. **동일 테스트 계정을 여러 프로세스(병렬 audit 등)가 동시에 사용하지 않는다.**
+`doctor`는 준비 정보만 출력하며 결과·상태 폴더를 만들지 않습니다. 실제 점검의 기본 보고서는 `<source>/.gxsec-container/report/report.html`, 상태는 `<source>/.gxsec-container/state`입니다. `-Output D:\security-results\project`를 지정하면 보고서는 그 아래 `report/report.html`, 상태는 `state`에 저장됩니다. `-Output`은 최종 HTML 파일이나 `report` 폴더 자체가 아니라 상위 결과 폴더입니다. 같은 대상·Output으로 재실행하면 상태 이력을 이어가며 `report`는 최신 공유본으로 갱신합니다.
 
-### SSRF/오픈 리다이렉트 동적 점검
-서버측 요청 위조(SSRF)와 미검증 리다이렉트를 실제로 확정하려면, 통합 오케스트레이터에 **주입 표적**과 **테스트 계정**을 함께 넘긴다.
-```bash
-python skills/auditing-web-application-security/scripts/audit.py "D:\SQ\sqisoft-sef-2026" \
-    --target http://localhost:8080 \
-    --redirect-target "/go?u=" \
-    --ssrf-target "/api/fetch?url=" \
-    --user-a-id <id> --user-a-pw <pw> --json
-```
-- **발사 조건(표적+계정 모두 필요)**: `--redirect-target`(오픈 리다이렉트 주입점)·`--ssrf-target`(SSRF 주입점) 같은 **표적**과 계정(`--user-a-id/pw` 또는 `--token-a`)이 **모두** 있어야 실제 발사(`dynamic`)한다. 표적이나 계정이 하나라도 없으면 발사 없이 `static-only`(정적 추정)에 머문다(표적을 우선 판정). 종류를 하나만 지정하면(예: `--redirect-target`만) 지정한 종류만 발사하고 나머지는 "표적 미지정"으로 표기한다.
-- **판정 방식**: `Location` 응답 헤더가 외부 호스트로 향하면 오픈 리다이렉트 취약, OOB canary URL을 주입해 콜백을 수신하면 블라인드 SSRF까지 확정한다. 모두 비파괴 GET 주입이다.
-- **canary 자동 기동·종료**: SSRF 콜백용 리스너는 발사마다 **자동으로 뜨고 닫히며 127.0.0.1 루프백에만 바인딩**된다(외부 미노출). audit 경유 실행에서는 canary 호스트/포트 옵션을 노출하지 않고 기본 루프백을 그대로 쓴다.
-- **원격 대상은 콜백 미수신(한계)**: canary가 127.0.0.1이므로 **대상이 audit 실행기와 동일 호스트(로컬)일 때만 콜백을 수신**한다. 원격 스테이징의 블라인드 SSRF를 확정하려면 `skills/exploiting-ssrf-and-open-redirect/scripts/attack_ssrf.py`를 단독 실행하고 `--canary-host`로 대상이 도달할 수 있는 광고 호스트를 지정한다(오픈 리다이렉트는 인밴드 Location 판정이라 이 제약과 무관하다).
-- **원격 콜백 미수신 ≠ 안전(부작용 주의)**: 원격 대상에서 콜백을 못 받았다고 곧 '안전'을 뜻하지는 않는다. 주입된 `127.0.0.1` URL은 **대상 서버 자신의 loopback**을 가리키므로, 대상이 자기 로컬 전용 서비스(actuator·관리 콘솔·디버그 포트 등)로 실제 아웃바운드 요청을 시도했으나 그 결과가 audit 실행기로 돌아오지 않았을 뿐일 수 있다(대상 IDS/방화벽 로그에 SSRF 시그니처로 남을 수 있음). 도구는 대상 서버 자체가 만드는 아웃바운드 요청의 부작용까지는 통제하지 못한다.
+직접 Python 실행은 Python 3.10 이상과 requests/PyYAML, 보호된 실행 환경이 준비된 경우에 사용합니다.
 
-### 경로조작·파일 업로드 동적 점검
-경로조작(임의 파일 읽기)과 위험 확장자 업로드(웹쉘 발판)를 실제로 확정하려면, 통합 오케스트레이터에 **주입 표적**과 **테스트 계정**을 함께 넘긴다. 업로드는 서버에 파일을 기록하는 **파괴적** 동작이라 `--allow-destructive`를 추가로 명시해야 발사된다.
-```bash
-python skills/auditing-web-application-security/scripts/audit.py "D:\SQ\sqisoft-sef-2026" \
-    --target http://localhost:8080 \
-    --traversal-target "/download?filePath=" \
-    --upload-target "/api/v1/files" --allow-destructive \
-    --retrieve-base "http://localhost:8080/files" \
-    --user-a-id <id> --user-a-pw <pw> --json
-```
-- **발사 조건(표적+계정 모두 필요)**: `--traversal-target`(경로조작 주입점)·`--upload-target`(업로드 엔드포인트) 같은 **표적**과 계정(`--user-a-id/pw` 또는 `--token-a`)이 **모두** 있어야 발사(`dynamic`)한다. 표적이나 계정이 하나라도 없으면 발사 없이 `static-only`(정적 추정)에 머문다(표적을 우선 판정). 종류를 하나만 지정하면 지정한 종류만 발사하고 나머지는 "표적 미지정 — 미검사"로 표기한다.
-- **업로드 이중 게이트(파괴적 옵트인)**: 파일 업로드는 대상 서버에 마커 파일을 실제로 기록하므로, `--upload-target`이 있어도 `--allow-destructive`가 없으면 **미발사**한다. 이 게이트는 audit 레이어와 `attack_pathupload.py` 자체에 **독립적으로 이중** 존재하며, `--allow-destructive`가 없으면 audit이 `--upload-target` 자체를 자식에 넘기지 않는다. 경로조작은 읽기전용 GET이라 이 게이트와 무관하다.
-- **판정 방식**: 경로조작은 응답 본문에 파일 내용 시그니처(`root:.*:0:0:`·`<web-app`·`[fonts]`)가 나오면 취약이다. 미검출이라도 응답이 2xx일 때만 방어로 보고, **non-2xx(404/403/5xx)·무응답은 방어가 아니라 "미확정(미도달/차단 추정)"**으로 표기해 엔드포인트 오지정을 방어로 오인하지 않는다. 업로드는 위험 확장자(.jsp) 마커가 2xx 수용되면 취약(Medium), `--retrieve-base`로 회수까지 성공하면 웹루트 저장으로 가중(High)한다.
-- **leftover 정리(수동 삭제)**: `--allow-destructive`로 업로드가 실제 **수용(accepted)**되면 대상 서버에 마커 `.jsp` 파일이 남는다. audit 요약에 `[정리 필요] 업로드된 마커 파일: … — 서버에서 수동 삭제 권장` 안내가 노출되므로, 점검 후 해당 파일을 직접 삭제한다. 자동 삭제(`--cleanup-target`)는 제공하지 않는다(거부돼 파일이 남지 않은 경우엔 안내하지 않는다).
-- **한계**: `audit.py` 경유 실행은 **sef-2026 로그인 프리셋**(`/api/v1/auth/login`, 토큰 경로 `data.accessToken`)을 전제로 한다. 비표준 로그인 API나 세밀한 옵션은 `skills/exploiting-path-traversal-upload/scripts/attack_pathupload.py`를 단독 실행한다.
-
-### 레거시(form 로그인·세션쿠키) 동적 점검
-
-form-urlencoded 로그인 + 세션쿠키(JSESSIONID)를 쓰는 **JSP 레거시** 앱은 `--auth-mode cookie`로 동적 침투 4종(접근통제·인증세션·SSRF·경로조작/업로드)을 돌린다. 4개 attack 스크립트(및 `audit.py`) 공통 옵션이다.
-
-```bash
-python skills/exploiting-broken-access-control/scripts/attack_access.py "http://localhost:8080" \
-    --scan reports/scan_access.json \
-    --auth-mode cookie \
-    --user-a-id <id> --user-a-pw <pw> \
-    --user-b-id <id2> --user-b-pw <pw2> --resource-id <A소유리소스> \
-    --id-field j_username --pw-field j_password \
-    --success-path /main --json
+```text
+python gxsec.py doctor --source <source> --json
+python gxsec.py check <source> [--base <commit>]
+python gxsec.py release <source> --profile static-release
 ```
 
-- `--auth-mode bearer|cookie` — 기본 `bearer`(기존 JWT/Bearer 동작 100% 동일). `cookie`면 form 로그인 + 세션쿠키 인증.
-- `--id-field`/`--pw-field` — 로그인 폼 필드명(기본 `username`/`password`). 예: 서블릿 `j_username`/`j_password`.
-- `--success-path` — 로그인 성공 시 이동 경로. **cookie 모드 필수.**
-- **판정**: form 로그인은 응답 리다이렉트 `Location`이 `--success-path`와 일치하면 성공, 아니면 실패(자격/형식 원인 구분). 세션쿠키를 `requests.Session` jar에 저장해 이후 발사에 자동 포함.
+직접 실행의 기본 보고서는 `<source>/.gxsec/reports/<run-id>/report.html`, 상태는 `<source>/.gxsec/state.sqlite3`와 runs에 저장됩니다. 재검증은 이전 실행의 저장소를 그대로 사용합니다. Docker 결과를 직접 실행으로 이어 읽는 경우에도 기존 저장소를 명시해야 하며 새 저장소로 바꾸지 않습니다. `init <source>`은 설정 저장을 명시적으로 원할 때만 사용합니다. 비밀 없는 `gxsec.yaml`을 만들고 출력 폴더의 Git 제외 설정을 보완하며 기존 파일은 덮어쓰지 않습니다.
 
-**한계(중요):**
-- **`--success-path` 정확 지정 필수** — Spring 기본 formLogin은 성공 시 저장된 원요청 URL이나 `/`로 이동하고, SPA형 백엔드는 `200`+쿠키로 성공을 알린다. cookie 모드는 실제 성공 후 목적지를 정확히 지정해야 판정이 맞다.
-- **인증·세션·JWT**: cookie 모드엔 Bearer 토큰이 없어 JWT 변조·토큰 재사용 검사는 **미발사(skipped, N/A)**. 쿠키 속성(Secure/HttpOnly/SameSite)·보호 엔드포인트 도달성만 세션으로 발사.
-- CSRF 히든필드 자동추출·세션 만료 자동 재로그인·다단계 로그인(OTP/SSO)은 미지원(실패로 보고).
+준비 부족은 `INCOMPLETE` 또는 실행 전 준비 오류로 안내합니다. Python이나 필수 패키지가 없는 직접 실행에서 정상적인 doctor 보고서를 얻었다고 설명하지 않습니다. 직접 정규식 스크립트는 탐색용이며 release PASS의 근거가 아닙니다.
 
----
+많은 파일을 Windows 공유 폴더에서 직접 읽으면 파일별 무결성 검증이 느릴 수 있습니다. 실제 2천여 파일 파일럿에서도 이 병목을 확인했습니다. 반복 실행은 WSL/Linux 파일시스템의 작업 사본을 권장합니다. 전송용 묶음으로 옮기는 경우 원본 경로·파일 목록·해시를 보존하고, 안전하게 푼 뒤 같은 해시를 다시 검증해야 합니다. 임의 선별 사본을 전체 출시 증거로 사용하지 않습니다.
 
-## 5. 명령 레퍼런스
+고정 bundle 갱신은 기록된 Python image에서 `uv pip compile requirements-bundle.in --python-version 3.12 --generate-hashes -o requirements-bundle.lock`으로 수행한 후 규칙·품질 시험을 재실행합니다. 자동으로 latest를 채택하지 않습니다.
 
-| 명령 | 용도 |
-|---|---|
-| `audit.py <소스> [--target URL] [--params a,b]` | **통합** 점검(정적+동적). 메인 진입점 |
-| `scan_all.py <소스> [--only k1,k2] [--json]` | 정적 9종 일괄 후보 |
-| `skills/detecting-*/scripts/scan_*.py <소스>` | 정적 단일 취약점 |
-| `skills/exploiting-*/scripts/attack_*.py <URL> --param p` | 동적 단일 공격 |
-| `tools/scope_guard.py <URL> [--authorized]` | 대상이 공격 허용 범위인지 사전 확인 |
+## 3. SCA 입력과 오프라인 DB
 
-공통 옵션: `--json`(기계 판독), `--authorized`(공인 대상 명시 승인).
+OSV는 resolved lockfile·SBOM을 사용합니다. pom.xml 선언만으로 전이 의존성 완료를 주장하지 않습니다. `sca`에는 source_revision, input_hashes(파일 경로→SHA256), modules, runtime_complete가 필요합니다. 전체 release에는 독립적으로 검증된 artifact_digest도 필요합니다.
 
----
+SCA의 실행 근거는 프로젝트가 스스로 승인할 수 없습니다. `--policy`로 소스 밖의 보호된 조직 정책을 지정합니다. 정책의 `sca`에는 `offline_db`, `db_manifest_sha256`, `provenance`가 필요합니다. provenance는 `id`, 실제 `source_revision`, `scope_hash`, `input_hashes`, `modules`, `runtime_complete`, 배포물 `artifact_digest`를 담고, 별도의 `trusted_approvals`에서 해당 내용의 digest를 `dependency-provenance` 종류와 `protected-ci` 역할로 승인해야 합니다. 프로젝트의 `tools.osv.offline_db`와 `sca` 선언만으로 외부 파일을 읽거나 완료 처리하지 않습니다.
 
-## 6. 안전 수칙 (동적 공격 시)
+고정 버전 2.7.0의 실제 실행에서 확인한 DB 캐시는 `osv-scalibr/<생태계>/all.zip`입니다. DB 디렉터리에 다음 `snapshot.json`을 함께 둡니다. 이전 문서의 `osv-scanner/` 경로를 그대로 사용하면 이 버전에서 매칭되지 않습니다.
 
-- 동적은 로컬(`localhost`) 또는 전용 스테이징에만 쓴다. 운영은 코드로 차단된다.
-- 테스트 데이터를 쓴다. 저장형 XSS 마커 등이 DB에 남을 수 있다.
-- 평소에는 정적만 돌리고(완전 안전), 동적은 확인이 필요한 취약점에만 `--target`을 지정한다.
-- 사설망 IP(10.x/172.16/192.168)는 기본 차단된다. 사내 스테이징이 사설망이면 `SECURITY_PLUGIN_ALLOW_HOSTS`에 호스트를 등록하거나 `SECURITY_PLUGIN_ALLOW_PRIVATE=1`로 허용한다.
-- 공인 대상은 `SECURITY_PLUGIN_AUTHORIZED=1` 과 `--authorized`를 동시에 충족할 때만 허용된다(소유자 책임).
+```json
+{"schema_version":1,"generated_at":"2026-11-05T00:00:00+00:00","advisory_as_of":"2026-11-05","files":{"osv-scalibr/Maven/all.zip":"<sha256>"}}
+```
 
-전체 정책: [ATTACK_SAFETY.md](ATTACK_SAFETY.md)
+위 값은 형식 예시입니다. 실제 다운로드된 자료의 시각·파일 해시로 생성합니다. 프로젝트가 선언한 DB 시각만으로 신선도를 인정하지 않으며, 기본 유효기간은 72시간입니다. scanner 실행 중 DB를 자동 다운로드하지 않습니다.
 
----
+잠금 파일에서 패키지 이름·버전만 읽힌 것과 취약점 매칭은 다릅니다. 예를 들어 npm의 `resolved` 출처가 없으면 엔진이 로컬 패키지로 분류하고 공개 DB 매칭을 건너뛸 수 있습니다. 실제 패키지 출처와 생태계별 DB 사용을 확인하지 못하면 0건이어도 완료로 인정하지 않습니다.
 
-## 7. 산출물(리포트) 읽는 법
+표준 Maven SBOM은 출처 분류자를 생략해도 고정 엔진에서 좌표 기반 매칭이 수행됨을 실제 시험으로 확인했습니다. 출처를 임의로 공개 레지스트리라고 표시하지 않고, 승인된 배포물·확정 의존성 근거와 실제 생태계 DB 사용을 확인합니다. 엔진이 매칭을 생략한 패키지를 단순 파싱 수에 포함해 통과시키지 않습니다.
 
-`reports/*.md`의 각 취약점은 4요소로 기록된다:
+보호 정책과 DB를 컨테이너에 전달할 때는 직접 Docker 실행에서 각각 소스 밖의 `/trusted/policy.yaml`, `/advisories`로 읽기 전용 연결하고 `--policy /trusted/policy.yaml`을 사용합니다. 정책의 `sca.offline_db`도 `/advisories`로 지정해야 합니다. 기본 PowerShell 실행기는 간단한 점검 경로이며 이 외부 mount를 자동 구성하지 않습니다.
 
-1. **① 취약한 점(What)** — 무엇이 취약한가
-2. **② 취약한 이유(Why)** — 왜 위험한가
-3. **③ 뚫리는 방법(How)** — 어떻게 공격당하나 (동적 확정 시 실제 페이로드·증거)
-4. **④ 해결방법(Fix)** — 구체적 수정 코드
+컨테이너는 설치된 실행 파일의 절대 경로·SHA256·버전을 기록한 `GXSEC_RUNTIME_MANIFEST`를 제공합니다. 호스트에서 실행할 때도 소스 밖의 보호된 동일 형식 manifest가 필요합니다. PATH에 이름이 있다는 이유만으로 검사기를 실행하지 않습니다. `doctor`는 이 근거와 실제 버전을 함께 확인합니다.
 
-심각도(Critical/High/Medium/Low) 순으로 정렬되며, "의도된 예외"·"오탐 제외"도 함께 기록된다.
+정적 검사는 최초 파일 목록과 해시에 맞는 별도 읽기 전용 사본을 만들어 실행합니다. Git 이력도 로컬 사본으로 분리하며 외부 원격 저장소에서 가져오지 않습니다. 임시 공간이 부족하거나 사본·이력 검증이 실패하면 미완료입니다. 기본 실행기의 임시 공간은 512MB이므로 대규모 소스는 충분한 크기의 별도 임시 볼륨이 필요합니다. 현재 사용자 지정 `exclusions` 선언은 실행 범위를 좁히지 않으며, 기본 생성물·도구 상태 제외만 적용합니다.
 
----
+## 4. 결과와 재검증
 
-## 8. FAQ
+```text
+python gxsec.py report <run-id> --state-dir <source>/.gxsec --output <destination>
+python gxsec.py retest <finding-id> --source <source> --profile static-release
+```
 
-**Q. semgrep이 꼭 필요한가?**
-A. 아니다. 없으면 grep 폴백으로 동작한다(오탐이 다소 늘지만 AI 검증이 거른다). 설치하면 정밀도가 오른다.
+run snapshot은 불변입니다. 재검증은 새 run을 생성하고 이전 finding ID와 연결합니다. 변경분 검사·미완료 검사·엔진이나 규칙 변경은 기존 발견사항의 해결 증거가 아닙니다. 심각도와 검증 상태는 별도입니다.
 
-**Q. 앱을 안 띄워도 쓸 수 있나?**
-A. 정적은 소스만 있으면 된다. 동적(`exploiting-*`, `--target`)만 실행 중인 앱이 필요하다.
+통합 스킬은 기존 결과를 읽는 요청과 새 결과를 생성하는 요청을 구분합니다. 보고서 설명만 요청했다면 저장된 결과의 날짜·범위·판정을 밝히고 읽기만 합니다. 오래된 보고서를 현재 소스의 검사 결과로 바꾸어 설명하지 않습니다. 재검증할 발견 ID나 저장소가 여러 개로 모호하면 필요한 선택만 확인합니다.
 
-**Q. 운영에 실수로 쏠까 걱정된다.**
-A. `scope_guard`가 `prod`/`www`/공인 대상과 사설망을 기본 차단하고, IP 위장(정수·IPv6 매핑)도 거른다. 사내 스테이징만 6번처럼 명시 등록해 쓴다.
+필수 `framework` 검사는 SEF public/private/혼합 구성과 다섯 소스 경계를 관찰합니다. `doctor`의 감지는 알려진 제어 파일·빌드 신호의 부분 미리보기이며 정식 검사 완료가 아닙니다. 새 `review-packets.json`은 원본 후보별 주장·찬반 근거·미해결 질문을, `framework-baseline.json`은 현재 기반 관측을 제공합니다. 문맥의 `not_actionable`은 공식 반증이나 자동 삭제가 아닙니다. 이전 framework 후보가 사라져도 독립 검토 전에는 자동 해결하지 않습니다. 지원 범위는 [SEF 점검](docs/SEF-CHECKS.md)을 참고하세요.
 
-**Q. 오탐이 많다.**
-A. CLI 단독은 1차 후보라 오탐이 포함된다. **Claude Code에서 AI 운전 방식**으로 쓰면 코드 컨텍스트로 오탐을 걸러 확정 취약점만 리포트한다.
+## 5. 검토와 예외
 
----
+`--review-records <records.json>`은 reviews/exceptions 배열을 받습니다. 기록의 id·내용 digest·역할·revision·scope가 외부 정책의 trusted_approvals와 일치해야 효력이 있습니다. 이름만 적은 승인, 만료된 예외, 다른 버전의 기록은 통과 근거가 아닙니다.
 
-## 9. 구조적 한계 (동적 공격 엔진)
+검토 결과는 새 run에 적용합니다. source-verified/runtime-verified 승격과 refuted 반증은 각각 허용된 독립 역할과 evidence_refs가 필요합니다. 위험 수용에는 보안 책임자와 프로젝트 책임자 역할이 필요합니다. 자동화가 승인자를 대신하지 않습니다.
 
-동적(침투) 엔진에는 다음 한계가 있어, 발사 전에 표적을 직접 준비해야 한다:
+0.10의 문맥이 붙은 발견을 검토·반증·위험 수용할 때는 현재 `review-packets.json` 또는 `result.json`의 `normalized_result_hash`도 기록에 포함해야 합니다. 이 값은 문맥·분석기·검사 범위에 연결되므로 이전 결과의 hash를 재사용하지 않습니다. 기존 revision·scope·보호된 승인 조건도 함께 적용됩니다.
 
-1. **크롤링/엔드포인트 자동탐색이 없다.** 공격할 URL·파라미터를 직접 지정해야 하며, 앱의 엔드포인트를 스스로 수집하지 않는다.
-2. **GET·form-urlencoded POST만 지원한다.** 이 두 방식의 요청에만 페이로드를 주입한다.
-3. **JSON 바디 주입은 불가하다.** `application/json` 요청 본문에는 페이로드를 삽입하지 못한다.
+## 6. 전체 출시·동적 프로파일
+
+```text
+python gxsec.py release <source> --profile release --policy <external-policy> --json
+```
+
+기본 실행은 계획과 준비 상태를 보고하며 동적 발사를 하지 않습니다. 승인된 정확한 범위와 계정·데이터·버전 증거가 있을 때만 `--execute-dynamic`을 추가합니다. 비밀은 환경변수 참조 또는 `--creds-stdin`으로 공급합니다. argv에 비밀번호·토큰 값을 넣지 않습니다.
+
+외부 실행 허가서를 미리 발급하는 경우 `--execution-id <고유 ID>`를 지정하고 허가서의 run_id와 일치시킵니다. 이 ID가 저장 결과와 모든 동적 엔진에 공통으로 적용됩니다. `retest --run-id`는 이전 실행을 선택하는 옵션이며 새 실행 ID와 구분합니다.
+
+동적 정책·시나리오 구조와 선택 엔진의 실행 조건은 [동적 운영](docs/RUNBOOK-dynamic.md)을 참고하세요. URL 이름이나 사설 IP는 격리 DB의 증거가 아닙니다. 기존 expert 공격 도구의 실행을 새 release 프로파일 완료로 자동 채택하지 않습니다.
+
+## 7. 상태와 자동화
+
+PASS=0, BLOCK=1, INCOMPLETE=2, PASS_WITH_EXCEPTION=3입니다. 일반 셸에서 3은 성공 코드가 아닙니다. 조직 정책으로 유효한 예외를 검증한 CI 어댑터만 조건부 성공으로 처리할 수 있습니다. 취소는 130과 불완전 snapshot을 남깁니다.
+
+보고서는 마스킹된 결과를 공유하기 위한 자료입니다. 공식 출시 증거는 보호된 CI checkout·artifact·정책·승인 기록과 연결해야 합니다.

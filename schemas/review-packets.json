@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gx-security.local/schemas/review-packets.json",
+  "title": "gx-security evidence-only review packets v1",
+  "type": "object",
+  "required": ["schema_version", "run_id", "authority", "source_binding", "packets", "groups"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string"},
+    "authority": {"const": "proposal-only"},
+    "source_binding": {"type": "object"},
+    "packets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["finding_id", "normalized_result_hash", "authority", "proposal", "claim", "evidence_for", "evidence_against", "remaining_questions", "packet_digest"],
+        "properties": {
+          "finding_id": {"type": "string", "minLength": 1},
+          "normalized_result_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "authority": {"const": "proposal-only"},
+          "proposal": {"enum": ["confirmed", "not_actionable", "needs_review"]},
+          "claim": {"type": "object"},
+          "evidence_for": {"type": "array"},
+          "evidence_against": {"type": "array"},
+          "remaining_questions": {"type": "array"},
+          "instances": {"type": "array"},
+          "packet_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+        }
+      }
+    },
+    "groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["group_id", "authority", "approval_scope", "members", "group_digest"],
+        "properties": {
+          "authority": {"const": "display-only"},
+          "approval_scope": {"const": "individual-findings"},
+          "members": {"type": "array", "items": {"type": "object", "required": ["finding_id", "normalized_result_hash", "packet_digest"]}},
+          "group_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+        }
+      }
+    }
+  }
+}

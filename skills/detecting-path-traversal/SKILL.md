@@ -1,6 +1,12 @@
 ---
 name: detecting-path-traversal
-description: "Spring·JSP 소스의 파일 조회·다운로드 기능을 정적으로 진단할 때 사용한다. 사용자 입력에 의한 경로 탐색과 임의 파일 접근 가능성을 검토한다."
+description: >-
+  SQIsoft 웹 애플리케이션에서 경로 탐색(Path Traversal / Directory Traversal) 취약점을 검사한다.
+  파일 다운로드·뷰어·첨부파일 조회 기능에서 사용자 입력이 파일 경로에 그대로 삽입되어
+  ../를 이용한 임의 파일 접근(WEB-INF/web.xml, /etc/passwd 등) 또는 임의 파일 다운로드를
+  허용하는 패턴을 탐지한다. CWE-22, OWASP A01:2021 대응.
+  spring-modern(@RequestParam 파일명 → Resource/Path 직접 반환, ZipSlip)과
+  jsp-legacy(download.do?filePath= 파라미터 경로 필터링 미흡) 두 스택을 지원한다.
 domain: cybersecurity
 subdomain: web-application-security
 tags:
@@ -17,12 +23,17 @@ tags:
 cwe: [CWE-22]
 owasp: [A01:2021-Broken-Access-Control]
 stacks: [spring-modern, jsp-legacy]
-version: "0.8.2"
+version: "0.10.0"
 author: sqisoft-security
 license: Proprietary
 ---
 
-# 경로 탐색 보안 진단
+> Release-check contract (0.10.0): use the common gxsec CLI for developer checks and release evidence. Legacy commands below are expert/reference paths, not proof of release completion. Preserve candidate vs verified vs incomplete states; never treat status 200, reflection, a helper name, or an annotation alone as a confirmed exploit/defense. Credentials use references/stdin; no plain passwords/tokens in argv or chat. Required scope/readiness/authentication/confinement evidence is enforced by the new release path.
+
+
+SEF 또는 공통 방어가 관련된 후보는 [공유 SEF 문맥 검토](../checking-release-security/references/sef-context.md)를 읽고 공통 CLI 결과를 사용한다. 아래 전문가용 판정·오탐 표기는 검토 제안이며 원본 finding의 검증 상태·심각도·ID를 바꾸거나 보호된 독립 검토를 대체하지 않는다.
+
+# 경로 탐색(Path Traversal) 취약점 검사 (CWE-22 / Improper Limitation of a Pathname)
 
 ## When to Use
 
@@ -67,22 +78,30 @@ python skills/detecting-path-traversal/scripts/scan_pathtraversal.py "$TARGET" -
 **spring-modern 검증 포인트**
 
 1. `@RequestParam String fileName`(또는 `filePath`, `name` 등)을 받아 `Paths.get(base, fileName)` 또는 `new File(base, fileName)`에 넣을 때:
-   - **`Path.normalize()` 또는 `getCanonicalPath()` 호출 후 기준 경로(`startsWith(base)`)를 검증**하는지 확인.
-   - `sqisoft-sef-2026`의 `BoardFileServiceImpl.downloadBoardFile()` 패턴이 표준:
+   - **경로 구성요소 단위의 `Path.startsWith(Path)`와 실제 경로 포함성**을 확인한다. `String.startsWith()`는 `/uploads-evil` 같은 형제 경로까지 허용할 수 있다.
+   - 이미 존재하는 다운로드 파일의 기본 경계 확인 예:
      ```java
-     String canonicalPath = file.getCanonicalPath();
-     String allowedBase   = new File(uploadPath).getCanonicalPath();
-     if (!canonicalPath.startsWith(allowedBase)) throw new BusinessException(FORBIDDEN, ...);
+     Path base = Paths.get(uploadPath).toRealPath();
+     Path candidate = base.resolve(fileName).normalize();
+     if (candidate.equals(base) || !candidate.startsWith(base)) {
+         throw new AccessDeniedException("File is outside the allowed directory");
+     }
+     Path real = candidate.toRealPath();
+     if (!real.startsWith(base) || !Files.isRegularFile(real)) {
+         throw new AccessDeniedException("File is outside the allowed directory");
+     }
+     // 이후 읽기에는 검증한 real을 사용한다.
      ```
-   - 이 패턴이 있으면 → **안전(오탐)**. 없으면 → **확정 취약**.
+   - 이 예는 검사 후 열기 사이의 경로 교체까지 방지하지 않는다. 기준·상위 디렉터리를 비신뢰 사용자가 변경할 수 없는지 확인한다. 변경 가능하면 지원되는 파일시스템의 `SecureDirectoryStream` 등 디렉터리 핸들 기반 탐색과 링크 거부를 검토한다. 파일 소유권·업무 권한은 별도로 확인한다.
+   - 함수 이름이나 예제와 닮았다는 이유만으로 안전·취약을 확정하지 않는다. 사용자 입력부터 실제 I/O까지 같은 경로가 검증되는지 근거를 남긴다.
 2. `Resource`(`FileSystemResource`, `UrlResource`) 직접 반환 시: 경로 검증 없이 `@RequestParam`을 경로에 넣으면 취약.
 3. DB에서 꺼낸 경로를 사용하는 경우: DB 값도 신뢰할 수 없음(2차 인젝션 또는 IDOR 체인). 경로 검증 필요.
-4. ZipSlip: `ZipEntry.getName()`을 `new File(base, entry.getName())`에 넣고 `getCanonicalPath()` 검증 없으면 취약.
+4. ZipSlip: 엔트리의 절대 경로·상위 탈출·링크 항목과 실제 출력 디렉터리 포함성을 확인한다. 새 파일에는 위 다운로드용 `toRealPath()` 예제를 그대로 적용하지 말고 기존 부모 디렉터리와 생성·열기 절차의 링크·교체 통제를 확인한다.
 
 **jsp-legacy 검증 포인트**
 
 1. `download.do?filePath=` 패턴에서:
-   - 기준 경로 prefix 검사(`filePath.toLowerCase().startsWith(allowedBase)`)가 있는지.
+   - 문자열 prefix 검사만으로 포함성을 인정하지 않는다. 실제 파일 경로를 `Path`로 비교하고 링크·검사 후 교체·읽기 권한을 함께 확인한다.
    - `blockchar[]` 블랙리스트 방식(`..`, `../`, `..\`)만 사용하는 경우: **우회 가능** — URL 인코딩(`%2e%2e%2f`), 이중 인코딩(`%252e`), 유니코드 우회 가능성 확인.
    - `Gseed_Web_Renew`의 `FileController.download()`:
      ```java
@@ -124,15 +143,20 @@ python skills/detecting-path-traversal/scripts/scan_pathtraversal.py "$TARGET" -
 - **③ 뚫리는 방법(How · 개념 PoC)**: `/download.do?filePath=%2e%2e%2f%2e%2e%2fetc%2fpasswd&fileRealName=passwd`
   → 서블릿이 URL 디코딩 후 블랙리스트 비교 시 `../` 아닌 `%2e%2e%2f`가 blockchar에 없어 통과 가능.
   방어 학습 목적의 개념 설명이며 실제 공격 사용 금지.
-- **④ 해결방법(Fix)**: 블랙리스트 제거 후 `getCanonicalPath()` + 기준 경로 검증으로 교체
+- **④ 해결방법(Fix)**: 블랙리스트 대신 `Path` 구성요소와 실제 경로를 확인한다. 아래는 기존 파일의 경계 확인이며 디렉터리 교체 통제·권한 검증은 별도로 필요하다.
   ```java
-  File requested = new File(filePath);
-  String canonical = requested.getCanonicalPath();
-  String allowedBase = new File("/home/was/gseed_files").getCanonicalPath();
-  if (!canonical.startsWith(allowedBase + File.separator)) {
+  Path base = Paths.get("/home/was/gseed_files").toRealPath();
+  Path candidate = Paths.get(filePath).toAbsolutePath().normalize();
+  if (candidate.equals(base) || !candidate.startsWith(base)) {
       response.sendError(HttpServletResponse.SC_FORBIDDEN);
       return null;
   }
+  Path real = candidate.toRealPath();
+  if (!real.startsWith(base) || !Files.isRegularFile(real)) {
+      response.sendError(HttpServletResponse.SC_FORBIDDEN);
+      return null;
+  }
+  // 검증한 real을 읽는다. 경로 교체가 가능하면 안전한 디렉터리 핸들 접근이 필요하다.
   ```
 - 참조: CWE-22, OWASP A01:2021
 
@@ -141,13 +165,13 @@ python skills/detecting-path-traversal/scripts/scan_pathtraversal.py "$TARGET" -
   직접 조작 불가하다면 위험 낮음. 단 IDOR(파일 접근 권한 검증) 함께 확인 권고.
 
 ## 오탐 제외
-- BoardFileServiceImpl.java:119 — getCanonicalPath() + startsWith(allowedBase) 검증 완비 → 안전
+- BoardFileServiceImpl.java:119 — 실제 경로·구성요소 경계·링크·I/O·권한 근거를 확인한 뒤 반증 검토. 함수 호출 존재만으로 안전 처리하지 않음
 ```
 
 ## Verification (검사 자체의 신뢰성 확인)
 
 - [ ] 사용자 입력(쿼리 파라미터, 경로 변수, 폼 필드)이 파일 경로에 사용되는 **모든** 지점을 탐지했는가
-- [ ] 각 지점에서 `getCanonicalPath()` 또는 `Path.normalize()` + 기준 경로 `startsWith` 검증이 있는지 확인했는가
+- [ ] 각 지점에서 `Path` 구성요소 경계·실제 경로·링크·경로 교체·읽기 권한을 확인하고 검증된 경로가 실제 I/O에 사용되는지 확인했는가
 - [ ] JSP 다운로드에서 블랙리스트 방식(`../` 문자열 치환/필터)만 사용하는 경우 인코딩 우회 가능성을 기록했는가
 - [ ] ZipSlip 위험이 있는 ZIP 처리 코드를 별도로 확인했는가
 - [ ] DB에서 조회한 경로를 신뢰하는 코드가 있는 경우 IDOR 체인 가능성을 함께 기록했는가
@@ -157,7 +181,7 @@ python skills/detecting-path-traversal/scripts/scan_pathtraversal.py "$TARGET" -
 | 용어 | 설명 |
 |---|---|
 | Path Traversal (CWE-22) | 사용자 입력의 `../` 시퀀스를 이용해 기준 경로를 벗어나 임의 파일 접근 |
-| `getCanonicalPath()` | 심볼릭 링크·`..` 등을 해석해 절대 정규 경로를 반환 — 경로 검증의 표준 |
+| `getCanonicalPath()` | 정규 경로 문자열을 반환하지만 문자열 prefix 비교만으로 포함성·경로 교체 방어를 보장하지 않음 |
 | `Path.normalize()` | `..`을 해석하지만 심볼릭 링크는 해석 안 함 — `toRealPath()`와 병행 권장 |
 | 블랙리스트 필터 | `../` 문자열을 제거/차단 — URL 인코딩·유니코드 정규화 우회로 무력화 가능 |
 | ZipSlip (CWE-22) | ZIP 엔트리명에 `../` 포함 → 압축 해제 기준 경로 밖에 파일 생성 |

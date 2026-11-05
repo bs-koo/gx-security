@@ -121,7 +121,7 @@ class TestEmitJsonBackwardCompat(unittest.TestCase):
         self.assertEqual(real_buf.getvalue(), expected)
 
     def test_emit_json_preserves_korean_and_em_dash(self):
-        obj = {"snippet": "db.password=hunter2 — 한글 주석 확인"}
+        obj = {"snippet": "db.password=hunter2", "note": "— 한글 주석 확인"}
         real_buf = io.BytesIO()
         wrapper = io.TextIOWrapper(real_buf, encoding="utf-8", errors="replace")
         old_stdout = sys.stdout
@@ -131,7 +131,8 @@ class TestEmitJsonBackwardCompat(unittest.TestCase):
         finally:
             sys.stdout = old_stdout
         parsed = json.loads(real_buf.getvalue().decode("utf-8"))
-        self.assertEqual(parsed, obj)
+        self.assertEqual(parsed, {"snippet": "[REDACTED]", "note": "— 한글 주석 확인"})
+        self.assertNotIn("hunter2", json.dumps(parsed))
 
 
 # ── 서브프로세스 회귀 테스트 — 실제 스캐너를 깨진 콘솔 코덱에서 실행 ──────────
@@ -207,7 +208,7 @@ class TestScanSecretsCP949Regression(unittest.TestCase):
         # scan_secrets.py의 hardcoded-password-properties 규칙에 걸리는 라인에
         # em-dash(—)와 한글을 함께 심는다 — cp949 strict에서 em-dash가 크래시를 유발한다
         # (한글 자체는 cp949로 인코딩 가능하므로 em-dash 없이는 재현되지 않는다).
-        fixture_path = os.path.join(self.tmp.name, "app.properties")
+        fixture_path = os.path.join(self.tmp.name, "한글—app.properties")
         with open(fixture_path, "w", encoding="utf-8") as f:
             f.write("db.password=hunter2 — 한글 주석 확인\n")
         self.fixture_dir = self.tmp.name
@@ -226,9 +227,10 @@ class TestScanSecretsCP949Regression(unittest.TestCase):
         # stdout 자체가 유효한 UTF-8이어야 한다(디코드가 크래시하지 않아야 함)
         text = out.stdout.decode("utf-8")
         data = json.loads(text)
-        snippets = " ".join(c.get("snippet", "") for c in data.get("candidates", []))
-        self.assertIn("—", snippets)   # em-dash 원문 보존(치환/삭제되지 않음)
-        self.assertIn("한글", snippets)  # 한글("한글") 원문 보존
+        locations = " ".join(c.get("file", "") for c in data.get("candidates", []))
+        self.assertIn("—", locations)
+        self.assertIn("한글", locations)
+        self.assertNotIn("hunter2", text)
 
 
 class TestScopeGuardCP949Regression(unittest.TestCase):

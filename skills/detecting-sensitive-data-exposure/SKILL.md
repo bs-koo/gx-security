@@ -1,6 +1,11 @@
 ---
 name: detecting-sensitive-data-exposure
-description: "소스 코드와 설정의 민감정보 노출을 정적으로 진단할 때 사용한다. 하드코딩된 자격증명, 개인정보와 로그·응답의 정보 노출 후보를 검토한다."
+description: >-
+  SQIsoft 웹 애플리케이션에서 민감정보 노출(Sensitive Data Exposure) 취약점을 검사한다.
+  하드코딩 시크릿(DB 비밀번호·API 키·JWT 시크릿·초기 비밀번호), 개인정보(주민번호·이메일·전화번호)
+  평문 저장·로그 출력, 응답 DTO 과다 필드 노출, 예외 스택트레이스 사용자 노출을 탐지한다.
+  properties/yml/xml/.java/.jsp 전 계층을 검사하며 환경변수·Vault placeholder는 오탐 제외한다.
+  CWE-200(정보노출), CWE-798(하드코딩 자격증명), OWASP A02:2021(암호화 실패)에 대응.
 domain: cybersecurity
 subdomain: web-application-security
 tags:
@@ -20,12 +25,17 @@ tags:
 cwe: [CWE-200, CWE-798]
 owasp: [A02:2021-Cryptographic-Failures]
 stacks: [spring-modern, jsp-legacy]
-version: "0.8.2"
+version: "0.10.0"
 author: sqisoft-security
 license: Proprietary
 ---
 
-# 민감정보 노출 진단
+> Release-check contract (0.10.0): use the common gxsec CLI for developer checks and release evidence. Legacy commands below are expert/reference paths, not proof of release completion. Preserve candidate vs verified vs incomplete states; never treat status 200, reflection, a helper name, or an annotation alone as a confirmed exploit/defense. Credentials use references/stdin; no plain passwords/tokens in argv or chat. Required scope/readiness/authentication/confinement evidence is enforced by the new release path.
+
+
+SEF 또는 공통 방어가 관련된 후보는 [공유 SEF 문맥 검토](../checking-release-security/references/sef-context.md)를 읽고 공통 CLI 결과를 사용한다. 아래 전문가용 판정·오탐 표기는 검토 제안이며 원본 finding의 검증 상태·심각도·ID를 바꾸거나 보호된 독립 검토를 대체하지 않는다.
+
+# 민감정보 노출 검사 (Sensitive Data Exposure / Hardcoded Secrets)
 
 ## When to Use
 

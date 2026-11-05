@@ -1,0 +1,6 @@
+interface:
+  display_name: "GX 보안 점검"
+  short_description: "프로젝트 보안 점검과 결과 확인을 한 곳에서 진행합니다"
+  default_prompt: "$gx-security 현재 프로젝트의 출시 전 보안 점검을 진행해줘."
+policy:
+  allow_implicit_invocation: true

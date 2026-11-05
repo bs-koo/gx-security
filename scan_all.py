@@ -38,6 +38,8 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 from tools import io_utf8  # noqa: E402
+from tools.scanner_contract import completion_proven  # noqa: E402
+from tools.redaction import redact  # noqa: E402
 io_utf8.configure()
 
 SKILLS_DIR = os.path.join(ROOT, "skills")
@@ -108,20 +110,24 @@ def run_one(script, target):
         if out.stdout and out.stdout.strip():
             try:
                 data = json.loads(out.stdout)
+                if (not isinstance(data, dict) or not isinstance(data.get("candidates"), list)
+                        or type(data.get("candidate_count")) is not int
+                        or data["candidate_count"] != len(data["candidates"])
+                        or not isinstance(data.get("detected_stacks", []), list)):
+                    return None, "invalid scanner JSON result"
                 # 자식이 실패했지만 JSON을 내보낸 경우 error 필드 추가
                 if out.returncode != 0:
-                    data.setdefault("error", f"rc={out.returncode}: {out.stderr[:200].strip()}")
-                return data, None
+                    data.setdefault("error", f"rc={out.returncode}: child scanner failed")
+                return redact(data), None
             except json.JSONDecodeError:
                 pass
         # stdout 없거나 JSON 파싱 실패 → stderr를 error로 반환
-        stderr_head = out.stderr[:300].strip() if out.stderr else ""
-        msg = f"rc={out.returncode}: {stderr_head}" if stderr_head else f"rc={out.returncode}: (출력 없음)"
-        return None, msg
+        msg = f"rc={out.returncode}: invalid or missing scanner JSON (stderr redacted)"
+        return None, redact(msg)
     except subprocess.TimeoutExpired:
         return None, "timeout"
     except OSError as e:
-        return None, str(e)[:120]
+        return None, redact(str(e)[:120])
 
 
 def main():
@@ -133,15 +139,18 @@ def main():
 
     if not os.path.isdir(args.target):
         print(f"오류: 디렉토리가 아닙니다 — {args.target}", file=sys.stderr)
-        sys.exit(2)
+        return 2
 
     scanners = find_scanners()
-    if args.only:
+    if args.only is not None:
         # [L1] 사용자 키워드를 별칭맵으로 정규화한 뒤 디렉토리명에 부분문자열 매칭
         raw_keys = [k.strip().lower() for k in args.only.split(",") if k.strip()]
         keys = [ALIAS_MAP.get(k, k) for k in raw_keys]
         scanners = [s for s in scanners if any(k in s[0].lower() for k in keys)]
 
+    errors = []
+    if not scanners:
+        errors.append({"type": "empty_selection", "message": "No scanners selected"})
     results = []
     stacks = set()
     # [M4] 여러 스킬이 서로 다른 engine을 보고할 수 있으므로 set으로 수집
@@ -150,22 +159,32 @@ def main():
         data, err = run_one(script, args.target)
         if err:
             results.append({"skill": skill, "label": LABELS.get(skill, skill),
-                            "error": err, "candidate_count": None})
+                            "error": err, "candidate_count": None,
+                            "execution_status": "incomplete", "errors": [err]})
+            errors.append({"skill": skill, "error": err})
             continue
         for s in data.get("detected_stacks", []):
-            stacks.add(s)
+            if isinstance(s, str):
+                stacks.add(s)
         # [M4] data에 error 필드가 있으면(자식 rc != 0) 결과에 포함
         eng = data.get("engine")
-        if eng:
+        if isinstance(eng, str) and eng:
             engines.add(eng)
-        row = {
+        row = dict(data)
+        row.update({
             "skill": skill,
             "label": LABELS.get(skill, skill),
             "candidate_count": data.get("candidate_count", 0),
             "candidates": data.get("candidates", []),
-        }
+        })
         if data.get("error"):
             row["error"] = data["error"]
+        if not completion_proven(data):
+            if data.get("execution_status") == "complete":
+                row["execution_status"] = "incomplete"
+                row["errors"] = list(data.get("errors") or []) + [{"type": "completion_metadata_missing"}]
+            errors.append({"skill": skill, "execution_status": row.get("execution_status", "incomplete"),
+                           "errors": row.get("errors", []), "error": row.get("error")})
         results.append(row)
 
     # [M4] engines 집합을 정렬 목록으로 보고 (불일치 가시화)
@@ -178,6 +197,8 @@ def main():
         "engine": engines_sorted[0] if len(engines_sorted) == 1 else engines_sorted,
         "total_candidates": sum(r.get("candidate_count") or 0 for r in results),
         "by_skill": results,
+        "execution_status": "incomplete" if errors else "complete",
+        "errors": errors,
         "note": "1차 후보입니다. 최종 판정/4요소 리포트는 Claude Code에서 각 스킬 2단계(AI 검증) 수행.",
     }
 
@@ -189,9 +210,12 @@ def main():
             "후보 0건이 안전을 의미하지 않습니다",
         ]
 
+    summary = redact(summary)
+    results = summary["by_skill"]
+
     if args.json:
         io_utf8.emit_json(summary)
-        return
+        return 2 if errors else 0
 
     engine_label = ", ".join(engines_sorted) if engines_sorted else "?"
     print(f"대상: {args.target}")
@@ -211,7 +235,8 @@ def main():
             print(f"  - {w}")
     print(f"\n※ 1차 후보(오탐 포함)입니다. 정확한 취약/오탐 판정과")
     print(f"  4요소 리포트는 Claude Code에서 각 스킬을 호출해 완성하세요.")
+    return 2 if errors else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

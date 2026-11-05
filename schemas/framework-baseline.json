@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gx-security.local/schemas/framework-baseline.json",
+  "title": "gx-security observed framework baseline v1",
+  "description": "Observed input identity; not a safety certificate or finding approval.",
+  "type": "object",
+  "required": ["schema_version", "id", "authority", "family", "variant", "analyzer", "files", "manifest_digest", "contract_digest"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^GXSEC-BASE-[a-f0-9]{20}$"},
+    "authority": {"const": "observations-only"},
+    "family": {"type": "string"},
+    "variant": {"enum": ["public", "private", "mixed", "undetermined"]},
+    "analyzer": {"type": "object"},
+    "modules": {"type": "array"},
+    "source_binding": {"type": "object"},
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "hash"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+        }
+      }
+    },
+    "manifest_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "contract_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "limitations": {"type": "array"}
+  }
+}

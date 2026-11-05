@@ -34,14 +34,14 @@ class TestRequestProxyWiring(unittest.TestCase):
         self.assertNotIn("verify", kwargs)
 
     @patch("requests.request")
-    def test_request_env_sets_proxies_and_verify_false(self, mock_req):
+    def test_request_env_sets_proxies_and_verified_tls(self, mock_req):
         mock_req.return_value = MagicMock(status_code=200, text="ok", headers={})
         with patch.dict(os.environ, {"SECURITY_PLUGIN_BURP_PROXY": "http://127.0.0.1:8080"}):
             dyn_session.request("GET", "http://localhost:7171/x", token="TKN")
         _, kwargs = mock_req.call_args
         self.assertEqual(kwargs["proxies"], {"http": "http://127.0.0.1:8080",
                                              "https": "http://127.0.0.1:8080"})
-        self.assertFalse(kwargs["verify"])
+        self.assertIs(kwargs["verify"], True)
 
 
 class TestLoginProxyWiring(unittest.TestCase):
@@ -53,7 +53,7 @@ class TestLoginProxyWiring(unittest.TestCase):
             dyn_session.login("http://localhost:7171", "/login", {"id": "a", "pw": "b"})
         _, kwargs = mock_post.call_args
         self.assertEqual(kwargs["proxies"]["http"], "http://127.0.0.1:8080")
-        self.assertFalse(kwargs["verify"])
+        self.assertIs(kwargs["verify"], True)
 
     @patch("requests.post", side_effect=OSError("proxy refused"))
     def test_login_proxy_error_hint(self, _mock):
@@ -66,15 +66,15 @@ class TestLoginProxyWiring(unittest.TestCase):
 
 class TestProxyWarningSuppress(unittest.TestCase):
     @patch("requests.request")
-    def test_verify_false_warning_suppressed_once(self, mock_req):
-        # 엣지 B: 프록시 활성 시 InsecureRequestWarning 억제가 1회만 호출되는지(로그 오염 방지)
+    def test_verified_proxy_does_not_disable_security_warnings(self, mock_req):
+        # 프록시 경유에서도 인증서 검증을 유지하고 보안 경고를 억제하지 않는다.
         mock_req.return_value = MagicMock(status_code=200, text="ok", headers={})
         dyn_session._burp_warned = False
         with patch("urllib3.disable_warnings") as mock_dis:
             with patch.dict(os.environ, {"SECURITY_PLUGIN_BURP_PROXY": "http://127.0.0.1:8080"}):
                 dyn_session.request("GET", "http://localhost:7171/x")
                 dyn_session.request("GET", "http://localhost:7171/y")
-        self.assertEqual(mock_dis.call_count, 1)
+        mock_dis.assert_not_called()
 
 
 if __name__ == "__main__":

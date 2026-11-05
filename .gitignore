@@ -19,3 +19,13 @@ evidence/
 
 # gx-dev 산출물
 .dev/
+
+# Local release-check state, credentials, and generated artifacts
+.gxsec/
+.gxsec-container/
+.gxsec-tools/
+.worktrees/
+*.egg-info/
+.venv/
+dist/
+/build/

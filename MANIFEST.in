@@ -1,0 +1,5 @@
+include scan_all.py setup.py requirements-bundle.in requirements-bundle.lock
+recursive-include tools *.py
+recursive-include skills/detecting-* *.py *.yml *.yaml *.md
+recursive-include schemas *.json
+recursive-include runtime *.json

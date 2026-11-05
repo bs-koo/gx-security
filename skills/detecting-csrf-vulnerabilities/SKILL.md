@@ -1,18 +1,28 @@
 ---
 name: detecting-csrf-vulnerabilities
-description: "Spring·JSP 소스의 CSRF 보호를 정적으로 진단할 때 사용한다. 상태 변경 요청의 토큰 검증과 보안 설정에서 취약점 후보를 식별한다."
+description: >-
+  SQIsoft 웹 애플리케이션에서 CSRF(Cross-Site Request Forgery) 취약점을 검사한다.
+  프로젝트 스택(Spring Boot 모던 / JSP·Servlet 레거시)을 자동 감지하여 스택에 맞는
+  Semgrep 룰로 1차 탐지하고, AI가 상태변경 엔드포인트의 토큰 보호 유무를 컨텍스트로
+  검증한다. Spring Security csrf().disable(), 토큰 없는 JSP form POST, 검증 없는 doPost,
+  SameSite 미설정 쿠키 등을 찾는다.
 domain: cybersecurity
 subdomain: web-application-security
 tags: [csrf, cwe-352, owasp-a01, spring-security, jsp, servlet, sqisoft]
 cwe: [CWE-352]
 owasp: [A01:2021-Broken-Access-Control]
 stacks: [spring-modern, jsp-legacy]
-version: "0.8.2"
+version: "0.10.0"
 author: sqisoft-security
 license: Proprietary
 ---
 
-# CSRF 보안 진단
+> Release-check contract (0.10.0): use the common gxsec CLI for developer checks and release evidence. Legacy commands below are expert/reference paths, not proof of release completion. Preserve candidate vs verified vs incomplete states; never treat status 200, reflection, a helper name, or an annotation alone as a confirmed exploit/defense. Credentials use references/stdin; no plain passwords/tokens in argv or chat. Required scope/readiness/authentication/confinement evidence is enforced by the new release path.
+
+
+SEF 또는 공통 방어가 관련된 후보는 [공유 SEF 문맥 검토](../checking-release-security/references/sef-context.md)를 읽고 공통 CLI 결과를 사용한다. 아래 전문가용 판정·오탐 표기는 검토 제안이며 원본 finding의 검증 상태·심각도·ID를 바꾸거나 보호된 독립 검토를 대체하지 않는다.
+
+# CSRF 취약점 검사 (Cross-Site Request Forgery)
 
 ## When to Use
 

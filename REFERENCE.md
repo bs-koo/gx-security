@@ -1,4 +1,6 @@
-# GX Security 실행 참고서
+# GX Security 기존 전문 명령 참고서
+
+> 기존 `gx-diagnose`·`gx-audit`·`gx-pentest`의 구성과 옵션을 설명하는 호환 참고서입니다. 0.10.0 프리뷰의 기본 시작점·준비·판정 기준은 [README](README.md)와 [상세 사용법](USAGE.md)을 따릅니다. 아래 과거 분석 예시를 자동 안전 판정이나 출시 승인으로 사용하지 않습니다.
 
 [제품 소개로 돌아가기](README.md) · [실전 사용 가이드](USAGE.md)
 
@@ -17,7 +19,7 @@ pip install -r requirements-dev.txt
 
 > Windows 기본 실행정책(Restricted)에서는 `scripts\install-dev.ps1`을 직접 실행하면 `PSSecurityException`으로 막힙니다. 위처럼 `-ExecutionPolicy Bypass`를 붙이거나, `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`로 계정 실행정책을 변경한 뒤 실행하세요.
 
-> Windows는 semgrep 네이티브 휠 부재로 `semgrep --version`에서 설치 스크립트가 비정상 종료하는 것이 정상이며, 정적 진단은 grep 폴백으로 계속 동작합니다(정밀도는 낮아집니다).
+> 과거 일부 Windows 환경에서는 Semgrep 설치·실행이 지원되지 않았습니다. 0.10 프리뷰는 고정 Linux Docker 실행 경로를 제공합니다. 정규식 폴백만으로 정밀 검사 완료를 인정하지 않습니다.
 
 > **Windows(cp949) 환경 필수 안내**: `tools/io_utf8.py`가 콘솔 인코딩을 UTF-8로 강제하고 `PYTHONUTF8=1`을 자식 프로세스에 자동 전파하므로, 스캐너 경유 semgrep은 cp949 환경에서도 UTF-8 룰을 정상 로드합니다. 이 전파가 없으면 semgrep이 한글 message가 담긴 UTF-8 룰을 cp949로 읽다 실패해 **정밀 진단이 grep 폴백(저정밀)으로 강등**됩니다. 다만 `semgrep`을 **직접 CLI로 실행**할 때는 이 자동 전파가 적용되지 않으므로 `setx PYTHONUTF8 1`(또는 세션에서 `$env:PYTHONUTF8=1`)로 직접 설정하세요. 파이프·리다이렉션·CI 캡처의 한글 출력 안정성도 함께 좋아집니다.
 

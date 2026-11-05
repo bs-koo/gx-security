@@ -32,6 +32,8 @@ if _PLUGIN_ROOT not in sys.path:
     sys.path.insert(0, _PLUGIN_ROOT)
 from tools import io_utf8  # noqa: E402  (UTF-8 콘솔 강제 — Windows cp949 크래시 방지, Task 1)
 io_utf8.configure()
+from tools.scanner_contract import ScannerContract, result_exit_code  # noqa: E402
+contract = ScannerContract()
 
 RULES = os.path.join(os.path.dirname(HERE), "rules", "sensitive-data.yml")
 
@@ -72,12 +74,12 @@ def run_semgrep(target):
     cmd = ["semgrep", "--config", RULES, "--json", "--quiet",
            "--exclude", ".dev", "--exclude", ".omc", "--exclude", ".humanize", target]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+        out = contract.run_semgrep(cmd, capture_output=True, text=True, timeout=600,
                              encoding="utf-8", errors="replace")
     except (subprocess.TimeoutExpired, OSError) as e:
-        return None, f"semgrep 실행 실패: {e}"
+        return None, f"semgrep 실행 실패: {type(e).__name__}"
     if out.returncode not in (0, 1):  # 1 = findings 있음
-        return None, f"semgrep 오류(rc={out.returncode}): {out.stderr[:300]}"
+        return None, f"semgrep 오류(rc={out.returncode}): (diagnostic details retained in execution metadata)"
     try:
         data = json.loads(out.stdout or "{}")
     except json.JSONDecodeError:
@@ -100,9 +102,14 @@ def run_semgrep(target):
 
 # [FR-9] 포맷 기반 시크릿 대상 확장자 (코드+설정 중심, 문서 .md 제외)
 _SECRET_FMT_EXTS = (".java", ".kt", ".properties", ".yml", ".yaml",
-                    ".xml", ".json", ".env", ".conf", ".config")
+                    ".xml", ".json", ".env", ".conf", ".config",
+                    ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".vue")
 
 FALLBACK_PATTERNS = [
+    ("hardcoded-credential-dotenv", "configuration", (".env",),
+     re.compile(r'(?i)^\s*(?:export\s+)?[\w]*(?:password|passwd|pwd|secret|api_?key|access_?token|auth_?token)[\w]*\s*=\s*["\']?(?!\$)(?!["\']?\s*(?:#|$))[^\s"\']{4,}')),
+    ("hardcoded-credential-frontend", "frontend", (".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".vue"),
+     re.compile(r'(?i)\b[\w]*(?:password|passwd|pwd|secret|api_?key|access_?token|auth_?token)[\w]*\s*[=:]\s*["\'](?!\$\{)[^"\']{6,}["\']')),
     # --- properties/yml: 평문 시크릿 ---
     # password=실제값 (${...} 참조 제외, 주석 라인 제외)
     (
@@ -255,6 +262,13 @@ INFO_RULES = {"debug-output-residue"}
 
 
 # ── 폴백 실행 ────────────────────────────────────────────────────
+def _placeholder_value(match):
+    # Only the value in the matched assignment can make this finding a
+    # placeholder. Another variable on the same line cannot suppress it.
+    parts = re.split(r"[=:]", match.group(0), maxsplit=1)
+    return len(parts) == 2 and parts[1].lstrip(" \t\r\n\"'").startswith("${")
+
+
 def run_fallback(target):
     """라인단위 FALLBACK_PATTERNS + 멀티라인 MULTILINE_PATTERNS 를 분리 처리.
 
@@ -267,18 +281,21 @@ def run_fallback(target):
     """
     findings = []
     for root, dirs, files in os.walk(target):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        dirs[:] = contract.filter_dirs(root, dirs, SKIP_DIRS)
         for f in files:
-            ext = os.path.splitext(f)[1].lower()
+            ext = ".env" if f == ".env" or f.startswith(".env.") else os.path.splitext(f)[1].lower()
             line_patterns = [p for p in FALLBACK_PATTERNS if ext in p[2]]
             ml_patterns   = [p for p in MULTILINE_PATTERNS if ext in p[2]]
             if not line_patterns and not ml_patterns:
+                contract.record_ignored(os.path.join(root, f), "unsupported_extension")
                 continue
             path = os.path.join(root, f)
             try:
                 with open(path, encoding="utf-8", errors="replace") as fh:
+                    contract.record_file(path)
                     content = fh.read()
             except OSError:
+                contract.record_read_error(path)
                 continue
 
             # ── 라인단위 매칭 ──────────────────────────────────────
@@ -286,11 +303,12 @@ def run_fallback(target):
             for i, line in enumerate(lines, 1):
                 # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해 스킵
                 if len(line) > _MAX_LINE_LEN:
+                    contract.record_ignored(path, "line_too_long", line=i)
                     continue
                 for rule_id, stack, _exts, rx in line_patterns:
-                    if rx.search(line):
+                    if (matched := rx.search(line)):
                         snippet = line.strip()[:200]
-                        if re.search(r'\$\{[A-Z_]+\}', snippet):
+                        if _placeholder_value(matched):
                             continue
                         entry = {
                             "file": path,
@@ -316,7 +334,7 @@ def run_fallback(target):
                     # 매치 시작 오프셋 앞의 줄바꿈 수 + 1 = 라인번호
                     line_no = content[:m.start()].count("\n") + 1
                     snippet = m.group(0).replace("\n", " ").strip()[:200]
-                    if re.search(r'\$\{[A-Z_]+\}', snippet):
+                    if _placeholder_value(m):
                         continue
                     findings.append({
                         "file": path,
@@ -362,6 +380,7 @@ def main():
         print(f"오류: 디렉토리가 아닙니다 — {args.target}", file=sys.stderr)
         sys.exit(2)
 
+    contract.reset()
     stacks = detect_stacks(args.target)
     engine = "semgrep" if (shutil.which("semgrep") and not os.environ.get("GXSEC_NO_SEMGREP")) else "grep-fallback"
 
@@ -387,6 +406,8 @@ def main():
             "최종 취약/오탐 판정은 SKILL.md 2단계 AI 검증으로 수행하세요."
         ),
     }
+    contract.enrich(result)
+    findings = result["candidates"]
     if warnings:
         result["warnings"] = warnings
 
@@ -426,6 +447,8 @@ def main():
             "2단계 AI 컨텍스트 검증 필요."
         )
 
+    return result_exit_code(result)
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

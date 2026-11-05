@@ -10,7 +10,7 @@ SQIsoft 경로 탐색(Path Traversal) 1차 스캐너 (CWE-22 / 하이브리드 �
 
 이 스크립트는 "후보를 넓게" 잡는다. 최종 취약/오탐 판정은 SKILL.md 2단계의
 AI 컨텍스트 검증이 수행한다.
-  - getCanonicalPath()+startsWith(base) 패턴이 있으면 안전(오탐).
+  - 동일 경로의 정규화·디렉터리 경계 비교·실패 시 거부를 컨텍스트에서 확인한다.
   - 블랙리스트만 사용하면 Medium으로 기록하고 getCanonicalPath 교체를 권고.
 
 사용:
@@ -30,6 +30,8 @@ if _PLUGIN_ROOT not in sys.path:
     sys.path.insert(0, _PLUGIN_ROOT)
 from tools import io_utf8  # noqa: E402  (UTF-8 콘솔 강제 — Windows cp949 크래시 방지, Task 1)
 io_utf8.configure()
+from tools.scanner_contract import ScannerContract, result_exit_code  # noqa: E402
+contract = ScannerContract()
 
 RULES = os.path.join(os.path.dirname(HERE), "rules", "path-traversal.yml")
 
@@ -67,12 +69,12 @@ def run_semgrep(target):
     cmd = ["semgrep", "--config", RULES, "--json", "--quiet",
            "--exclude", ".dev", "--exclude", ".omc", "--exclude", ".humanize", target]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+        out = contract.run_semgrep(cmd, capture_output=True, text=True, timeout=600,
                              encoding="utf-8", errors="replace")
     except (subprocess.TimeoutExpired, OSError) as e:
-        return None, f"semgrep 실행 실패: {e}"
+        return None, f"semgrep 실행 실패: {type(e).__name__}"
     if out.returncode not in (0, 1):  # 1 = findings 있음
-        return None, f"semgrep 오류(rc={out.returncode}): {out.stderr[:300]}"
+        return None, f"semgrep 오류(rc={out.returncode}): (diagnostic details retained in execution metadata)"
     try:
         data = json.loads(out.stdout or "{}")
     except json.JSONDecodeError:
@@ -142,15 +144,17 @@ CANONICAL_KEYWORD = re.compile(r"getCanonicalPath\s*\(\s*\)")
 def run_fallback(target):
     findings = []
     for root, dirs, files in os.walk(target):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        dirs[:] = contract.filter_dirs(root, dirs, SKIP_DIRS)
         for fname in files:
             ext = os.path.splitext(fname)[1].lower()
             applicable = [r for r in FALLBACK_PATTERNS if ext in r[2]]
             if not applicable:
+                contract.record_ignored(os.path.join(root, fname), "unsupported_extension")
                 continue
             fpath = os.path.join(root, fname)
             try:
                 with open(fpath, encoding="utf-8", errors="replace") as fh:
+                    contract.record_file(fpath)
                     lines = fh.readlines()
                 file_content = "".join(lines)
                 has_canonical = bool(CANONICAL_KEYWORD.search(file_content))
@@ -158,6 +162,7 @@ def run_fallback(target):
                 for i, line in enumerate(lines, 1):
                     # 초대형 minified 단일 라인은 정규식 백트래킹 방어를 위해 스킵
                     if len(line) > _MAX_LINE_LEN:
+                        contract.record_ignored(fpath, "line_too_long", line=i)
                         continue
                     for rule_id, stack, _exts, rx in applicable:
                         if not rx.search(line):
@@ -181,6 +186,7 @@ def run_fallback(target):
                             "snippet": line.strip()[:200] + note,
                         })
             except OSError:
+                contract.record_read_error(fpath)
                 continue
     return findings
 
@@ -216,6 +222,7 @@ def main():
         print(f"오류: 디렉토리가 아닙니다 — {args.target}", file=sys.stderr)
         sys.exit(2)
 
+    contract.reset()
     stacks = detect_stacks(args.target)
     engine = "semgrep" if (shutil.which("semgrep") and not os.environ.get("GXSEC_NO_SEMGREP")) else "grep-fallback"
 
@@ -238,10 +245,12 @@ def main():
         "candidates": findings,
         "note": (
             "후보 목록입니다. 최종 취약/오탐 판정은 SKILL.md 2단계 AI 검증으로 수행하세요. "
-            "getCanonicalPath()+startsWith(base) 패턴이 선행되면 오탐. "
+            "정규화·디렉터리 경계 비교 및 실패 시 접근 차단이 같은 경로에 적용되는지 확인. "
             "블랙리스트(indexOf/contains '..') 방식만 있으면 Medium으로 기록 후 교체 권고."
         ),
     }
+    contract.enrich(result)
+    findings = result["candidates"]
     if warnings:
         result["warnings"] = warnings
 
@@ -260,10 +269,12 @@ def main():
                 print(f"  - {wmsg}")
         print(
             "\n※ 후보일 뿐입니다. 2단계 AI 컨텍스트 검증 필요.\n"
-            "  getCanonicalPath()+startsWith(base) 검증 완비 패턴은 오탐 처리하세요.\n"
+            "  정규화·경계 비교·거부 분기가 실제 파일 접근을 지배하는지 확인하세요.\n"
             "  블랙리스트 방식(indexOf '..') 단독 사용은 Medium — getCanonicalPath 교체 권고."
         )
 
+    return result_exit_code(result)
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
