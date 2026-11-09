@@ -6,13 +6,13 @@
 
 개발자가 실행하고 QA·PM과 함께 결과를 읽는 Claude Code·Codex 보안 점검 플러그인입니다.
 
-[![Preview](https://img.shields.io/badge/preview-0.10.0-141413)](#시작하기) [![Skills](https://img.shields.io/badge/skills-22-666666)](#스킬-구성)
+[![Preview](https://img.shields.io/badge/preview-0.10.1-141413)](#시작하기) [![Skills](https://img.shields.io/badge/skills-22-666666)](#스킬-구성)
 
 [동작 방식](#플러그인-동작) · [시작하기](#시작하기) · [결과](#점검-결과) · [스킬](#스킬-구성) · [소개 페이지](https://bs-koo.github.io/gx-security/)
 
 </div>
 
-> **0.10.0 프리뷰를 공개합니다.** 통합 스킬은 실행기·스킬 패키지를 함께 설치·등록한 세션에서 사용합니다. 검사 실행 환경은 처음 한 번 별도로 준비합니다.
+> **0.10.1 프리뷰를 공개합니다.** 통합 스킬은 실행기·스킬 패키지를 함께 설치·등록한 세션에서 사용합니다. 검사 실행 환경은 처음 한 번 별도로 준비합니다.
 
 ## 플러그인 동작
 
@@ -36,7 +36,7 @@
 ### Claude Code
 
 ```text
-/gx-security:gx 현재 프로젝트 출시 전에 보안 점검하고 QA·PM 보고서 만들어줘
+/gx-security:gx-security 현재 프로젝트 출시 전에 보안 점검하고 QA·PM 보고서 만들어줘
 ```
 
 ### Codex
@@ -66,7 +66,7 @@ $gx-security 현재 프로젝트 출시 전에 보안 점검하고 QA·PM 보고
 
 | 버전 | 상태 | 시작점 |
 |---|---|---|
-| **0.10.0** | 공개 프리뷰 · 스킬 22개 | 실행기·스킬 패키지 등록 후 통합 `gx-security` |
+| **0.10.1** | 공개 프리뷰 · 스킬 22개 | 실행기·스킬 패키지 등록 후 통합 `gx-security` |
 | 기존 전문 명령 | 호환 진입점 유지 | `gx-diagnose`·`gx-audit`·`gx-pentest` |
 
 Claude Code에서는 marketplace 플러그인을 설치합니다. 기존 설치자는 플러그인을 업데이트하고 세션을 다시 시작합니다.
@@ -74,7 +74,7 @@ Claude Code에서는 marketplace 플러그인을 설치합니다. 기존 설치�
 ```text
 /plugin marketplace add bs-koo/gx-security
 /plugin install gx-security@gx-security
-/gx-security:gx 현재 프로젝트 보안 점검해줘
+/gx-security:gx-security 현재 프로젝트 보안 점검해줘
 ```
 
 Codex에서는 이 저장소의 실행기·스킬 패키지를 함께 등록한 뒤 `$gx-security`를 호출합니다. 스킬 파일 하나만 복사하면 실행기가 준비되지 않습니다. 고정 Docker 이미지 또는 검증된 직접 실행 환경은 별도로 준비하며, 이미지를 공개 레지스트리에서 자동 내려받는 방식은 제공하지 않습니다.
@@ -140,4 +140,4 @@ Codex에서는 이 저장소의 실행기·스킬 패키지를 함께 등록한 
 
 [소개·사용 흐름](https://bs-koo.github.io/gx-security/) · [상세 사용법](USAGE.md) · [실행 참고서](REFERENCE.md) · [안전 수칙](ATTACK_SAFETY.md) · [운영 정책](docs/OPERATIONS.md) · [변경 이력](CHANGELOG.md)
 
-<sub>Proprietary · SQIsoft GX · 0.10.0 프리뷰 안내</sub>
+<sub>Proprietary · SQIsoft GX · 0.10.1 프리뷰 안내</sub>

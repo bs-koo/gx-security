@@ -78,7 +78,7 @@
             <option value="release">처음 / 출시 전 점검</option><option value="change">변경한 부분 점검</option><option value="retest">수정 후 재검증</option><option value="report">기존 보고서 설명</option>
           </select>
           <label class="field-label" for="request-output">개발 도구에 붙여 넣을 요청문</label>
-          <textarea class="request-output" id="request-output" rows="4" readonly spellcheck="false" aria-describedby="task-note copy-feedback">/gx-security:gx 이 프로젝트를 출시 전에 보안 점검해줘.</textarea>
+          <textarea class="request-output" id="request-output" rows="4" readonly spellcheck="false" aria-describedby="task-note copy-feedback">/gx-security:gx-security 이 프로젝트를 출시 전에 보안 점검해줘.</textarea>
           <button class="button composer__copy" id="copy-request" type="button"><svg class="ico" aria-hidden="true"><use href="#i-copy"/></svg>요청 예시 복사</button>
           <p class="feedback" id="copy-feedback" role="status" aria-live="polite" aria-atomic="true">0.10이 등록된 Claude Code에 붙여 넣으세요.</p>
           <p class="task-note" id="task-note">기본은 정적 출시 점검입니다. 실행 중인 서비스에 공격 요청을 보내지 않습니다.</p>
@@ -175,7 +175,7 @@
     <div class="wrap">
       <h2 id="faq-title">시작 전에 자주 묻는 것</h2>
       <div class="faq">
-        <details><summary>공개 버전을 설치하면 통합 요청을 바로 쓸 수 있나요?</summary><p>0.10.0 공개 프리뷰의 실행기·스킬 패키지를 함께 설치·등록하면 통합 요청을 사용할 수 있습니다. 기존 설치자는 업데이트 후 세션을 다시 시작합니다. Codex는 전체 패키지와 스킬 등록이 필요합니다. 검사에는 고정 Docker 이미지 또는 검증된 직접 실행 환경을 별도로 준비해야 하며, 이미지의 자동 다운로드는 제공하지 않습니다.</p></details>
+        <details><summary>공개 버전을 설치하면 통합 요청을 바로 쓸 수 있나요?</summary><p>0.10.1 공개 프리뷰의 실행기·스킬 패키지를 함께 설치·등록하면 통합 요청을 사용할 수 있습니다. 기존 설치자는 업데이트 후 세션을 다시 시작합니다. Codex는 전체 패키지와 스킬 등록이 필요합니다. 검사에는 고정 Docker 이미지 또는 검증된 직접 실행 환경을 별도로 준비해야 하며, 이미지의 자동 다운로드는 제공하지 않습니다.</p></details>
         <details><summary>프로젝트마다 setup이나 설정 파일이 필요한가요?</summary><p>별도 setup·init·설정 생성은 필수가 아닙니다. 기존 환경·설정·이력을 재사용하며, 설정이 없으면 기본값으로 진행합니다. 조직의 필수 입력과 보호된 정책은 별도로 충족해야 합니다. 기본 Windows Docker 경로는 외부 정책·DB mount를 자동 제공하지 않습니다.</p></details>
         <details><summary>매번 목적이나 설치 여부를 다시 묻나요?</summary><p>“출시 전에 보안 점검해줘”처럼 목적과 대상이 분명하면 진행합니다. 목적 없는 단독 호출, 여러 검사 대상이나 재검증 항목 중 선택이 필요한 경우에만 짧게 확인합니다. 같은 범위에서 이미 받은 답과 설치 선택은 반복해서 묻지 않습니다.</p></details>
         <details><summary>“보안 점검해줘”가 서비스 공격까지 포함하나요?</summary><p>일반·출시 전 요청의 기본값은 <code>static-release</code>입니다. 실행 중인 서비스에 능동 공격 요청을 보내지 않습니다. 동적 검사, 소스 수정, 외부 전송·배포는 현재 요청과 기존 정책의 권한 범위 안에서만 수행합니다.</p></details>
@@ -221,7 +221,7 @@
   function renderRequest(announce = false) {
     requestRevision += 1;
     const task = tasks[taskSelect.value];
-    const prefix = activeHost === 'claude' ? '/gx-security:gx' : '$gx-security';
+    const prefix = activeHost === 'claude' ? '/gx-security:gx-security' : '$gx-security';
     output.value = prefix + ' ' + task.request;
     note.textContent = task.note;
     feedback.textContent = announce ? hostName() + ' · ' + taskSelect.options[taskSelect.selectedIndex].text + ' 예시로 변경했습니다.' : '0.10이 등록된 ' + hostName() + '에 붙여 넣으세요.';
