@@ -28,7 +28,8 @@ class OptionalTests(unittest.TestCase):
         self.addCleanup(git.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        # Windows TEMP can contain an 8.3 alias; use the same canonical root as collect_source.
+        self.root = Path(self.temp.name).resolve()
         self.source = self.root / 'source'
         self.source.mkdir()
         (self.source / 'app.py').write_text('print("fixture")\n', encoding='utf-8')
@@ -520,7 +521,7 @@ class OptionalTests(unittest.TestCase):
             def child(command, **kwargs):
                 if '--version' in command:
                     return self.complete_child(command, kwargs, stdout='Version: 0.69.0')
-                self.assertEqual(command[-1], str(snap.path / 'app.py'))
+                self.assertEqual(command[-1], str((snap.path / 'app.py').resolve()))
                 self.assertEqual((snap.path / 'app.py').read_text(), 'print("fixture")\n')
                 Path(command[command.index('--output') + 1]).write_text(json.dumps(self.trivy()), encoding='utf-8')
                 return self.complete_child(command, kwargs)

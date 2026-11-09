@@ -1,7 +1,7 @@
 ---
 name: checking-release-security
 description: 출시 전에 전체 소스·의존성·시크릿 및 준비된 인증 시나리오를 점검하고 QA·PM 공유본을 만들 때 사용한다.
-version: "0.10.0"
+version: "0.10.1"
 ---
 
 # 출시 전 보안 점검

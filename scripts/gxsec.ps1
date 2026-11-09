@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Source,
     [string]$Action='release',
     [string]$Profile,
-    [string]$Image='gx-security:0.10.0',
+    [string]$Image='gx-security:0.10.1',
     [string]$Output,
     [string]$FindingId,
     [string]$Base,

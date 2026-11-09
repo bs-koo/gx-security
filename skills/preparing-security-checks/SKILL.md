@@ -1,7 +1,7 @@
 ---
 name: preparing-security-checks
 description: 개발자가 보안 점검을 처음 준비하거나 엔진 설치·버전·프로젝트 프로파일을 확인할 때 사용한다.
-version: "0.10.0"
+version: "0.10.1"
 ---
 
 # 보안 점검 준비
