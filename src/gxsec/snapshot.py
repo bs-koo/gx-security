@@ -1,5 +1,6 @@
 """Private byte-verified static inputs, independent of the mutable working tree."""
 from contextlib import contextmanager
+import copy
 import hashlib
 import os
 from pathlib import Path, PurePosixPath
@@ -10,7 +11,7 @@ import subprocess
 import tempfile
 
 from .models import content_hash
-from .source import is_reparse, reject_reparse_path, runtime_environment, trusted_runtime_tool
+from .source import directory_exclusion_reason, exclusion_contract, is_reparse, reject_reparse_path, runtime_environment, trusted_runtime_tool
 
 
 def _handle_path(handle):
@@ -40,7 +41,10 @@ def _copy_file(root, relative, expected, destination):
     logical = PurePosixPath(relative)
     if logical.is_absolute() or not logical.parts or any(part in {'..', '.', '.git'} for part in logical.parts):
         raise ValueError('Invalid source inventory path')
-    original = reject_reparse_path(root.joinpath(*logical.parts))
+    original = root.joinpath(*logical.parts)
+    if any(directory_exclusion_reason(parent.as_posix()) for parent in original.relative_to(root).parents):
+        raise ValueError('Source inventory contains an excluded directory')
+    original = reject_reparse_path(original)
     original.resolve(strict=True).relative_to(root)
     before = original.lstat()
     if not stat.S_ISREG(before.st_mode):
@@ -213,7 +217,8 @@ def verified_snapshot(source, inventory, *, include_history=True):
         if any(hashes.get(path) != digest for path, digest in expected.items()):
             raise ValueError('Private copy failed verification before scanning')
         _readonly(target)
-        provenance = {'copy_verified': True, 'stable_after_scan': True, 'source_hash': inventory.get('hash'), 'source_revision': inventory.get('revision'), 'input_file_hashes': expected, 'history': history, 'digest': content_hash(hashes)}
+        provenance = {'copy_verified': True, 'stable_after_scan': True, 'source_hash': inventory.get('hash'), 'source_revision': inventory.get('revision'), 'input_file_hashes': expected, 'history': history, 'digest': content_hash(hashes),
+                      'exclusion_contract': exclusion_contract(), 'source_exclusions': copy.deepcopy(inventory.get('exclusions', []))}
         snapshot = Snapshot(target, provenance, hashes)
         yield snapshot
     finally:

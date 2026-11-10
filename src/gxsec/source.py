@@ -2,14 +2,35 @@
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import shutil
 import tempfile
 from .models import content_hash
 from .redaction import redact
 EXCLUDED_DIRS = {'.git', '.gxsec', '.worktrees', '.venv', 'venv', '__pycache__', 'node_modules', 'target', 'dist', 'build', '.gradle', '.nuxt', '.output', '.next', '.pytest_cache', '.mypy_cache', '.superpowers', '.dev', '.omc', '.humanize', '.gxsec-container', '.gxsec-tools'}
+EXCLUDED_DIRECTORY_PATHS = (('.claude', 'worktrees'),)
 SUPPORTED = {'.java', '.jsp', '.jspx', '.xml', '.yml', '.yaml', '.properties', '.js', '.jsx', '.ts', '.tsx', '.vue', '.html', '.htm', '.py', '.json', '.gradle', '.kt', '.kts', '.sql', '.env', '.conf', '.ini'}
+
+
+def directory_exclusion_reason(relative):
+    """Match directories relative to the chosen source, never its ancestors."""
+    parts = PurePosixPath(relative).parts
+    if not parts:
+        return None
+    if parts[-1] in EXCLUDED_DIRS:
+        return 'generated-or-vendor-source'
+    normalized = tuple(os.path.normcase(part) for part in parts)
+    if normalized in EXCLUDED_DIRECTORY_PATHS:
+        return 'assistant-managed-checkouts'
+    return None
+
+
+def exclusion_contract():
+    """Bind scope identity to exclusions even when no matching directory exists."""
+    return {'version': 2, 'directory_names': sorted(EXCLUDED_DIRS),
+            'relative_directory_paths': ['/'.join(parts) for parts in EXCLUDED_DIRECTORY_PATHS],
+            'case_sensitive_paths': os.name != 'nt'}
 
 
 def is_reparse(path):
@@ -91,6 +112,7 @@ def collect_source(source: Path, *, git_boundary=None) -> dict:
     inventory = []
     errors = []
     exclusions = []
+    contract = exclusion_contract()
     modules = {}
     digest = hashlib.sha256()
 
@@ -100,14 +122,16 @@ def collect_source(source: Path, *, git_boundary=None) -> dict:
         base = Path(directory)
         for name in list(dirs):
             p = base / name
-            if name in EXCLUDED_DIRS or is_reparse(p):
+            reason = directory_exclusion_reason(p.relative_to(root).as_posix())
+            reparse = is_reparse(p)
+            if reason or reparse:
                 dirs.remove(name)
-                if is_reparse(p):
+                if reparse:
                     errors.append({'type': 'reparse_entry', 'path': p.relative_to(root).as_posix()})
                 exclusions.append(
                     {
                         'path': p.relative_to(root).as_posix(),
-                        'reason': 'reparse-entry' if is_reparse(p) else 'generated-or-vendor-source',
+                        'reason': 'reparse-entry' if reparse else reason,
                     },
                 )
         dirs.sort()
@@ -149,6 +173,7 @@ def collect_source(source: Path, *, git_boundary=None) -> dict:
             'root': str(root).casefold(),
             'scope': 'full',
             'exclude': sorted(EXCLUDED_DIRS),
+            'exclusion_contract': contract,
             'modules': modules,
         },
     )
@@ -168,6 +193,7 @@ def collect_source(source: Path, *, git_boundary=None) -> dict:
             'supported_files': [x['path'] for x in inventory if x['supported']],
             'modules': [{'path': p, 'manifests': m} for p, m in sorted(modules.items())],
             'exclusions': exclusions,
+            'exclusion_contract': contract,
             'errors': errors,
             'scope': 'full',
             'scope_hash': scope_hash,

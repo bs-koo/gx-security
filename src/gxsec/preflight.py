@@ -5,7 +5,7 @@ from pathlib import Path
 import stat
 
 from .models import content_hash
-from .source import EXCLUDED_DIRS, is_reparse, reject_reparse_path
+from .source import directory_exclusion_reason, exclusion_contract, is_reparse, reject_reparse_path
 from .snapshot import _handle_path
 
 SIGNATURE_NAMES = frozenset({
@@ -30,11 +30,22 @@ def collect_framework_signatures(source):
     if not root.is_dir():
         raise ValueError('Source must be a directory')
     rows, errors, total, discovered, attempted = [], [], 0, 0, 0
+    exclusions, contract = [], exclusion_contract()
     exhausted = False
     for directory, dirs, names in os.walk(root, followlinks=False,
             onerror=lambda exc: errors.append({'type': 'preflight_discovery_incomplete'})):
         base = Path(directory)
-        dirs[:] = sorted(name for name in dirs if name not in EXCLUDED_DIRS and not is_reparse(base / name))
+        retained = []
+        for name in sorted(dirs):
+            relative = (base / name).relative_to(root).as_posix()
+            reason = directory_exclusion_reason(relative)
+            if is_reparse(base / name):
+                reason = 'reparse-entry'
+            if reason:
+                exclusions.append({'path': relative, 'reason': reason})
+            else:
+                retained.append(name)
+        dirs[:] = retained
         discovered += len(dirs) + len(names)
         if discovered > MAX_DISCOVERED:
             errors.append({'type': 'preflight_discovery_limit'})
@@ -77,5 +88,6 @@ def collect_framework_signatures(source):
     digest = content_hash(rows)
     return {'files': [row['path'] for row in rows], 'inventory': rows, 'errors': errors,
             'hash': digest, 'revision': digest, 'git': False, 'git_refs': [], 'scope': 'partial',
-            'scope_hash': content_hash({'source': str(root), 'scope': 'known-framework-signatures'}),
-            'selection': 'known-framework-signatures', 'exclusions': []}
+            'scope_hash': content_hash({'source': str(root), 'scope': 'known-framework-signatures',
+                                       'exclusion_contract': contract}),
+            'selection': 'known-framework-signatures', 'exclusions': exclusions, 'exclusion_contract': contract}
