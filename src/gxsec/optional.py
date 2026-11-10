@@ -26,7 +26,7 @@ import yaml
 from .models import content_hash, make_check, make_finding
 from .policy import _trusted
 from .redaction import redact
-from .source import collect_source, reject_reparse_path, runtime_environment, EXCLUDED_DIRS
+from .source import collect_source, full_source_scope_hash, reject_reparse_path, runtime_environment
 from .transport import BoundedTransport, TransportError, parse_url
 
 ENGINES = ('trivy', 'codeql', 'nuclei')
@@ -47,6 +47,7 @@ def source_identity(inventory, origin_source):
     """Describe original identity without altering its approved scanner record."""
     return {'origin_source': str(Path(origin_source).absolute()), 'source_revision': inventory.get('revision'),
             'source_hash': inventory.get('hash'), 'scope_hash': inventory.get('scope_hash'),
+            'exclusion_contract': copy.deepcopy(inventory.get('exclusion_contract')),
             'file_hashes': {row['path']: row['hash'] for row in inventory.get('inventory', [])}}
 
 
@@ -61,9 +62,11 @@ def execution_inventory(source, identity=None):
     file_hashes = {row['path']: row['hash'] for row in actual.get('inventory', [])}
     _require(file_hashes == identity.get('file_hashes') and actual.get('hash') == identity.get('source_hash'),
              'Relocated source bytes or paths differ from approved original identity')
+    if 'exclusion_contract' in identity:
+        _require(identity['exclusion_contract'] == actual['exclusion_contract'],
+                 'Relocated source exclusion contract differs from the current runtime')
     modules = {module['path']: module['manifests'] for module in actual.get('modules', [])}
-    derived_scope = content_hash({'root': str(origin).casefold(), 'scope': 'full',
-                                  'exclude': sorted(EXCLUDED_DIRS), 'modules': modules})
+    derived_scope = full_source_scope_hash(origin, modules)
     _require(derived_scope == identity.get('scope_hash'), 'Relocated source scope does not derive from its approved original path')
     rebound = {**actual, 'revision': identity.get('source_revision'), 'scope_hash': derived_scope}
     return rebound, actual

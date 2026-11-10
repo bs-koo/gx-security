@@ -473,6 +473,56 @@ class OptionalTests(unittest.TestCase):
                 'source_revision': self.inventory['revision'], 'scope_hash': self.inventory['scope_hash'],
                 'file_hashes': {row['path']: row['hash'] for row in self.inventory['inventory']}}
 
+    def test_relocation_scope_includes_current_exclusions_and_module_layout(self):
+        from gxsec.optional import execution_inventory, source_identity
+        from gxsec.snapshot import verified_snapshot
+        (self.source / 'package.json').write_text('{}', encoding='utf-8')
+        module = self.source / 'backend'
+        module.mkdir()
+        (module / 'pom.xml').write_text('<project/>', encoding='utf-8')
+        inventory = collect_source(self.source)
+        identity = source_identity(inventory, self.source)
+        self.assertEqual(identity.get('exclusion_contract'), inventory['exclusion_contract'])
+        self.assertIsNot(identity['exclusion_contract'], inventory['exclusion_contract'])
+        with verified_snapshot(self.source, inventory) as snap:
+            rebound, actual = execution_inventory(snap.path, identity)
+            self.assertEqual(rebound['scope_hash'], inventory['scope_hash'])
+            self.assertEqual(rebound['modules'], inventory['modules'])
+            self.assertNotEqual(actual['scope_hash'], inventory['scope_hash'])
+
+    def test_relocation_rejects_forged_or_obsolete_scope_even_when_bytes_match(self):
+        from gxsec.optional import execution_inventory
+        from gxsec.snapshot import verified_snapshot
+        from gxsec.source import EXCLUDED_DIRS
+        base = {'root': str(self.source).casefold(), 'scope': 'full',
+                'exclude': sorted(EXCLUDED_DIRS), 'modules': {}}
+        obsolete_contract = copy.deepcopy(self.inventory['exclusion_contract'])
+        obsolete_contract['relative_directory_paths'] = []
+        scopes = {
+            'forged': '0' * 64,
+            'before-exclusion-contract': content_hash(base),
+            'obsolete-exclusions': content_hash({**base, 'exclusion_contract': obsolete_contract}),
+        }
+        with verified_snapshot(self.source, self.inventory) as snap:
+            for label, scope in scopes.items():
+                with self.subTest(label=label), self.assertRaisesRegex(ValueError, 'scope does not derive'):
+                    execution_inventory(snap.path, {**self.source_identity(), 'scope_hash': scope})
+
+    def test_relocation_rejects_foreign_path_case_semantics(self):
+        from gxsec.optional import execution_inventory
+        from gxsec.snapshot import verified_snapshot
+        from gxsec.source import EXCLUDED_DIRS
+        contract = copy.deepcopy(self.inventory['exclusion_contract'])
+        contract['case_sensitive_paths'] = not contract['case_sensitive_paths']
+        foreign_scope = content_hash({'root': str(self.source).casefold(), 'scope': 'full',
+            'exclude': sorted(EXCLUDED_DIRS), 'modules': {}, 'exclusion_contract': contract})
+        with verified_snapshot(self.source, self.inventory) as snap:
+            # A foreign contract is never authority, even with a current scope copied beside it.
+            for scope in (foreign_scope, self.inventory['scope_hash']):
+                with self.subTest(scope=scope), self.assertRaisesRegex(ValueError, 'exclusion contract differs'):
+                    execution_inventory(snap.path, {**self.source_identity(), 'scope_hash': scope,
+                                                    'exclusion_contract': contract})
+
     def test_imported_evidence_accepts_verified_relocation_and_original_native_paths(self):
         from gxsec.optional import run_optional_checks
         from gxsec.snapshot import verified_snapshot

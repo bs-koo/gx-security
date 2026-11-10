@@ -33,6 +33,13 @@ def exclusion_contract():
             'case_sensitive_paths': os.name != 'nt'}
 
 
+def full_source_scope_hash(root, modules):
+    """Derive full scope using this runtime's actual collection contract."""
+    return content_hash({'root': str(root).casefold(), 'scope': 'full',
+                         'exclude': sorted(EXCLUDED_DIRS),
+                         'exclusion_contract': exclusion_contract(), 'modules': modules})
+
+
 def is_reparse(path):
     """Recognize symlinks and Windows junction/reparse entries without following them."""
     path = Path(path)
@@ -168,15 +175,7 @@ def collect_source(source: Path, *, git_boundary=None) -> dict:
     commit = git('rev-parse', 'HEAD')
     status = git('status', '--porcelain=v1', '--untracked-files=all')
     # Scope identity is content independent, allowing later full clean rescans to prove absence.
-    scope_hash = content_hash(
-        {
-            'root': str(root).casefold(),
-            'scope': 'full',
-            'exclude': sorted(EXCLUDED_DIRS),
-            'exclusion_contract': contract,
-            'modules': modules,
-        },
-    )
+    scope_hash = full_source_scope_hash(root, modules)
     return redact(
         {
             'source_id': content_hash(str(root).casefold()),
