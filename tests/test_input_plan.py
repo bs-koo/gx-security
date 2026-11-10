@@ -24,4 +24,4 @@ def test_input_plan_retains_explicit_exclusions(tmp_path):
     with source.selected_paths(['data']):
         plan = preflight.inspect_inputs(tmp_path)
     assert plan['files'] == 0
-    assert plan['exclusions'][0]['reason'] == 'operator-selected-separate-review'
+    assert plan['exclusions'][0]['reason'] == 'operator-selected-exclusion'

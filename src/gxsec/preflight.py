@@ -5,7 +5,7 @@ from pathlib import Path
 import stat
 
 from .models import content_hash
-from .source import directory_exclusion_reason, exclusion_contract, is_reparse, reject_reparse_path
+from .source import _is_reparse_stat, directory_exclusion_reason, exclusion_contract, is_reparse, reject_reparse_path
 from .snapshot import _handle_path
 from .execution import BudgetExceeded, checkpoint
 
@@ -58,7 +58,12 @@ def inspect_inputs(source):
                 relative = path.relative_to(root).as_posix()
                 try:
                     info = path.lstat()
-                    if not stat.S_ISREG(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+                    reparse = _is_reparse_stat(info)
+                    reason = directory_exclusion_reason(relative) if reparse else None
+                    if reason:
+                        exclusions.append({'path': relative, 'reason': reason})
+                        continue
+                    if not stat.S_ISREG(info.st_mode) or reparse:
                         errors.append({'type': 'input_plan_nonregular', 'path': relative})
                         continue
                     count += 1
@@ -77,7 +82,7 @@ def inspect_inputs(source):
             'separate_review_candidates': candidates, 'errors': errors, 'exclusions': exclusions,
             'exclusion_contract': exclusion_contract(), 'content_verified': False,
             'status': 'incomplete' if errors else 'complete',
-            'notice': 'Metadata estimate only; exclusions require separate review and are not security approval'}
+            'notice': 'Metadata estimate only; excluded paths are outside this scan, not security-approved'}
 
 
 def collect_framework_signatures(source):

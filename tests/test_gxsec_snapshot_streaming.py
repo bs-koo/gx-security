@@ -136,9 +136,9 @@ def test_git_copy_preserves_failure_category_without_native_prose(tmp_path, monk
     monkeypatch.setattr(snapshot, '_git_run', lambda *args: subprocess.CompletedProcess([], 128, '', stderr))
     result = snapshot._copy_history(tmp_path, target, inventory, home)
     assert result['status'] == 'incomplete'
-    assert result['diagnostic']['category'] == category
-    assert result['diagnostic']['returncode'] == 128
-    assert result['diagnostic']['stage'] == 'clone'
+    assert result['errors'][0]['category'] == category
+    assert result['errors'][0]['returncode'] == 128
+    assert result['errors'][0]['stage'] == 'clone'
     assert 'SECRET_PATH' not in str(result)
 
 
@@ -156,8 +156,8 @@ def test_git_copy_timeout_retains_kind_but_not_command(tmp_path, monkeypatch):
     monkeypatch.setattr(snapshot, '_git_run', timeout)
     result = snapshot._copy_history(tmp_path, target, inventory, home)
     assert result['status'] == 'incomplete'
-    assert result['diagnostic']['category'] == 'timeout'
-    assert result['diagnostic']['stage'] == 'clone'
+    assert result['errors'][0]['category'] == 'timeout'
+    assert result['errors'][0]['stage'] == 'clone'
     assert 'SECRET_PATH' not in str(result)
 
 

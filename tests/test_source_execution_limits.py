@@ -75,7 +75,7 @@ def test_explicit_selection_is_bound_to_scope_and_restored(tmp_path, monkeypatch
     assert selected['scope'] == 'selected'
     assert selected['scope_hash'] != full['scope_hash']
     assert selected['exclusion_contract']['selected_directory_paths'] == ['data']
-    assert selected['exclusions'][0]['reason'] == 'operator-selected-separate-review'
+    assert selected['exclusions'][0]['reason'] == 'operator-selected-exclusion'
     assert source.collect_source(tmp_path)['scope_hash'] == full['scope_hash']
 
 

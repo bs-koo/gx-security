@@ -19,7 +19,32 @@ _SEMGREP_TYPES = frozenset({
     'StackOverflow', 'FatalError', 'MatchingError', 'SemgrepError', 'SemgrepCoreError',
     'InvalidRuleSchemaError', 'RuleParseError', 'PatternParseError', 'UnknownLanguageError',
     'TooManyMatches', 'AstBuilderError', 'InternalError', 'InvalidYaml', 'MissingPlugin',
+    'SemgrepWarning', 'OtherParseError', 'SemgrepMatchFound', 'FixpointTimeout',
+    'TimeoutDuringInterfile', 'OutOfMemoryDuringInterfile', 'IncompatibleRule',
 })
+
+# Semgrep 1.172.0 ErrorType JSON enum labels (semgrep_output_v1.atd).
+# Match exact official spellings, never normalize arbitrary native prose.
+_SEMGREP_TYPE_ALIASES = {
+    'Lexical error': 'LexicalError',
+    'Syntax error': 'ParseError',
+    'Other syntax error': 'OtherParseError',
+    'AST builder error': 'AstBuilderError',
+    'Rule parse error': 'RuleParseError',
+    'Invalid YAML': 'InvalidYaml',
+    'Internal matching error': 'MatchingError',
+    'Semgrep match found': 'SemgrepMatchFound',
+    'Too many matches': 'TooManyMatches',
+    'Fatal error': 'FatalError',
+    'Out of memory': 'OutOfMemory',
+    'Fixpoint timeout': 'FixpointTimeout',
+    'Stack overflow': 'StackOverflow',
+    'Timeout during interfile analysis': 'TimeoutDuringInterfile',
+    'OOM during interfile analysis': 'OutOfMemoryDuringInterfile',
+    'Missing plugin': 'MissingPlugin',
+    'Pattern parse error': 'PatternParseError',
+    'Incompatible rule': 'IncompatibleRule',
+}
 
 
 def _inventory_path(value, source, files):
@@ -43,14 +68,24 @@ def semgrep_diagnostics(items, source, files):
     for item in items[:MAX_DIAGNOSTICS]:
         item = item if isinstance(item, dict) else {}
         kind = item.get('type')
+        kind = _SEMGREP_TYPE_ALIASES.get(kind, kind) if isinstance(kind, str) else None
         kind = kind if isinstance(kind, str) and kind in _SEMGREP_TYPES else 'unclassified'
         diagnostic = {'type': 'semgrep_diagnostic', 'error_type': kind}
         code = item.get('code')
         if type(code) is int and 0 <= code <= 255:
             diagnostic['code'] = code
-        if kind in {'Timeout', 'OutOfMemory', 'StackOverflow'}:
-            diagnostic['category'] = {'Timeout': 'timeout_reported', 'OutOfMemory': 'memory_exhaustion_reported',
-                                      'StackOverflow': 'stack_exhaustion_reported'}[kind]
+        level = item.get('level')
+        if isinstance(level, str) and level in {'error', 'warn', 'info'}:
+            diagnostic['level'] = level
+        category = {
+            'Timeout': 'timeout_reported', 'FixpointTimeout': 'timeout_reported',
+            'TimeoutDuringInterfile': 'timeout_reported',
+            'OutOfMemory': 'memory_exhaustion_reported',
+            'OutOfMemoryDuringInterfile': 'memory_exhaustion_reported',
+            'StackOverflow': 'stack_exhaustion_reported', 'SemgrepWarning': 'warning_reported',
+        }.get(kind)
+        if category:
+            diagnostic['category'] = category
             diagnostic['evidence'] = 'engine-diagnostic'
         spans = item.get('spans')
         locations = [item, *(spans[:4] if isinstance(spans, list) else [])]

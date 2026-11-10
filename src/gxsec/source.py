@@ -46,7 +46,7 @@ def directory_exclusion_reason(relative):
         return None
     normalized = tuple(os.path.normcase(part) for part in parts)
     if any(normalized == tuple(os.path.normcase(part) for part in value.split('/')) for value in _selected_paths.get()):
-        return 'operator-selected-separate-review'
+        return 'operator-selected-exclusion'
     if parts[-1] in EXCLUDED_DIRS:
         return 'generated-or-vendor-source'
     if normalized in EXCLUDED_DIRECTORY_PATHS:
@@ -232,17 +232,25 @@ def collect_source(source: Path, *, git_boundary=None) -> dict:
         try:
             before = p.lstat()
             if _is_reparse_stat(before):
-                return p, None, None, {'type': 'reparse_entry', 'path': relative}
+                # A broken directory link can be classified in os.walk.names.
+                # Honor the same declared scope without following its target.
+                reason = directory_exclusion_reason(relative)
+                if reason:
+                    return p, None, None, None, reason
+                return p, None, None, {'type': 'reparse_entry', 'path': relative}, None
             h, size = _read_inventory_file(p, root, before=before)
-            return p, h, size, None
+            return p, h, size, None, None
         except (ValueError, OSError) as exc:
-            return p, None, None, input_error(exc, relative)
+            return p, None, None, input_error(exc, relative), None
 
     try:
         # Closing joins every submitted reader even if parent assembly fails.
         with closing(ordered_bounded_map(read_input, inputs())) as results:
-            for p, h, size, error in results:
+            for p, h, size, error, excluded_reason in results:
                 rel, name = p.relative_to(root).as_posix(), p.name
+                if excluded_reason:
+                    exclusions.append({'path': rel, 'reason': excluded_reason})
+                    continue
                 if error is not None:
                     errors.append(error)
                     if error.get('type') == 'reparse_entry':

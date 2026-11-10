@@ -73,7 +73,7 @@ Windows 실행기를 다른 OS에서 쓸 수 있다고 가정하지 않는다. �
 
 ## 3. 준비가 부족한 새 노트북
 
-입력 규모는 `-Action plan`으로 먼저 확인한다. 앱 검사에서 별도 점검하기로 사용자가 선택한 디렉터리만 `-ExcludeSourcePath @('db/docker/dumps','backend/src/main/resources/log','outputs')`처럼 전달한다. 이 경로는 예시이며 모든 프로젝트에 일괄 적용하지 않는다. `-MaxDurationSeconds`와 `-MaxInputBytes`는 전체 작업 예산이며 기본값은 1200초·4GiB다. `-TemporarySize`는 Docker 임시 공간 상한으로 전체 작업 시간·용량 예산과 다르다. Native는 `plan`, `--exclude-source-path` 반복 인자, `--max-duration-seconds`, `--max-input-bytes`를 사용한다. 재검증은 원래 선택 범위와 상태 저장소를 보존한다.
+입력 규모는 `-Action plan`으로 먼저 확인한다. 앱 검사에서 제외하기로 사용자가 선택한 디렉터리만 `-ExcludeSourcePath @('db/docker/dumps','backend/src/main/resources/log','outputs')`처럼 전달한다. 이 경로는 예시이며 모든 프로젝트에 일괄 적용하지 않는다. 운영 미사용 프로토타입 제외는 별도 보안 점검 과제와 구분해 기록한다. `-MaxDurationSeconds`와 `-MaxInputBytes`는 전체 작업 예산이며 기본값은 1200초·4GiB다. `-TemporarySize`는 Docker 임시 공간 상한으로 전체 작업 시간·용량 예산과 다르다. Native는 `plan`, `--exclude-source-path` 반복 인자, `--max-duration-seconds`, `--max-input-bytes`를 사용한다. 재검증은 원래 선택 범위와 상태 저장소를 보존한다.
 
 | 확인한 상태 | 다음 행동 |
 |---|---|

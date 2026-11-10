@@ -69,6 +69,51 @@ def test_exit_two_keeps_safe_diagnostics_and_partial_candidates(sast):
     assert 'fixture-private-value' not in json.dumps([check, findings])
 
 
+def test_official_semgrep_warning_retains_safe_details_and_incomplete_status(sast):
+    native = payload([{'type': 'SemgrepWarning', 'code': 2, 'level': 'warn', 'path': 'A.java',
+                       'message': 'fixture-private-value'} for _ in range(9)])
+    check, findings = sast(subprocess.CompletedProcess([], 2, json.dumps(native), 'fixture-private-value'))
+    rows = [item for item in check['errors'] if item['type'] == 'semgrep_diagnostic']
+    assert len(rows) == 9
+    assert all(item['error_type'] == 'SemgrepWarning' and item['level'] == 'warn'
+               and item['category'] == 'warning_reported' and item['code'] == 2 for item in rows)
+    assert check['status'] == 'incomplete' and check['coverage']['partial'] is True
+    assert findings[0]['validation'] == 'candidate'
+    assert policy.evaluate([check], findings)['status'] == 'INCOMPLETE'
+    assert 'fixture-private-value' not in json.dumps([check, findings])
+
+
+@pytest.mark.parametrize('native_type,canonical,category', [
+    ('Syntax error', 'ParseError', None),
+    ('AST builder error', 'AstBuilderError', None),
+    ('Internal matching error', 'MatchingError', None),
+    ('Out of memory', 'OutOfMemory', 'memory_exhaustion_reported'),
+    ('Stack overflow', 'StackOverflow', 'stack_exhaustion_reported'),
+    ('Too many matches', 'TooManyMatches', None),
+    ('Timeout during interfile analysis', 'TimeoutDuringInterfile', 'timeout_reported'),
+    ('OOM during interfile analysis', 'OutOfMemoryDuringInterfile', 'memory_exhaustion_reported'),
+])
+def test_official_json_enum_labels_are_normalized_without_raw_prose(sast, native_type, canonical, category):
+    native = payload([{'type': native_type, 'code': 2, 'level': 'error', 'path': 'A.java',
+                       'message': 'fixture-private-value'}])
+    check, _ = sast(subprocess.CompletedProcess([], 2, json.dumps(native), ''))
+    row = next(item for item in check['errors'] if item['type'] == 'semgrep_diagnostic')
+    assert row['error_type'] == canonical and row['level'] == 'error'
+    assert row.get('category') == category
+    assert 'fixture-private-value' not in json.dumps(check)
+
+
+@pytest.mark.parametrize('native_type', ['syntax error', 'Syntax  error', 'Syntax error fixture-private-value',
+                                       {'type': 'Syntax error'}, ['Syntax error', 'fixture-private-value']])
+def test_unapproved_type_shapes_and_labels_stay_unclassified(sast, native_type):
+    native = payload([{'type': native_type, 'level': 'warn fixture-private-value',
+                       'message': 'fixture-private-value', 'path': 'A.java'}])
+    check, _ = sast(subprocess.CompletedProcess([], 2, json.dumps(native), ''))
+    row = next(item for item in check['errors'] if item['type'] == 'semgrep_diagnostic')
+    assert row['error_type'] == 'unclassified' and 'level' not in row
+    assert 'fixture-private-value' not in json.dumps(check)
+
+
 @pytest.mark.parametrize('returncode,stderr,category', [
     (-9, '', 'terminated_by_signal'),
     (137, '', 'nonzero_exit'),

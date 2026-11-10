@@ -21,7 +21,8 @@
 - [x] Add monotonic execution deadline, working-tree byte budgets, phase timings and heartbeat, with persisted INCOMPLETE reports on exhaustion (execution/source/CLI tests).
 - [x] Add inexpensive input planning and integrated workflow guidance; record explicit choices and limits.
 - [x] Measure bounded Windows input reads, remove redundant metadata work, and stream private-file hashing while preserving original-source correspondence. Repeated full integrity checks remain; OS-enforced immutable snapshot optimization is deferred until independently validated.
-- [ ] Build image, run appropriate regression and independent review, then run actual public/private/KREB checks with comparable timings and full gap reporting.
+- [x] Build the final image, run appropriate regression and independent review, and verify installed code plus real offline engines. Product commit `1ec18c5` passed all five CI jobs. Bounded parallel input handling preserves ordered hashes, context, admission limits and joined cleanup; a same-input synthetic comparison confirmed unchanged source and snapshot digests.
+- [ ] Run actual framework variants and the application with explicit scopes, phase timings and full gap reporting. Preserve the first bounded incomplete run as diagnostic evidence.
 - [ ] Update usage, result documents, existing PR and final evidence. No automatic merge.
 
 ## Review focus

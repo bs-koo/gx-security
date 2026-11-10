@@ -74,6 +74,38 @@ def _coverage_summary(check):
 def _error_text(error):
     if not isinstance(error, dict):
         return str(error)
+    if error.get('type') == 'git_history_failed':
+        stages = {'inventory': '초기 이력 정보 확인', 'clone': '이력 복사',
+                  'independent-objects': '독립 객체 확인', 'object-format': '객체 형식 확인',
+                  'commit-and-refs': '커밋·참조 확인'}
+        causes = {
+            'timeout': '시간 제한을 초과했습니다.',
+            'nonzero_exit': 'Git 실행 실패가 보고됐습니다.',
+            'terminated_by_signal': 'Git 실행이 신호로 종료됐습니다.',
+            'ownership_rejected_reported': '저장소 소유권 거부가 보고됐습니다.',
+            'invalid_repository_reported': '유효한 Git 저장소로 인식되지 않았습니다.',
+            'local_clone_rejected_reported': '로컬 복사 거부가 보고됐습니다.',
+            'memory_exhaustion_reported': '메모리 부족이 보고됐습니다.',
+            'resource_exhaustion_reported': '실행 자원 부족이 보고됐습니다.',
+            'storage_exhaustion_reported': '저장공간 부족이 보고됐습니다.',
+            'permission_denied_reported': '접근 권한 거부가 보고됐습니다.',
+            'output_limit': '출력 크기 제한을 초과했습니다.',
+            'memory_exhaustion': '메모리가 부족합니다.',
+            'storage_exhaustion': '저장공간이 부족합니다.',
+            'resource_unavailable': '필요한 실행 자원을 사용할 수 없습니다.',
+            'permission_denied': '접근 권한이 없습니다.',
+            'input_unavailable': '필요한 Git 입력을 확인할 수 없습니다.',
+            'io_error': 'Git 입력·출력 처리를 완료하지 못했습니다.',
+            'invalid_engine_output': 'Git 결과가 검증되지 않았습니다.',
+        }
+        stage, category = error.get('stage'), error.get('category')
+        stage = stages.get(stage, '단계 미확인') if isinstance(stage, str) else '단계 미확인'
+        cause = causes.get(category, '실패 원인을 확인할 수 없습니다.') if isinstance(category, str) else '실패 원인을 확인할 수 없습니다.'
+        text = 'Git 이력 · ' + stage + ': ' + cause
+        code = error.get('returncode')
+        if type(code) is int and -255 <= code <= 255:
+            text += ' 종료 코드 ' + str(code) + '.'
+        return text
     labels = {
         "database_provenance_unverified": "조직이 승인한 오프라인 취약점 DB 근거를 확인해야 합니다.",
         "missing_database": "오프라인 취약점 DB가 준비되지 않았습니다.",
@@ -81,6 +113,9 @@ def _error_text(error):
         "stale_database": "취약점 DB의 유효기간을 확인하고 갱신해야 합니다.",
         "dependency_provenance_unverified": "모든 모듈의 확정 의존성 목록과 해당 버전의 근거가 필요합니다.",
         "missing_history": "Git 이력을 검사하지 못했습니다.",
+        "invalid_history_scope": "선택한 Git 이력 제외 범위를 검증하지 못했습니다.",
+        "unsupported_history_scope": "선택 경로의 대소문자 규칙을 보장하려면 고정 Linux 점검 환경을 사용해야 합니다.",
+        "rule_coverage_unavailable": "일부 Kotlin 파일을 검사하지 못했고 현재 규칙 묶음에 Kotlin 전용 규칙이 없습니다.",
         "unresolved_dependencies": "확정 의존성 잠금 파일 또는 SBOM이 필요합니다.",
         "advisory_matching_incomplete": "일부 패키지의 취약점 DB 매칭을 확인하지 못했습니다.",
         "framework_baseline_unverified": "조직이 요구한 SEF 기반 버전과 현재 소스·분석기가 일치하지 않습니다.",
@@ -180,7 +215,7 @@ def _markdown(run, qa=False):
     selected = run.get('source', {}).get('exclusion_contract', {}).get('selected_directory_paths', [])
     metrics = run.get('execution_metrics', {})
     if selected:
-        lines.extend(['별도 점검 대상으로 제외: ' + _md(selected), '',
+        lines.extend(['사용자 지정 검사 제외 경로: ' + _md(selected), '',
                       '선택한 앱 범위의 결과입니다. 제외된 자료의 안전을 확인한 결과가 아닙니다.', ''])
     if metrics:
         lines.extend(['실행 소요: ' + _md(metrics.get('elapsed_seconds')) + '초 · 읽기 처리량: '
@@ -223,7 +258,7 @@ def _markdown(run, qa=False):
             temporary_size = temporary_size_hint(context)
             resources = f' Docker 임시 저장공간은 -TemporarySize {temporary_size}로 유지해줘.' if temporary_size else ''
             if selected:
-                resources += ' 원래 별도 점검 제외 경로와 선택 범위를 그대로 유지해줘: ' + str(selected) + '.'
+                resources += ' 원래 사용자 지정 검사 제외 경로와 선택 범위를 그대로 유지해줘: ' + str(selected) + '.'
             lines.extend(["재점검 요청(등록된 통합 스킬):", "",
                 _md(f"$gx-security 실행 {run.get('run_id', '미확인')}의 발견 {fid}를 "
                     f"원래 {run.get('profile', '미확인')} 프로파일과 기존 상태 저장소로 재검증해줘.{resources}"), ""])
@@ -297,7 +332,7 @@ def _html(run):
     selected = run.get('source', {}).get('exclusion_contract', {}).get('selected_directory_paths', [])
     execution_summary = '<section><h2>실행 범위·소요</h2>'
     if selected:
-        execution_summary += '<p>선택한 앱 범위 검사입니다. 별도 점검 대상으로 제외: ' + esc(selected) + '</p>'
+        execution_summary += '<p>선택한 앱 범위 검사입니다. 사용자 지정 검사 제외 경로: ' + esc(selected) + '</p>'
     if run.get('execution_metrics'):
         metrics = run['execution_metrics']
         execution_summary += '<p>소요 ' + esc(metrics.get('elapsed_seconds')) + '초 · 읽기 ' + esc(metrics.get('bytes_read')) + ' bytes</p>'

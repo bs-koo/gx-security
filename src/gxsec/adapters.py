@@ -18,7 +18,7 @@ import yaml
 from .config import PROFILE_REQUIREMENTS
 from .models import content_hash, make_check, make_finding
 from .redaction import redact
-from .source import EXCLUDED_DIRS, collect_source, trusted_runtime_tool, runtime_environment, reject_reparse_path
+from .source import EXCLUDED_DIRS, collect_source, trusted_runtime_tool, runtime_environment, reject_reparse_path, selected_paths, exclusion_contract
 from .policy import _trusted
 from .snapshot import verified_snapshot
 from .contextual import contextualize_findings
@@ -275,12 +275,14 @@ def _sast(source, config, inventory, profile):
     rule_docs = []
     rule_ids = []
     rule_catalog = {}
+    rule_languages = set()
     for path in rules:
         try:
             doc = yaml.safe_load(path.read_text(encoding='utf-8-sig'))
             for rule in doc['rules']:
                 rule_ids.append(rule['id'])
                 rule_catalog[rule['id']] = {'message': rule.get('message'), 'metadata': rule.get('metadata') or {}, 'category': SAST_CATEGORIES.get(path.parent.parent.name, 'sast')}
+                rule_languages.update(value for value in rule.get('languages', []) if isinstance(value, str))
             rule_docs.append(
                 {'path': path.relative_to(ROOT).as_posix(), 'hash': hashlib.sha256(path.read_bytes()).hexdigest()},
             )
@@ -300,7 +302,10 @@ def _sast(source, config, inventory, profile):
     if not rules or not rule_ids:
         check['errors'].append({'type': 'empty_rules', 'message': 'No organization rules were loaded'})
     if command and eligible and rules:
-        args = [command, 'scan', '--json', '--quiet', '--metrics=off', '--disable-version-check', '--disable-nosem', '--no-git-ignore', '--no-rewrite-rule-ids', '--strict']
+        # Pinned Semgrep's own defaults and repository ignore files must not
+        # silently narrow the byte-verified inventory. Unsupported flags fail
+        # closed below; never retry with weaker target selection.
+        args = [command, 'scan', '--json', '--quiet', '--metrics=off', '--disable-version-check', '--disable-nosem', '--no-git-ignore', '--x-ignore-semgrepignore-files', '--no-rewrite-rule-ids', '--strict']
         for path in rules:
             args += ['--config', str(path)]
         for excluded in sorted(EXCLUDED_DIRS):
@@ -330,6 +335,11 @@ def _sast(source, config, inventory, profile):
                         'missing': sorted(set(eligible) - set(scanned)),
                     },
                 )
+                kotlin_missing = [path for path in check['coverage']['missing']
+                                  if Path(path).suffix.lower() in {'.kt', '.kts'}]
+                if kotlin_missing and not {'kotlin', 'kt'} & rule_languages:
+                    check['errors'].append({'type': 'rule_coverage_unavailable', 'language': 'kotlin',
+                                            'reason': 'no_language_specific_rules', 'files': kotlin_missing})
                 cache = {}
                 occurrences = {}
                 local_key = _local_hmac_key(source, config)
@@ -665,11 +675,71 @@ def _secret_anchor(item, source):
         sort_keys=True,
     )
 
+def _history_errors(history):
+    """Forward fixed preparation metadata, never native Git output or paths."""
+    if history.get('status') == 'complete':
+        return []
+    errors = history.get('errors')
+    if not isinstance(errors, list):
+        return []
+    allowed = {
+        'category': {'nonzero_exit', 'terminated_by_signal', 'memory_exhaustion_reported',
+                     'resource_exhaustion_reported', 'storage_exhaustion_reported',
+                     'permission_denied_reported', 'ownership_rejected_reported',
+                     'invalid_repository_reported', 'invalid_engine_output', 'timeout',
+                     'output_limit', 'memory_exhaustion', 'storage_exhaustion',
+                     'resource_unavailable', 'permission_denied', 'input_unavailable', 'io_error'},
+        'stage': {'inventory', 'clone', 'independent-objects', 'object-format', 'commit-and-refs'},
+        'evidence': {'stderr-marker', 'process-returncode'},
+    }
+    safe = []
+    for error in errors[:100]:
+        if not isinstance(error, dict) or error.get('type') != 'git_history_failed':
+            continue
+        item = {'type': 'git_history_failed'}
+        for key, values in allowed.items():
+            if isinstance(error.get(key), str) and error[key] in values:
+                item[key] = error[key]
+        for key, minimum, maximum in (('returncode', -(2 ** 31), 2 ** 32 - 1), ('signal', 1, 64)):
+            value = error.get(key)
+            if type(value) is int and minimum <= value <= maximum:
+                item[key] = value
+        safe.append(item)
+    return safe
+
+
+def _gitleaks_scope_config(inventory):
+    """Generate trusted rules from the collector's literal directory contract."""
+    contract = inventory.get('exclusion_contract', {})
+    if not isinstance(contract, dict):
+        raise ValueError('Invalid source exclusion contract')
+    case_sensitive = contract.get('case_sensitive_paths', True)
+    if type(case_sensitive) is not bool:
+        raise ValueError('Invalid source path comparison contract')
+    with selected_paths(contract.get('selected_directory_paths', [])):
+        paths = exclusion_contract()['selected_directory_paths']
+    scope = {'version': 1, 'selected_directory_paths': paths,
+             'case_sensitive_paths': case_sensitive}
+    document = '[extend]\nuseDefault = true\n'
+    if paths:
+        # Go/RE2 literal escaping, followed separately by TOML string escaping.
+        # A trailing slash excludes descendants, never a same-named regular file.
+        expressions = ['^' + ''.join('\\' + char if char in '\\.+*?()|[]{}^$' else char
+                                    for char in path) + '/' for path in paths]
+        quoted = [json.dumps(value, ensure_ascii=False).replace('\x7f', '\\u007f')
+                  for value in expressions]
+        document += ('\n[[allowlists]]\ndescription = "gxsec operator-selected directory exclusions"\n'
+                     'condition = "OR"\npaths = [' + ', '.join(quoted) + ']\n')
+    return document.encode('utf-8'), scope
+
+
 def _secrets(source, config, inventory, profile):
     check = make_check('secrets')
     findings = []
     options = config.get('tools', {}).get('gitleaks', {})
-    history_required = config.get('_snapshot_provenance', {}).get('history', {}).get('required')
+    history = config.get('_snapshot_provenance', {}).get('history', {})
+    history_required = history.get('required')
+    check['errors'].extend(_history_errors(history))
     modes = ['dir', 'git'] if history_required or inventory.get('git') or (source / '.git').exists() else ['dir']
     check['coverage'].update(
         {
@@ -687,7 +757,21 @@ def _secrets(source, config, inventory, profile):
         check['errors'].append(
             {'type': 'shallow_history', 'message': 'Shallow clone cannot establish required full git history'},
         )
+    try:
+        rules, history_scope = _gitleaks_scope_config(inventory)
+    except (TypeError, ValueError):
+        check['errors'].append({'type': 'invalid_history_scope',
+                                'message': 'Selected Git-history directory scope could not be validated.'})
+        return check, findings
+    check['coverage'].update(history_scope=history_scope, history_scope_hash=content_hash(history_scope))
+    if history_scope['selected_directory_paths'] and not history_scope['case_sensitive_paths']:
+        # RE2 case folding can exclude more Unicode paths than Windows normcase.
+        # Require the packaged Linux runtime instead of widening the approved scope.
+        check['errors'].append({'type': 'unsupported_history_scope',
+            'message': 'Case-insensitive selected directories require the packaged Linux scanner runtime.'})
+        return check, findings
     command = _probe('gitleaks', options, source, check, trust_source=config.get('_source_boundary', source))
+    check['engine']['rules_hash'] = hashlib.sha256(rules).hexdigest()
     if command:
         try:
             key = _local_hmac_key(source, config)
@@ -696,7 +780,7 @@ def _secrets(source, config, inventory, profile):
             key = None
         with tempfile.TemporaryDirectory(prefix='gxsec-gitleaks-') as temp:
             cfg = Path(temp) / 'gitleaks.toml'
-            cfg.write_text('[extend]\nuseDefault = true\n', encoding='utf-8')
+            cfg.write_bytes(rules)
             ignore = Path(temp) / 'ignore'
             ignore.write_text('', encoding='utf-8')
             for mode in modes:

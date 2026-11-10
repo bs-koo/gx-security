@@ -293,7 +293,7 @@ def _execute_run(args, retest_id, budget, *, previous_run=None):
     selected = inventory.get('exclusion_contract', {}).get('selected_directory_paths', [])
     if selected:
         run['scan_scope'].update(scope='selected', excluded_directory_paths=selected,
-                                 limitation='Operator-selected directories require separate review')
+                                 limitation='Operator-selected directories are outside this scan; excluded content is not security-approved')
     if retest_id:
         run["retest_of"] = {"run_id": previous["run_id"], "finding_id": retest_id,
                             "profile": previous["profile"],
@@ -468,7 +468,7 @@ def build_parser():
     doctor.add_argument("--source", default=".")
     doctor.add_argument("--config")
     doctor.add_argument("--json", action="store_true")
-    plan = sub.add_parser('plan', help='내용을 읽지 않고 입력 범위·용량·별도 점검 후보 확인')
+    plan = sub.add_parser('plan', help='내용을 읽지 않고 입력 범위·용량·검사 제외 후보 확인')
     plan.add_argument('source', nargs='?', default='.')
     plan.add_argument('--exclude-source-path', action='append')
     plan.add_argument('--max-duration-seconds', type=float, default=30)
@@ -490,7 +490,7 @@ def build_parser():
         p.add_argument("--expected-framework", choices=('SEF',), help="설정 파일 생성 없이 SEF 필수 경계를 추가 확인")
         p.add_argument('--max-duration-seconds', type=float, help='수집·검사를 합한 전체 시간 예산 (기본 1200초, 재검증은 이전 한도 유지)')
         p.add_argument('--max-input-bytes', type=int, help='검사할 작업 트리 파일 용량 예산 (기본 4GiB, 재검증은 이전 한도 유지; Git 이력·DB 사본 제외)')
-        p.add_argument('--exclude-source-path', action='append', help='별도 점검할 상대 디렉터리 (반복 가능, 제외 내역 기록)')
+        p.add_argument('--exclude-source-path', action='append', help='검사에서 제외할 상대 디렉터리 (반복 가능, 제외 내역 기록)')
         p.add_argument("--execute-dynamic", action="store_true")
         p.add_argument("--creds-stdin", action="store_true")
         p.add_argument("--json", action="store_true")

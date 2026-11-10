@@ -129,10 +129,13 @@ def _git_run(executable, arguments, root, home):
     environment = runtime_environment()
     environment.update({'HOME': str(home), 'USERPROFILE': str(home), 'XDG_CACHE_HOME': str(home / 'cache'),
                         'GIT_ALLOW_PROTOCOL': 'file', 'GIT_CONFIG_GLOBAL': str(config)})
+    # A mirror copies every required Git object, unlike the small identity
+    # queries. Keep its bound separate and always respect the total deadline.
+    command_limit = 600 if arguments and arguments[0] == 'clone' else 120
     return subprocess.run(
         [executable, '-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always', '-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', '-c', 'safe.directory=' + str(root), *arguments],
         cwd=str(home), capture_output=True, text=True, encoding='utf-8', errors='replace',
-        shell=False, timeout=timeout_for(120), env=environment,
+        shell=False, timeout=timeout_for(command_limit), env=environment,
     )
 
 
@@ -174,7 +177,7 @@ def _copy_history(source, target, inventory, home):
         cloned = _git_run(executable, ['clone', '--mirror', '--no-hardlinks', '--no-recurse-submodules', '--dissociate', '--', str(source), str(git_dir)], source, home)
         if cloned.returncode != 0 or not git_dir.is_dir():
             if cloned.returncode != 0:
-                result['diagnostic'] = _git_failure(cloned, stage)
+                result['errors'] = [_git_failure(cloned, stage)]
             raise _HistoryFailure('Local private Git mirror clone failed')
         stage = 'independent-objects'
         for directory, dirs, files in os.walk(git_dir, followlinks=False):
@@ -192,7 +195,7 @@ def _copy_history(source, target, inventory, home):
         object_format = format_result.stdout.strip()
         if format_result.returncode or object_format not in {'sha1', 'sha256'}:
             if format_result.returncode:
-                result['diagnostic'] = _git_failure(format_result, stage)
+                result['errors'] = [_git_failure(format_result, stage)]
             raise _HistoryFailure('Private Git object format is unknown')
         config = '[core]\n repositoryformatversion = ' + ('1' if object_format == 'sha256' else '0') + '\n bare = false\n logallrefupdates = false\n hooksPath =\n fsmonitor = false\n'
         if object_format == 'sha256':
@@ -203,7 +206,7 @@ def _copy_history(source, target, inventory, home):
         copied_refs = _git_run(executable, ['--git-dir', str(git_dir), 'show-ref', '--head', '--dereference'], source, home)
         if head.returncode or head.stdout.strip() != commit or copied_refs.returncode or sorted(copied_refs.stdout.splitlines()) != sorted(refs):
             if head.returncode or copied_refs.returncode:
-                result['diagnostic'] = _git_failure(head if head.returncode else copied_refs, stage)
+                result['errors'] = [_git_failure(head if head.returncode else copied_refs, stage)]
             raise _HistoryFailure('Private Git history differs from the initial commit/ref manifest')
         if (git_dir / 'shallow').exists() or inventory.get('shallow'):
             raise _HistoryFailure('Private Git history is shallow')
@@ -213,7 +216,9 @@ def _copy_history(source, target, inventory, home):
                       else 'Private Git history could not be verified')
         diagnostic = exception_diagnostic('git_history_failed', exc)
         diagnostic['stage'] = stage
-        result.setdefault('diagnostic', diagnostic)
+        # "diagnostic" is intentionally reserved for omitted raw evidence by
+        # the shared redactor. These fixed fields belong to the safe errors API.
+        result.setdefault('errors', [diagnostic])
         if (target / '.git').exists():
             shutil.rmtree(target / '.git')
     return result
