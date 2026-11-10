@@ -93,6 +93,16 @@ def test_legacy_run_handoff_does_not_invent_default_state(tmp_path):
     assert '기존 상태 저장소' in text
 
 
+def test_report_does_not_recommend_untrusted_tmpfs_options(tmp_path):
+    run = sample_run()
+    run['execution_context'] = {'authority': 'report-hint-only', 'runner': 'powershell-docker',
+                               'temporary_size': '4g,exec'}
+    write_reports(run, tmp_path)
+    text = (tmp_path / 'developer.md').read_text(encoding='utf-8')
+    assert '-TemporarySize' not in text
+    assert '4g,exec' not in text
+
+
 def test_export_replaces_file_symlink_without_overwriting_its_target(tmp_path):
     import pytest
     victim = tmp_path / "outside.txt"

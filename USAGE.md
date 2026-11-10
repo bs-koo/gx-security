@@ -59,6 +59,8 @@ powershell -ExecutionPolicy Bypass -File scripts/gxsec.ps1 -Source D:\project -A
 
 `doctor`는 준비 정보만 출력하며 결과·상태 폴더를 만들지 않습니다. 실제 점검의 기본 보고서는 `<source>/.gxsec-container/report/report.html`, 상태는 `<source>/.gxsec-container/state`입니다. `-Output D:\security-results\project`를 지정하면 보고서는 그 아래 `report/report.html`, 상태는 `state`에 저장됩니다. `-Output`은 최종 HTML 파일이나 `report` 폴더 자체가 아니라 상위 결과 폴더입니다. 같은 대상·Output으로 재실행하면 상태 이력을 이어가며 `report`는 최신 공유본으로 갱신합니다.
 
+큰 소스 사본에는 `-TemporarySize 1g`, `2g`, `4g`로 점검용 임시 공간 상한을 선택할 수 있습니다. 기본은 `512m`이며 허용된 네 값만 받습니다. 이 공간은 사용량에 따라 메모리를 소비하고 검사 엔진의 메모리는 별도로 필요합니다. 재검증은 원래 실행에 저장된 크기를 이어받고, 명시한 `-TemporarySize`가 우선합니다.
+
 직접 Python 실행은 Python 3.10 이상과 requests/PyYAML, 보호된 실행 환경이 준비된 경우에 사용합니다.
 
 ```text
@@ -103,7 +105,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gxsec.ps1 -Source "D
 
 컨테이너는 설치된 실행 파일의 절대 경로·SHA256·버전을 기록한 `GXSEC_RUNTIME_MANIFEST`를 제공합니다. 호스트에서 실행할 때도 소스 밖의 보호된 동일 형식 manifest가 필요합니다. PATH에 이름이 있다는 이유만으로 검사기를 실행하지 않습니다. `doctor`는 이 근거와 실제 버전을 함께 확인합니다.
 
-정적 검사는 최초 파일 목록과 해시에 맞는 별도 읽기 전용 사본을 만들어 실행합니다. Git 이력도 로컬 사본으로 분리하며 외부 원격 저장소에서 가져오지 않습니다. 임시 공간이 부족하거나 사본·이력 검증이 실패하면 미완료입니다. 기본 실행기의 임시 공간은 512MB이므로 대규모 소스는 충분한 크기의 별도 임시 볼륨이 필요합니다. 현재 사용자 지정 `exclusions` 선언은 실행 범위를 좁히지 않으며, 기본 생성물·도구 상태 제외만 적용합니다.
+정적 검사는 최초 파일 목록과 해시에 맞는 별도 읽기 전용 사본을 만들어 실행합니다. Git 이력도 로컬 사본으로 분리하며 외부 원격 저장소에서 가져오지 않습니다. 임시 공간이 부족하거나 사본·이력 검증이 실패하면 미완료입니다. Windows 실행기의 기본 임시 공간은 512MiB이며 `-TemporarySize`로 최대 4GiB까지 선택합니다. 그보다 큰 입력은 충분한 임시 공간을 갖춘 별도 실행 환경이 필요합니다. 현재 사용자 지정 `exclusions` 선언은 실행 범위를 좁히지 않으며, 기본 생성물·도구 상태 제외만 적용합니다.
 
 기본 제외에는 검사 루트 직하 `.claude/worktrees`의 자동 생성 작업 복사본도 포함됩니다. 제외 경로는 검사 기록에 남으며, 일반 `worktrees` 폴더, 중첩된 `module/.claude/worktrees`와 `.claude` 설정은 계속 검사합니다. 작업 복사본 자체를 소스 루트로 선택하면 그 프로젝트를 정상 검사합니다. 이 제외 계약을 반영한 범위는 이전 버전의 범위와 구분하므로 과거 결과를 같은 검사 범위로 간주해 자동 종결하지 않습니다.
 

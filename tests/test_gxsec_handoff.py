@@ -2,6 +2,7 @@
 import json
 import base64
 from types import SimpleNamespace
+import pytest
 
 
 def test_native_handoff_preserves_custom_state_and_config(tmp_path):
@@ -32,3 +33,25 @@ def test_arbitrary_commands_and_control_characters_are_not_report_context(tmp_pa
             environment={'GXSEC_REPORT_CONTEXT_B64': base64.b64encode(json.dumps(hint).encode()).decode()})
         assert result['runner'] == 'native'
         assert 'command' not in result
+
+
+@pytest.mark.parametrize('size', ['512m', '1g', '2g', '4g'])
+def test_temporary_size_is_preserved_as_bounded_hint(tmp_path, size):
+    from gxsec.handoff import execution_context
+    context = {'runner': 'powershell-docker', 'source': 'D:/project', 'output': 'D:/results',
+               'state_dir': 'D:/results/state', 'temporary_size': size}
+    result = execution_context(SimpleNamespace(), tmp_path / 'workspace', tmp_path / 'state',
+        environment={'GXSEC_REPORT_CONTEXT_B64': base64.b64encode(json.dumps(context).encode()).decode()})
+    assert result['temporary_size'] == size
+    assert result['authority'] == 'report-hint-only'
+
+
+@pytest.mark.parametrize('size', ['8g', '4g,exec', '4g --privileged', ['4g'], None])
+def test_invalid_temporary_size_cannot_become_report_hint(tmp_path, size):
+    from gxsec.handoff import execution_context
+    context = {'runner': 'powershell-docker', 'source': 'D:/project', 'output': 'D:/results',
+               'state_dir': 'D:/results/state', 'temporary_size': size}
+    result = execution_context(SimpleNamespace(), tmp_path / 'workspace', tmp_path / 'state',
+        environment={'GXSEC_REPORT_CONTEXT_B64': base64.b64encode(json.dumps(context).encode()).decode()})
+    assert result['runner'] == 'native'
+    assert 'temporary_size' not in result

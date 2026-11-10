@@ -140,6 +140,109 @@ def test_release_preserves_literal_mounts_security_options_and_state(case):
     assert hint['state_dir'] == str(output / 'state')
     assert hint['output'] == str(output)
     assert hint['image'] == IMAGE_ID
+    assert hint['temporary_size'] == '512m'
+    assert run[run.index('--tmpfs') + 1] == '/tmp:rw,nosuid,nodev,size=512m'
+
+
+@pytest.mark.parametrize('size', ['512m', '1g', '2g', '4g'])
+def test_temporary_size_changes_only_bounded_tmpfs_and_handoff(case, size):
+    result = invoke(case, '-Action', 'release', '-TemporarySize', size, '-Json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert run[run.index('--tmpfs') + 1] == '/tmp:rw,nosuid,nodev,size=' + size
+    assert run[run.index('--network') + 1] == 'none'
+    assert run[run.index('--cap-drop') + 1] == 'ALL'
+    assert '--read-only' in run
+    assert run[run.index('--security-opt') + 1] == 'no-new-privileges'
+    encoded = next(value.split('=', 1)[1] for value in run if value.startswith('GXSEC_REPORT_CONTEXT_B64='))
+    assert json.loads(base64.b64decode(encoded))['temporary_size'] == size
+    assert '-TemporarySize' not in run and '--temporary-size' not in run
+
+
+@pytest.mark.parametrize('size', ['8g', '4g,exec', '4g --privileged', '4G'])
+def test_invalid_temporary_size_is_rejected_before_docker(case, size):
+    incomplete(invoke(case, '-TemporarySize', size, '-Json'), 'invalid_arguments')
+    assert not calls(case)
+    assert not (case[0] / '.gxsec-container').exists()
+
+
+def saved_temporary_run(case, size='4g'):
+    from tests.test_gxsec_reporting import sample_run
+    from gxsec.reporting import write_reports
+    output = case[0] / '.gxsec-container'
+    (output / 'state/runs').mkdir(parents=True)
+    (output / 'state/state.sqlite3').write_bytes(b'opaque-existing-state')
+    saved = sample_run()
+    saved['execution_context'] = {'authority': 'report-hint-only', 'runner': 'powershell-docker',
+        'source': str(case[0]), 'output': str(output), 'state_dir': str(output / 'state'),
+        'temporary_size': size}
+    write_reports(saved, output / 'report')
+    snapshot = output / 'state/runs/run-example.json'
+    snapshot.write_text((output / 'report/result.json').read_text(encoding='utf-8'), encoding='utf-8')
+    return output, snapshot
+
+
+@pytest.mark.parametrize('run_id', [None, 'run-example'])
+def test_report_to_retest_keeps_original_temporary_size(case, run_id):
+    output, _ = saved_temporary_run(case)
+    assert '-TemporarySize 4g' in (output / 'report/developer.md').read_text(encoding='utf-8')
+    args = ['-Action', 'retest', '-FindingId', 'GXSEC-123', '-Json']
+    if run_id:
+        args += ['-RunId', run_id]
+    result = invoke(case, *args)
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert run[run.index('--tmpfs') + 1] == '/tmp:rw,nosuid,nodev,size=4g'
+    assert run[run.index('--state-dir') + 1] == '/results/state'
+    encoded = next(value.split('=', 1)[1] for value in run if value.startswith('GXSEC_REPORT_CONTEXT_B64='))
+    assert json.loads(base64.b64decode(encoded))['temporary_size'] == '4g'
+
+
+def test_explicit_temporary_size_overrides_saved_hint(case):
+    saved_temporary_run(case)
+    result = invoke(case, '-Action', 'retest', '-FindingId', 'GXSEC-123', '-RunId', 'run-example',
+                    '-TemporarySize', '1g', '-Json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert run[run.index('--tmpfs') + 1] == '/tmp:rw,nosuid,nodev,size=1g'
+
+
+def test_legacy_saved_context_without_temporary_size_uses_default(case):
+    _, snapshot = saved_temporary_run(case, size='512m')
+    saved = json.loads(snapshot.read_text(encoding='utf-8'))
+    saved['execution_context'].pop('temporary_size')
+    snapshot.write_text(json.dumps(saved), encoding='utf-8')
+    result = invoke(case, '-Action', 'retest', '-FindingId', 'GXSEC-123', '-RunId', 'run-example', '-Json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert run[run.index('--tmpfs') + 1] == '/tmp:rw,nosuid,nodev,size=512m'
+
+
+@pytest.mark.parametrize('tamper', ['invalid-json', 'invalid-size', 'wrong-store', 'oversized', 'directory', 'wrong-run', 'missing'])
+def test_unreadable_or_untrusted_saved_temporary_hint_is_not_silently_used(case, tamper):
+    output, snapshot = saved_temporary_run(case)
+    if tamper == 'invalid-json':
+        snapshot.write_text('not-json-PRETEND_SECRET_SHOULD_NOT_LEAK', encoding='utf-8')
+    elif tamper == 'oversized':
+        with snapshot.open('wb') as handle:
+            handle.truncate(16 * 1024 * 1024 + 1)
+    elif tamper == 'directory':
+        snapshot.unlink()
+        snapshot.mkdir()
+    elif tamper == 'missing':
+        snapshot.unlink()
+    else:
+        saved = json.loads(snapshot.read_text(encoding='utf-8'))
+        if tamper == 'invalid-size':
+            saved['execution_context']['temporary_size'] = '8g,exec'
+        elif tamper == 'wrong-store':
+            saved['execution_context']['state_dir'] = str(case[0].parent / 'different/state')
+        else:
+            saved['run_id'] = 'other-run'
+        snapshot.write_text(json.dumps(saved), encoding='utf-8')
+    incomplete(invoke(case, '-Action', 'retest', '-FindingId', 'GXSEC-123', '-RunId', 'run-example', '-Json'),
+               'previous_context_unavailable')
+    assert not calls(case)
 
 
 @pytest.mark.parametrize('parent', [False, True])
@@ -252,12 +355,17 @@ def test_check_preserves_an_explicit_profile(case):
 
 
 def test_retest_uses_original_id_profile_and_same_output_state(case):
+    from tests.test_gxsec_reporting import sample_run
     output = case[0] / '.gxsec-container'
     (output / 'state').mkdir(parents=True)
     marker = output / 'state/history-marker'
     marker.write_text('existing-state', encoding='utf-8')
     database = output / 'state/state.sqlite3'
     database.write_bytes(b'opaque-existing-state')
+    (output / 'state/runs').mkdir()
+    legacy = sample_run()
+    legacy['run_id'] = '20261105T120000Z-old'
+    (output / 'state/runs/20261105T120000Z-old.json').write_text(json.dumps(legacy), encoding='utf-8')
     result = invoke(case, '-Action', 'retest', '-FindingId', 'GXSEC-0123456789abcdef0123',
                     '-RunId', '20261105T120000Z-old', '-Profile', 'check', '-Json')
     assert result.returncode == 0, result.stdout + result.stderr
@@ -271,9 +379,15 @@ def test_retest_uses_original_id_profile_and_same_output_state(case):
 
 @pytest.mark.parametrize('run_id', [None, 'previous-release-run'])
 def test_retest_without_explicit_profile_defers_to_saved_run(case, run_id):
+    from tests.test_gxsec_reporting import sample_run
     state = case[0] / '.gxsec-container/state'
     state.mkdir(parents=True)
     (state / 'state.sqlite3').write_bytes(b'opaque-existing-state')
+    legacy = sample_run()
+    legacy['run_id'] = run_id or 'previous-release-run'
+    record = state / 'runs' / (run_id + '.json') if run_id else state.parent / 'report/result.json'
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps(legacy), encoding='utf-8')
     arguments = ['-Action', 'retest', '-FindingId', 'GXSEC-0123456789abcdef0123', '-Json']
     if run_id:
         arguments += ['-RunId', run_id]
@@ -281,6 +395,7 @@ def test_retest_without_explicit_profile_defers_to_saved_run(case, run_id):
     assert result.returncode == 0, result.stdout + result.stderr
     run = calls(case)[-1]
     assert '--profile' not in run, 'An omitted profile must be inherited by the CLI from saved history'
+    assert run[run.index('--tmpfs') + 1] == '/tmp:rw,nosuid,nodev,size=512m'
     assert run[run.index('--state-dir') + 1] == '/results/state'
     if run_id:
         assert run[run.index('--run-id') + 1] == run_id

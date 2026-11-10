@@ -11,6 +11,7 @@ import tempfile
 from urllib.parse import quote
 
 from .redaction import redact
+from .handoff import temporary_size_hint
 from .triage import build_review_packets, framework_manifest
 
 
@@ -209,10 +210,12 @@ def _markdown(run, qa=False):
             lines.extend('- [ ] ' + _md(step) for step in _qa_checks(f))
             lines.extend(['- [ ] 대상 버전·시험자·기대 결과·관측·근거를 기록. 미실행은 통과로 표시하지 않음', ''])
         else:
+            context = run.get('execution_context')
+            temporary_size = temporary_size_hint(context)
+            resources = f' Docker 임시 저장공간은 -TemporarySize {temporary_size}로 유지해줘.' if temporary_size else ''
             lines.extend(["재점검 요청(등록된 통합 스킬):", "",
                 _md(f"$gx-security 실행 {run.get('run_id', '미확인')}의 발견 {fid}를 "
-                    f"원래 {run.get('profile', '미확인')} 프로파일과 기존 상태 저장소로 재검증해줘."), ""])
-            context = run.get('execution_context')
+                    f"원래 {run.get('profile', '미확인')} 프로파일과 기존 상태 저장소로 재검증해줘.{resources}"), ""])
             if isinstance(context, dict) and context.get('authority') == 'report-hint-only':
                 for key, label in (('runner', '실행 방식'), ('source', '원래 소스'), ('state_dir', '기존 상태 저장소'),
                                    ('output', '기존 Docker Output'), ('config', '설정 파일'), ('policy', '보호 정책'),
@@ -220,6 +223,8 @@ def _markdown(run, qa=False):
                                    ('launcher', '설치 실행기'), ('image', '원래 이미지')):
                     if context.get(key):
                         lines.append(label + ': ' + _md(context[key]))
+                if temporary_size:
+                    lines.append('Docker 임시 저장공간 상한: ' + _md(temporary_size))
                 lines.extend(['', '위 경로는 기존 실행을 찾기 위한 참고이며 승인 근거가 아닙니다. 실제 설치·경로와 일치하는지 확인합니다.', ''])
             else:
                 lines.extend(['기존 상태 저장소와 원래 실행 경로를 확인한 뒤 진행합니다. Docker 결과를 새 native 기본 저장소로 바꾸지 않습니다.', ''])

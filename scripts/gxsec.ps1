@@ -13,6 +13,7 @@ param(
     [string]$Database,
     [string]$ReviewRecords,
     [string]$ExpectedFramework,
+    [string]$TemporarySize='512m',
     [switch]$Json
 )
 $ErrorActionPreference='Stop'
@@ -49,6 +50,56 @@ function Test-WithinPath([string]$Path, [string]$Root) {
     $prefix = $normalizedRoot + [IO.Path]::DirectorySeparatorChar
     return $normalizedPath.Equals($normalizedRoot, [StringComparison]::OrdinalIgnoreCase) -or
         $normalizedPath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Read-PreviousTemporarySize([string]$RecordPath, [string]$ExpectedRunId,
+        [string]$SourcePath, [string]$OutputPath) {
+    $stream = $null
+    $reader = $null
+    try {
+        $item = Get-Item -LiteralPath $RecordPath -Force -ErrorAction Stop
+        if ($item.PSIsContainer -or (Test-ReparseComponents $RecordPath) -or
+                ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Invalid saved context file' }
+        $stream = [IO.File]::OpenRead($item.FullName)
+        if ($stream.Length -le 0 -or $stream.Length -gt 16777216) { throw 'Saved context exceeds read limit' }
+        $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8, $true)
+        $saved = $reader.ReadToEnd() | ConvertFrom-Json -ErrorAction Stop
+        if ($saved -isnot [PSCustomObject] -or $saved.schema_version -ne 1 -or
+                $saved.run_id -isnot [string] -or $saved.run_id -cnotmatch '^[A-Za-z0-9_.-]{1,128}\z' -or
+                $saved.run_id -in @('.','..') -or ($ExpectedRunId -and $saved.run_id -cne $ExpectedRunId)) {
+            throw 'Invalid saved run identity'
+        }
+        if (-not $saved.PSObject.Properties['execution_context']) { return '512m' }
+        $context = $saved.execution_context
+        if ($context -isnot [PSCustomObject]) { throw 'Invalid saved execution context' }
+        if (-not $context.PSObject.Properties['temporary_size']) { return '512m' }
+        $allowed = @('authority','runner','source','state_dir','output','policy','database',
+                     'review_records','launcher','image','temporary_size')
+        foreach ($property in $context.PSObject.Properties) {
+            if ($allowed -cnotcontains $property.Name -or $property.Value -isnot [string] -or
+                    -not $property.Value -or $property.Value.Length -gt 4096 -or
+                    $property.Value -match '[\x00-\x1F]') { throw 'Invalid saved hint' }
+        }
+        if ($context.runner -cne 'powershell-docker' -or $context.authority -cne 'report-hint-only' -or
+                $context.temporary_size -cnotin @('512m','1g','2g','4g')) { throw 'Invalid saved temporary size' }
+        $originalPaths = @{source=$SourcePath;output=$OutputPath;state_dir=(Join-Path $OutputPath 'state')}
+        foreach ($key in $originalPaths.Keys) {
+            if (-not $context.PSObject.Properties[$key] -or -not [IO.Path]::IsPathRooted($context.$key)) {
+                throw 'Missing original execution path'
+            }
+            $recorded = [IO.Path]::GetFullPath($context.$key)
+            if (-not (Test-WithinPath $recorded $originalPaths[$key]) -or
+                    -not (Test-WithinPath $originalPaths[$key] $recorded)) { throw 'Different original state' }
+        }
+        return $context.temporary_size
+    }
+    catch {
+        Stop-Preparation 'previous_context_unavailable' 'The saved Docker resource hint could not be verified.' 'Use the original saved run, or explicitly select TemporarySize: 512m, 1g, 2g, or 4g.'
+    }
+    finally {
+        if ($reader) { $reader.Dispose() }
+        elseif ($stream) { $stream.Dispose() }
+    }
 }
 
 function ConvertTo-ProcessArgument([string]$Value) {
@@ -112,7 +163,8 @@ if (-not $PSBoundParameters.ContainsKey('Profile')) {
 }
 $validArguments = $Action -in @('doctor','check','release','retest','discuss') -and
     (-not $forwardProfile -or $Profile -in @('check','static-release','release')) -and
-    $Image -match '^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,254}$'
+    $Image -match '^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,254}$' -and
+    $TemporarySize -cin @('512m','1g','2g','4g')
 if ($Action -eq 'retest') {
     $validArguments = $validArguments -and $FindingId -match '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'
 }
@@ -196,6 +248,11 @@ if ($Action -eq 'retest') {
     if (-not (Test-Path -LiteralPath $previousDatabase -PathType Leaf) -or (Test-ReparseComponents $previousDatabase)) {
         Stop-Preparation 'previous_state_unavailable' 'Retest requires the original saved state.' 'Select the results directory from the previous Docker run; do not create a replacement store.'
     }
+    if (-not $PSBoundParameters.ContainsKey('TemporarySize')) {
+        $resourceRecord = if ($RunId) { Join-Path $resolvedOutput ("state/runs/$RunId.json") }
+                          else { Join-Path $resolvedOutput 'report/result.json' }
+        $TemporarySize = Read-PreviousTemporarySize $resourceRecord $RunId $resolvedSource $resolvedOutput
+    }
 }
 if ($Action -eq 'discuss') {
     $previousDatabase = Join-Path $resolvedOutput 'state/state.sqlite3'
@@ -251,7 +308,7 @@ if ($imageParts[1] -ne 'linux') {
 }
 
 $dockerArguments = @('run','--rm','--pull','never','--network','none','--read-only','--cap-drop','ALL',
-    '--security-opt','no-new-privileges','--tmpfs','/tmp:rw,nosuid,nodev,size=512m',
+    '--security-opt','no-new-privileges','--tmpfs',"/tmp:rw,nosuid,nodev,size=$TemporarySize",
     '--mount',"type=bind,source=$resolvedSource,target=/workspace,readonly")
 if ($Action -ne 'doctor') {
     try { if ($Action -ne 'discuss') { New-Item -ItemType Directory -Path $resolvedOutput -Force | Out-Null } }
@@ -272,7 +329,8 @@ if ($PSBoundParameters.ContainsKey('ReviewRecords')) {
 }
 if ($Action -in @('check','release','retest')) {
     $reportContext = @{runner='powershell-docker';source=$resolvedSource;output=$resolvedOutput;
-        state_dir=(Join-Path $resolvedOutput 'state');launcher=$PSCommandPath;image=$imageParts[0]}
+        state_dir=(Join-Path $resolvedOutput 'state');launcher=$PSCommandPath;image=$imageParts[0];
+        temporary_size=$TemporarySize}
     if ($PSBoundParameters.ContainsKey('Policy')) { $reportContext.policy = $resolvedPolicy }
     if ($PSBoundParameters.ContainsKey('Database')) { $reportContext.database = $resolvedDatabase }
     if ($PSBoundParameters.ContainsKey('ReviewRecords')) { $reportContext.review_records = $resolvedReviews }
