@@ -5,7 +5,7 @@ ENV PYTHONUTF8=1 PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
 WORKDIR /opt/gx-security
 COPY runtime/engines.lock.json runtime/engines.lock.json
 COPY scripts/install-engines.py scripts/install-engines.py
-RUN python scripts/install-engines.py --output /usr/local/bin
+RUN --mount=type=cache,target=/var/cache/gxsec-engines python scripts/install-engines.py --output /usr/local/bin --cache-dir /var/cache/gxsec-engines
 COPY requirements-bundle.lock requirements-bundle.lock
 RUN pip install --no-cache-dir --require-hashes -r requirements-bundle.lock
 RUN apt-get update && apt-get install -y --no-install-recommends git=1:2.39.5-0+deb12u3 && \

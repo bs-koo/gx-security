@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gx-security"
-version = "0.10.1"
+version = "0.10.3"
 description = "Developer-run security checks with traceable release evidence"
 requires-python = ">=3.10"
 dependencies = ["requests==2.34.2", "PyYAML==6.0.3"]

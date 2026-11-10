@@ -276,7 +276,7 @@ def test_cli_version_matches_installed_package():
     import sys
     import gxsec
     from gxsec import __version__
-    assert __version__ == '0.10.1', gxsec.__file__
+    assert __version__ == '0.10.3', gxsec.__file__
     command = subprocess.run([sys.executable, str(Path(__file__).parents[1] / 'gxsec.py'), '--version'],
         capture_output=True, text=True, timeout=15)
     assert command.returncode == 0

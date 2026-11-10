@@ -15,6 +15,7 @@ rules:
       도메인·스킴 검증 없이 사용하면 SSRF 취약점입니다.
       허용 호스트 화이트리스트를 검증한 후 요청하세요.
     metadata:
+      severity: High
       cwe: "CWE-918"
       owasp: "A10:2021"
       stack: spring-modern
@@ -38,6 +39,7 @@ rules:
       임의 변수로 이뤄집니다. URL이 사용자 입력에서 유래하면 SSRF 취약점입니다.
       @RequestParam 한정 없이 넓게 후보를 잡으므로 2단계에서 데이터 흐름을 확인하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-918"
       owasp: "A10:2021"
       stack: spring-modern
@@ -57,6 +59,7 @@ rules:
       WebClient 호출에 사용자 입력이 URI로 사용될 수 있습니다. SSRF 위험.
       허용 호스트 화이트리스트를 검증하세요.
     metadata:
+      severity: High
       cwe: "CWE-918"
       owasp: "A10:2021"
       stack: spring-modern
@@ -79,6 +82,7 @@ rules:
       URL.openStream()/openConnection()을 사용하는데 URL이 사용자 입력에서 유래할 수 있습니다.
       SSRF 취약점입니다. URL 도메인을 화이트리스트로 검증하세요.
     metadata:
+      severity: High
       cwe: "CWE-918"
       owasp: "A10:2021"
       stack: jsp-legacy
@@ -99,6 +103,7 @@ rules:
     message: >-
       HttpURLConnection을 통한 서버측 요청에 사용자 입력이 포함될 수 있습니다. SSRF 위험.
     metadata:
+      severity: High
       cwe: "CWE-918"
       owasp: "A10:2021"
       stack: jsp-legacy
@@ -120,6 +125,7 @@ rules:
       검증 없이 사용하면 오픈 리다이렉트 취약점입니다.
       상대경로만 허용하거나 허용 도메인 화이트리스트를 적용하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-601"
       owasp: "A01:2021"
       stack: jsp-legacy
@@ -134,6 +140,7 @@ rules:
       response.sendRedirect()에 변수가 사용됩니다. 이 변수가 사용자 입력에서 유래하는지 확인하세요.
       사용자 입력이면 오픈 리다이렉트 취약점입니다.
     metadata:
+      severity: Medium
       cwe: "CWE-601"
       owasp: "A01:2021"
       stack: jsp-legacy
@@ -150,6 +157,7 @@ rules:
       Spring MVC 컨트롤러에서 "redirect:" 뒤에 @RequestParam 변수가 바로 사용됩니다.
       검증 없이 사용하면 오픈 리다이렉트 취약점입니다.
     metadata:
+      severity: Medium
       cwe: "CWE-601"
       owasp: "A01:2021"
       stack: spring-modern
@@ -167,6 +175,7 @@ rules:
       Spring MVC 컨트롤러에서 동적으로 구성된 "redirect:" 문자열을 반환합니다.
       리다이렉트 목적지가 사용자 입력에서 유래하는지 확인하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-601"
       owasp: "A01:2021"
       stack: spring-modern
@@ -190,6 +199,7 @@ rules:
       이 값이 검증 없이 리다이렉트 목적지로 사용되면 오픈 리다이렉트 취약점입니다.
       실제 리다이렉트 코드까지 데이터 흐름을 추적하세요.
     metadata:
+      severity: Low
       cwe: "CWE-601"
       owasp: "A01:2021"
       stack: spring-modern

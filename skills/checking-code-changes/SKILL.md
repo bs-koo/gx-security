@@ -1,7 +1,7 @@
 ---
 name: checking-code-changes
 description: 개발 중 변경분·관련 모듈 보안 점검을 실행하고 신규·기존 발견과 미완료를 구분할 때 사용한다.
-version: "0.10.1"
+version: "0.10.3"
 ---
 
 # 변경분 보안 점검

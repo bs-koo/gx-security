@@ -14,6 +14,7 @@ rules:
       사용자 입력(getParameter 등)이 포함되면 SQL Injection이 확정됩니다.
       PreparedStatement와 ? 플레이스홀더로 전환하세요.
     metadata:
+      severity: High
       cwe: "CWE-89"
       owasp: "A03:2021"
       stack: jsp-legacy
@@ -34,6 +35,7 @@ rules:
       JDBC Connection/Statement에서 문자열 연결로 SQL을 조립하고 있습니다.
       PreparedStatement와 ? 플레이스홀더로 전환하세요.
     metadata:
+      severity: High
       cwe: "CWE-89"
       owasp: "A03:2021"
       stack: jsp-legacy
@@ -57,6 +59,7 @@ rules:
       값 바인딩에는 #{} 로 교체하세요. ORDER BY·컬럼명 동적 삽입이 필요하면
       서비스 레이어에서 허용 목록(allowlist) 검증 후 전달하세요.
     metadata:
+      severity: High
       cwe: "CWE-89"
       owasp: "A03:2021"
       stack: jsp-legacy
@@ -73,6 +76,7 @@ rules:
       사용자 입력이 포함되면 SQL Injection 위험입니다.
       ? 플레이스홀더와 파라미터 배열을 사용하세요.
     metadata:
+      severity: High
       cwe: "CWE-89"
       owasp: "A03:2021"
       stack: spring-modern
@@ -92,6 +96,7 @@ rules:
       JPQL Injection 또는 SQL Injection 위험입니다.
       setParameter("name", value) 파라미터 바인딩으로 전환하세요.
     metadata:
+      severity: High
       cwe: "CWE-89"
       owasp: "A03:2021"
       stack: spring-modern
@@ -111,6 +116,7 @@ rules:
       사용자 입력이 포함되면 SQL Injection 위험입니다.
       PreparedStatement와 ? 플레이스홀더로 전환하세요.
     metadata:
+      severity: High
       cwe: "CWE-89"
       owasp: "A03:2021"
       stack: jsp-legacy
@@ -136,6 +142,7 @@ rules:
       PreparedStatement의 이점(바인딩)이 무력화되어 SQL Injection 위험입니다.
       SQL 본문에 ? 플레이스홀더를 두고 setString/setInt로 값을 바인딩하세요.
     metadata:
+      severity: High
       cwe: "CWE-89"
       owasp: "A03:2021"
       stack: jsp-legacy
@@ -163,6 +170,7 @@ rules:
       데이터플로우로 도달합니다(SQL Injection 확정 근접). PreparedStatement와 ? 플레이스홀더로
       값을 바인딩하세요.
     metadata:
+      severity: High
       cwe: "CWE-89"
       owasp: "A03:2021"
       stack: spring-modern

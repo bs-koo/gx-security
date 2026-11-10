@@ -233,7 +233,8 @@ def test_security_annotations_inside_string_literals_do_not_activate_guards(tmp_
     methods = '''class M {
  String description = "@Configuration @EnableMethodSecurity(prePostEnabled = true)";
  String menu = "MenuSecurityExpressionHandler MenuRoleService";
-}'''
+}
+class MenuSecurityExpressionHandler {}'''
     controller = ADMIN.replace('@RestController', '@PreAuthorize("hasRole(\'ADM\')") @RestController')
     check, findings = run(tmp_path, {'build.gradle.kts': BUILD, 'src/main/java/M.java': methods,
                                    'src/main/java/W.java': WEB, 'src/main/java/C.java': controller})

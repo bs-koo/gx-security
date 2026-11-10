@@ -10,8 +10,9 @@ from .source import is_reparse, reject_reparse_path
 from .redaction import redact
 
 
-def _carry_absent_framework(finding, run, check):
+def _carry_absent_finding(finding, run, check):
     """Bind a reviewable absence observation to current inputs, never infer a fix."""
+    check_id = finding['check_id']
     finding['lifecycle'] = 'remediation-proposed'
     finding['validation'] = 'undetermined'
     finding['review_required'] = True
@@ -30,7 +31,7 @@ def _carry_absent_framework(finding, run, check):
                            for error in check.get('errors', []) if isinstance(error, dict)]}
     finding['analysis_contract_hash'] = content_hash(contract)
     absence = {
-        'method': 'framework-finding-not-observed', 'check_id': 'framework',
+        'method': check_id + '-finding-not-observed', 'check_id': check_id,
         'source_revision': source.get('revision') or source.get('commit') or source.get('hash'),
         'source_hash': source.get('hash'), 'scope_hash': source.get('scope_hash'),
         'file_manifest_digest': content_hash(manifest),
@@ -39,7 +40,7 @@ def _carry_absent_framework(finding, run, check):
         'locations': [{'path': location.get('path'), 'hash': hashes.get(location.get('path')),
                        'present': location.get('path') in hashes}
                       for location in finding.get('locations', [])],
-        'fact': 'The current framework result does not contain this earlier finding. '
+        'fact': 'The current ' + check_id + ' result does not contain this earlier finding. '
                 'Recognizer absence does not establish remediation or current source safety.',
     }
     finding['absence_evidence'] = absence
@@ -47,8 +48,8 @@ def _carry_absent_framework(finding, run, check):
     finding['expected_file_hash'] = hashes.get(locations[0].get('path'))
     # The earlier claim and its locations remain historical. Only the current
     # absence is evidence against it; do not re-export old context as a fresh scan.
-    context = {'schema_version': 1, 'analyzer': 'gxsec-framework-absence/1',
-        'classification': 'framework-finding-not-observed', 'proposal': 'needs_review',
+    context = {'schema_version': 1, 'analyzer': 'gxsec-' + check_id + '-absence/1',
+        'classification': check_id + '-finding-not-observed', 'proposal': 'needs_review',
         'evidence_for': [], 'evidence_against': [copy.deepcopy(absence)],
         'unresolved': ['Does independent review of the current source establish remediation '
                        'of the original claim, or did the bounded recognizer lose the pattern?'],
@@ -183,21 +184,40 @@ class Store:
                 cov = c.get('coverage', {})
                 eligible = cov.get('eligible')
                 scanned = cov.get('scanned')
-                return c.get('status') == 'complete' and not c.get('errors') and cov.get('scope') == 'full' and type(eligible) is int and type(scanned) is int and eligible > 0 and scanned == eligible and not cov.get('missing') and cov.get('complete', True) is True
+                return c.get('status') == 'complete' and not c.get('errors') and cov.get('scope') == 'full' and type(eligible) is int and type(scanned) is int and eligible > 0 and scanned == eligible and not cov.get('missing') and not cov.get('parse_errors') and cov.get('complete', True) is True
 
             engines_match = bool(before.get('engine') and before.get('engine') == after.get('engine'))
             signatures_match = bool(before.get('coverage', {}).get('signature') and before.get('coverage', {}).get('signature') == after.get('coverage', {}).get('signature'))
             eligible_match = sorted(before.get('coverage', {}).get('files', [])) == sorted(after.get('coverage', {}).get('files', []))
-            if cid == 'framework':
-                _carry_absent_framework(carried, result, after)
-            elif result.get('profile') != 'check' and same_scope and cid and complete(before) and complete(after) and engines_match and signatures_match and eligible_match and (not earlier.get('category') in {'secrets', 'authorization', 'auth', 'dast'}):
+            equivalent_full_scan = (result.get('profile') != 'check' and same_scope and cid
+                                   and complete(before) and complete(after) and engines_match
+                                   and signatures_match and eligible_match)
+            if cid == 'framework' or (cid == 'sast' and (
+                    equivalent_full_scan or earlier.get('absence_evidence')
+                    or earlier.get('lifecycle') == 'fixed-verified')):
+                _carry_absent_finding(carried, result, after)
+            elif cid == 'sca' and equivalent_full_scan:
                 carried['lifecycle'] = 'fixed-verified'
                 carried['fixed_verified_run'] = result['run_id']
                 carried['resolution_evidence'] = {
                     'check_id': cid,
+                    'finding_id': carried['finding_id'],
+                    'run_id': result['run_id'],
+                    'source_revision': result['source'].get('revision') or result['source'].get('hash'),
                     'scope_hash': result['source']['scope_hash'],
+                    'analysis_contract_hash': content_hash({'engine': after.get('engine', {}),
+                        'coverage': after.get('coverage', {}), 'status': after.get('status'),
+                        'errors': after.get('errors', [])}),
                     'method': 'absent-in-equivalent-full-clean-scan',
                 }
+            elif carried.get('lifecycle') == 'fixed-verified':
+                # Other analyzers have no supported absence-to-resolution protocol.
+                # An old marker must not silently waive a risk in a later run.
+                carried['lifecycle'] = 'remediation-proposed'
+                carried['validation'] = 'undetermined'
+                carried['review_required'] = True
+                for key in ('fixed_verified_run', 'resolution_evidence', 'review_ref'):
+                    carried.pop(key, None)
             carried['carried_forward'] = True
             result.setdefault('findings', []).append(carried)
         return result

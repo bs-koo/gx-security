@@ -13,13 +13,15 @@ import stat
 from .models import content_hash, make_check, make_finding
 from .snapshot import _handle_path
 from .source import reject_reparse_path
+from .config import FRAMEWORK_CONTRACTS, framework_requirement
 
 
-VERSION = '1.0.0'
+VERSION = '1.1.0'
 MAX_FILES = 20000
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_TOTAL_BYTES = 32 * 1024 * 1024
 MAX_METHODS = 20000
+MAX_MODULES = 512
 RULE_IDS = ['SEF-ADM-01', 'SEF-JWT-01', 'SEF-OBJ-01', 'SEF-ROUTE-01', 'SEF-FILE-01']
 LIMITATIONS = [
     'Structural Java/Spring source observations only; no full call graph or runtime verification.',
@@ -339,32 +341,89 @@ def _detect(documents):
     groups = {}
     for doc in documents:
         groups.setdefault(doc['module'], []).append(doc)
-    modules = []
+    if len(groups) > MAX_MODULES:
+        raise ValueError('Framework module budget exhausted')
+    modules, signals_by_module = {}, {}
+    builds = [d for d in documents if PurePosixPath(d['path']).name in {'build.gradle', 'build.gradle.kts', 'pom.xml'}]
+    dependencies = {}
     for path, docs in sorted(groups.items()):
-        text = '\n'.join(d['clean'] for d in docs)
+        ancestors = [d for d in builds if d['module'] != path
+                     and (d['module'] == '.' or path.startswith(d['module'] + '/'))]
+        build_text = '\n'.join(d['clean'] for d in docs + ancestors
+                               if PurePosixPath(d['path']).name in {'build.gradle', 'build.gradle.kts', 'pom.xml'})
+        syntax = '\n'.join(d['mask'] for d in docs if d['path'].endswith('.java'))
         signals = []
-        if re.search(r'org\.springframework\.boot|spring-boot-starter', text):
+        if re.search(r'org\.springframework\.boot|spring-boot-starter', build_text):
             signals.append('spring-boot-build')
-        if re.search(r'\bMenuSecurityExpressionHandler\b|\bhasMenuAuthority\s*\(', text):
+        if re.search(r'\bMenuSecurityExpressionHandler\b|\bhasMenuAuthority\s*\(', syntax):
             signals.append('menu-security-expression')
-        if re.search(r'\bJwtTokenProvider\b', text) and ('Jwts.' in text or 'parseSignedClaims' in text):
+        if re.search(r'\bJwtTokenProvider\b', syntax) and ('Jwts.' in syntax or 'parseSignedClaims' in syntax):
             signals.append('jwt-provider')
-        if re.search(r'\b(?:WebSecurityConfig|SecurityFilterChain)\b', text) and re.search(r'\.(?:requestMatchers|antMatchers)\s*\(', text):
+        if re.search(r'\b(?:WebSecurityConfig|SecurityFilterChain)\b', syntax) and re.search(r'\.(?:requestMatchers|antMatchers)\s*\(', syntax):
             signals.append('url-security')
-        if re.search(r'\b(?:BoardFileService|ApiResponse|SecurityUser|MenuRoleService)\b', text):
+        if re.search(r'\b(?:BoardFileService|ApiResponse|SecurityUser|MenuRoleService)\b', syntax):
             signals.append('sef-common-types')
         # Require independent build and security signals, not a path/package label.
         detected = ('spring-boot-build' in signals and 'menu-security-expression' in signals
                     and bool({'url-security', 'jwt-provider', 'sef-common-types'} & set(signals)))
-        if not detected:
-            continue
-        boot2 = bool(re.search(r'(?:org\.springframework\.boot[^\n]{0,120}["\']2\.|<version>2\.[^<]*</version>)', text))
-        boot3 = bool(re.search(r'(?:org\.springframework\.boot[^\n]{0,120}["\']3\.|<version>3\.[^<]*</version>)', text))
+        boot2 = bool(re.search(r'(?:org\.springframework\.boot[^\n]{0,120}["\']2\.|<version>2\.[^<]*</version>)', build_text))
+        boot3 = bool(re.search(r'(?:org\.springframework\.boot[^\n]{0,120}["\']3\.|<version>3\.[^<]*</version>)', build_text))
         variant = 'mixed' if boot2 and boot3 else 'public' if boot2 else 'private' if boot3 else 'undetermined'
-        modules.append({'path': path, 'variant': variant, 'signals': signals,
-                        'evidence': [_evidence(d, fact='framework-signals') for d in docs
-                                     if any(s in d['clean'] for s in ('org.springframework.boot', 'MenuSecurityExpressionHandler', 'hasMenuAuthority', 'JwtTokenProvider', 'WebSecurityConfig'))]})
-    return modules
+        record = {'path': path, 'variant': variant, 'signals': signals,
+                  'evidence': [_evidence(d, fact='framework-signals') for d in docs + ancestors
+                               if any(s in (d['mask'] if d['path'].endswith('.java') else d['clean'])
+                                      for s in ('org.springframework.boot', 'MenuSecurityExpressionHandler', 'hasMenuAuthority', 'JwtTokenProvider', 'WebSecurityConfig'))]}
+        signals_by_module[path] = record
+        if detected:
+            modules[path] = record
+        # Only literal Gradle project dependency declarations connect detection.
+        # They never establish a runtime bean/authorization relationship.
+        for doc in docs:
+            if PurePosixPath(doc['path']).name not in {'build.gradle', 'build.gradle.kts'}:
+                continue
+            for match in re.finditer(r'\b(?:api|implementation|compileOnly|runtimeOnly|compile|runtime)\s*\(?\s*project\s*\(\s*["\'](:[\w:-]+)["\']\s*\)', doc['clean']):
+                if not doc['mask'][match.start():match.start() + 1].isalpha():
+                    continue
+                target = match[1].lstrip(':').replace(':', '/')
+                if target in groups:
+                    dependencies.setdefault(target, []).append((path, _evidence(doc, match.start(), 'declared-project-dependency')))
+    pending = list(sorted(modules))
+    for known in pending:
+        for path, evidence in sorted(dependencies.get(known, []), key=lambda row: row[0]):
+            if path in modules or 'spring-boot-build' not in signals_by_module[path]['signals']:
+                continue
+            record = signals_by_module[path]
+            modules[path] = {**record, 'signals': record['signals'] + ['declared-sef-project-dependency'],
+                             'evidence': record['evidence'] + [evidence], 'related_module': known}
+            pending.append(path)
+    return [modules[path] for path in sorted(modules)]
+
+
+def _requirements(config):
+    """Project expectations can add to, but cannot replace, protected requirements."""
+    if not isinstance(config, dict) or not isinstance(config.get('_trusted_policy', {}), dict):
+        raise ValueError('framework config and protected policy must be objects')
+    requirements = [framework_requirement(owner['framework'])
+                    for owner in (config, config.get('_trusted_policy', {})) if 'framework' in owner]
+    if not requirements:
+        return {'expected_family': None, 'required_contracts': []}
+    return {'expected_family': 'SEF',
+            'required_contracts': sorted({item for value in requirements for item in value['required_contracts']})}
+
+
+def _required_coverage(check, requirements):
+    metadata = check['framework']
+    coverage = {}
+    for boundary in FRAMEWORK_CONTRACTS:
+        observed = [c for c in metadata['contracts'] if c['id'] == boundary]
+        unsupported = sum(bool(c.get('coverage_error') or c.get('coverage_unresolved')) for c in observed)
+        evaluated = len(observed) - unsupported
+        coverage[boundary] = {'evaluated': evaluated, 'unsupported': unsupported,
+                              'status': 'unsupported' if unsupported else 'evaluated' if evaluated else 'unobserved'}
+        if boundary in requirements['required_contracts'] and (not evaluated or unsupported):
+            check['errors'].append({'type': 'framework_required_contract_unobserved', 'contract': boundary,
+                                    'message': 'Required boundary has no supported source observation; not a vulnerability or safety decision.'})
+    metadata['boundary_coverage'] = coverage
 
 
 def _method_security(docs):
@@ -566,6 +625,14 @@ def _controller_contracts(doc, active, activation, url_rules, fallbacks, dynamic
                 ['Public endpoints, static resources and SPA routes can be intentionally public.',
                  'Only literal matchers were compared; dynamic configuration and custom guards remain unknown.'],
                 'Classify the route intentionally and apply the appropriate URL and method authorization.', severity='Medium'))
+        else:
+            # A required route boundary must distinguish an examined literal
+            # entrypoint from a missing/unsupported URL-security observation.
+            unresolved = bool(dynamic or (not matching and not recognized_predicate))
+            contracts.append({'id': 'route-boundary', 'state': 'unknown' if unresolved else 'modeled',
+                              'symbol': symbol, 'route': route, 'coverage_unresolved': unresolved,
+                              'evidence': [entry] + ([matching['evidence']] if matching else []) + dynamic,
+                              'limitations': ['Modeled entrypoint coverage is not proof of effective runtime authorization.']})
         menu = re.search(r'hasMenuAuthority\s*\(\s*#(\w+)\s*,', predicate or '')
         if menu:
             menu_id = menu[1]
@@ -701,6 +768,13 @@ def run_framework_check(source, config, inventory, profile):
                 'baseline_manifest': [], 'limitations': LIMITATIONS[:]}
     check['framework'] = metadata
     try:
+        requirements = _requirements(config)
+    except ValueError as exc:
+        check['errors'].append({'type': 'framework_requirement_invalid', 'message': str(exc)})
+        return check, []
+    metadata['requirements'] = requirements
+    check['engine']['requirements_hash'] = content_hash(requirements)
+    try:
         documents = _load(Path(source), inventory)
     except (OSError, ValueError, TypeError, UnicodeError) as exc:
         check['errors'].append({'type': 'framework_input_rejected', 'message': str(exc)})
@@ -710,19 +784,44 @@ def run_framework_check(source, config, inventory, profile):
     check['coverage'].update({'files': selected, 'scanned_files': selected,
                               'eligible': 1 + len(documents), 'scanned': 1 + len(documents),
                               'scope_hash': inventory.get('scope_hash'), 'evaluation_units': ['framework-detection']})
-    modules = _detect(documents)
+    try:
+        modules = _detect(documents)
+    except ValueError as exc:
+        check['errors'].append({'type': 'framework_resource_limit', 'message': str(exc)})
+        check['coverage']['scanned'] = 0
+        return check, []
     metadata['modules'] = modules
     metadata['contracts'].append({'id': 'framework-detection', 'state': 'detected' if modules else 'not-detected',
                                   'reason': 'Combined build and source security signatures; no application safety conclusion.'})
-    if not modules:
+    expected = requirements['expected_family'] == 'SEF'
+    if expected:
+        if not modules:
+            check['errors'].append({'type': 'framework_expected_family_unverified',
+                                    'message': 'The required SEF foundation was not identified; source boundary inspection continues conservatively.'})
+        if inventory.get('scope', 'full') != 'full' or inventory.get('errors'):
+            check['errors'].append({'type': 'framework_expected_scope_incomplete',
+                                    'message': 'Expected framework boundaries require a complete source inventory.'})
+    if not modules and not expected:
         check['coverage'].update({'eligible': 1, 'scanned': 1})
+        _required_coverage(check, requirements)
         check['status'] = 'complete'
         return check, []
-    metadata['family'] = 'SEF'
-    variants = {m['variant'] for m in modules}
-    metadata['variant'] = 'mixed' if len(variants) > 1 or 'mixed' in variants else next(iter(variants))
+    if modules:
+        metadata['family'] = 'SEF'
+        variants = {m['variant'] for m in modules}
+        metadata['variant'] = 'mixed' if len(variants) > 1 or 'mixed' in variants else next(iter(variants))
+    analysis_modules = modules[:]
+    if expected:
+        known = {m['path'] for m in modules}
+        for path in sorted({d['module'] for d in documents if d['path'].endswith('.java')
+                            and _source_set(d) not in {'test', 'testFixtures', 'integrationTest'}} - known):
+            analysis_modules.append({'path': path, 'signals': [], 'variant': 'undetermined', 'evidence': []})
+            check['errors'].append({'type': 'framework_module_unverified', 'module': path,
+                                    'message': 'Required source module has no verified SEF association; its controls are inspected without inheriting other modules guards.'})
+    metadata['analysis_modules'] = [{'path': m['path'], 'basis': 'detected' if m in modules else 'required-inspection'}
+                                    for m in analysis_modules]
     findings, method_count = [], 0
-    for module in modules:
+    for module in analysis_modules:
         docs = [d for d in documents if d['module'] == module['path']]
         for doc in docs:
             doc['methods'], doc['pairs'] = [], {}
@@ -775,6 +874,7 @@ def run_framework_check(source, config, inventory, profile):
     # Static order and semantic identities are independent of inventory order.
     findings.sort(key=lambda f: (RULE_IDS.index(f['rule_id']), f['locations'][0]['path'], f['locations'][0]['line'], f['finding_id']))
     check['findings'] = [f['finding_id'] for f in findings]
+    _required_coverage(check, requirements)
     for contract in metadata['contracts']:
         if contract.get('coverage_error'):
             check['errors'].append({'type': 'framework_unsupported_contract', 'contract': contract['id'],

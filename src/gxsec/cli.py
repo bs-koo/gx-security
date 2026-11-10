@@ -6,6 +6,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -20,8 +21,10 @@ from . import __version__, adapters, config as configuration, policy
 from .redaction import redact
 from .models import validate_run
 from .reporting import write_reports
-from .source import collect_source, runtime_environment, trusted_runtime_tool, reject_reparse_path
+from .source import collect_source, runtime_environment, trusted_runtime_tool, reject_reparse_path, selected_paths
 from .state import Store
+from .handoff import execution_context
+from . import execution
 
 
 def _utc():
@@ -41,10 +44,14 @@ def _read(path):
 
 def _config(args, source):
     path = Path(args.config).resolve() if getattr(args, "config", None) else source / "gxsec.yaml"
+    if getattr(args, 'config', None) and not path.is_file():
+        raise ValueError('Explicit config file does not exist')
     data = configuration.load_config(path) if path.exists() else configuration.default_config(source)
     if "_trusted_policy" in data or "_credentials" in data:
         raise ValueError("project config cannot supply trusted policy or credentials")
     data.setdefault("project", {})["source"] = str(source)
+    if getattr(args, 'expected_framework', None):
+        data['framework'] = configuration.framework_requirement({'expected_family': args.expected_framework})
     return data
 
 
@@ -54,9 +61,12 @@ def _trusted_policy(args, source):
     path = Path(args.policy).resolve(strict=True)
     if path.is_relative_to(source.resolve()):
         raise ValueError("trusted policy must be outside the inspected source tree")
-    data = _read(path)
+    raw = path.read_bytes()
+    data = yaml.safe_load(raw.decode('utf-8-sig'))
+    if not isinstance(data, dict):
+        raise ValueError('trusted policy must be an object')
     data["_policy_path"] = str(path)
-    data["_policy_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    data["_policy_sha256"] = hashlib.sha256(raw).hexdigest()
     return data
 
 
@@ -165,6 +175,51 @@ def _init(args):
 
 
 def _execute(args, retest_id=None):
+    selected = getattr(args, 'exclude_source_path', None)
+    duration = getattr(args, 'max_duration_seconds', None)
+    input_bytes = getattr(args, 'max_input_bytes', None)
+    previous = None
+    if retest_id:
+        current_source = reject_reparse_path(args.source or '.').resolve(strict=True)
+        state = reject_reparse_path(args.state_dir if args.state_dir else current_source / '.gxsec')
+        if not (state / 'state.sqlite3').is_file() or not (state / 'runs').is_dir():
+            raise ValueError('Retest requires the original saved state')
+        store = Store(state)
+        previous = store.get_run(args.run_id) if getattr(args, 'run_id', None) else store.latest_run()
+        validate_run(previous)
+        saved_source = previous.get('source')
+        if (not isinstance(saved_source, dict) or not isinstance(saved_source.get('path'), str)
+                or not saved_source['path'] or len(saved_source['path']) > 4096
+                or any(ord(char) < 32 for char in saved_source['path'])
+                or not Path(saved_source['path']).is_absolute()
+                or os.path.normcase(os.path.abspath(saved_source['path'])) != os.path.normcase(str(current_source))):
+            raise ValueError('Saved retest source does not match the selected source')
+        if selected is None:
+            contract = saved_source.get('exclusion_contract', {})
+            if not isinstance(contract, dict):
+                raise ValueError('Saved source exclusion contract is invalid')
+            selected = contract.get('selected_directory_paths', [])
+            if not isinstance(selected, list):
+                raise ValueError('Saved source exclusions must be a list')
+    if previous and (duration is None or input_bytes is None):
+        metrics = previous.get('execution_metrics', {})
+        if not isinstance(metrics, dict):
+            raise ValueError('Saved execution limits must be an object')
+        if duration is None:
+            duration = metrics.get('max_duration_seconds', 1200)
+        if input_bytes is None:
+            input_bytes = metrics.get('max_input_bytes', 4 * 1024**3)
+    duration = 1200 if duration is None and previous is None else duration
+    input_bytes = 4 * 1024**3 if input_bytes is None and previous is None else input_bytes
+    if (type(duration) not in (int, float) or not math.isfinite(duration) or not 0 < duration <= 86400
+            or type(input_bytes) is not int or not 1 <= input_bytes <= 1024**4):
+        raise ValueError('Invalid execution limit: duration must be at most 86400 seconds and working-tree input at most 1 TiB')
+    with execution.session(duration, max_input_bytes=input_bytes) as budget:
+        with selected_paths(selected or []):
+            return _execute_run(args, retest_id, budget, previous_run=previous)
+
+
+def _execute_run(args, retest_id, budget, *, previous_run=None):
     source = Path(args.source or ".").resolve(strict=True)
     if not source.is_dir():
         raise ValueError("source must be a directory")
@@ -193,28 +248,52 @@ def _execute(args, retest_id=None):
         existing_execution = None
     if existing_execution:
         raise ValueError("Execution identity already exists; choose a new identity")
-    previous = store.get_run(args.run_id) if retest_id and getattr(args, "run_id", None) else store.latest_run()
+    previous = previous_run if retest_id else store.latest_run()
     if retest_id and (not previous or not any(f.get("finding_id") == retest_id for f in previous.get("findings", []))):
         raise ValueError("finding not found in latest saved run")
+    expectations = [configuration.framework_requirement(owner['framework'])
+                    for owner in (cfg, trusted) if 'framework' in owner]
+    if retest_id and previous.get('framework_expectation'):
+        expectations.append(configuration.framework_requirement(previous['framework_expectation']))
+    if expectations:
+        cfg['framework'] = {'expected_family': 'SEF', 'required_contracts': sorted({
+            item for expectation in expectations for item in expectation['required_contracts']})}
     profile = args.profile or (previous["profile"] if retest_id else "check" if args.command == "check" else "release")
     if args.execute_dynamic and profile != "release":
         raise ValueError("dynamic execution requires the full release profile")
+    started_at = _utc()
+    try:
+        with execution.phase('source-inventory'):
+            inventory = collect_source(source)
+    except execution.BudgetExceeded as exc:
+        inventory = {'path': str(source), 'files': [], 'inventory': [], 'supported_files': [],
+                     'modules': [], 'errors': [exc.diagnostic], 'exclusions': [],
+                     'inventory_complete': False, 'scope': 'partial', 'hash': None, 'revision': None}
     run = {"schema_version": 1, "run_id": execution_id,
            "project_id": cfg.get("project", {}).get("id", source.name), "profile": profile,
-           "started_at": _utc(), "source": collect_source(source), "checks": [], "findings": [],
+           "started_at": started_at, "source": inventory, "checks": [], "findings": [],
            "reviews": reviews, "exceptions": exceptions,
            "policy_hash": trusted.get("_policy_sha256"),
            "configuration_hash": hashlib.sha256(json.dumps(redact({k: v for k, v in cfg.items() if not k.startswith('_')}), sort_keys=True, default=str).encode()).hexdigest()}
+    run['execution_context'] = execution_context(args, source, state_dir)
+    if expectations:
+        run['framework_expectation'] = deepcopy(cfg['framework'])
     cfg.setdefault("dynamic", {})["run_id"] = execution_id
     if profile == "check":
         try:
+            execution.checkpoint()
             run["scan_scope"] = _base_scope(source, getattr(args, "base", None))
-        except (OSError, ValueError, subprocess.SubprocessError):
+        except (OSError, ValueError, subprocess.SubprocessError, execution.BudgetExceeded) as exc:
             run["scan_scope"] = {"scope": "full", "requested_scope": "diff", "strategy": "conservative-full-rescan", "base_unverified": True}
             run["checks"].append({"id": "change-plan", "status": "incomplete", "required": True,
-                "errors": ["Change base could not be verified"], "coverage": {"eligible": 1, "scanned": 0, "scope": "full"}})
+                "errors": [exc.diagnostic] if isinstance(exc, execution.BudgetExceeded) else ["Change base could not be verified"],
+                "coverage": {"eligible": 1, "scanned": 0, "scope": "full"}})
     else:
         run["scan_scope"] = {"scope": "full"}
+    selected = inventory.get('exclusion_contract', {}).get('selected_directory_paths', [])
+    if selected:
+        run['scan_scope'].update(scope='selected', excluded_directory_paths=selected,
+                                 limitation='Operator-selected directories are outside this scan; excluded content is not security-approved')
     if retest_id:
         run["retest_of"] = {"run_id": previous["run_id"], "finding_id": retest_id,
                             "profile": previous["profile"],
@@ -222,7 +301,11 @@ def _execute(args, retest_id=None):
     cfg["_inventory"] = run["source"]
     cfg["_scan_scope"] = run["scan_scope"]
     try:
+        execution.checkpoint()
         checks, findings = adapters.run_static_checks(source, cfg, profile)
+        if selected:
+            for check in checks:
+                check.setdefault('coverage', {})['scope'] = 'selected'
         run["checks"].extend(checks)
         run["findings"].extend(findings)
         if profile == "release":
@@ -230,6 +313,9 @@ def _execute(args, retest_id=None):
             checks, findings = run_dynamic_checks(source, cfg, execute=bool(args.execute_dynamic))
             run["checks"].extend(checks)
             run["findings"].extend(findings)
+    except execution.BudgetExceeded as exc:
+        run['checks'].append({'id': 'execution', 'status': 'incomplete', 'required': True,
+                              'errors': [exc.diagnostic], 'coverage': {'eligible': 1, 'scanned': 0}})
     except KeyboardInterrupt:
         run["checks"].append({"id": "execution", "status": "cancelled", "required": True,
                               "errors": ["user cancelled"], "coverage": {"eligible": 1, "scanned": 0}})
@@ -238,17 +324,28 @@ def _execute(args, retest_id=None):
         run["checks"].append({"id": "execution", "status": "failed", "required": True,
                               "errors": [type(exc).__name__ + ": " + str(exc)], "coverage": {"eligible": 1, "scanned": 0}})
     try:
-        after = collect_source(source)
-        stable = not after.get("errors") and all(after.get(k) == run["source"].get(k) for k in ("hash", "revision", "dirty", "scope_hash"))
+        with execution.phase('source-recheck'):
+            after = collect_source(source)
+        integrity_errors = []
+        if any(after.get(k) != run['source'].get(k) for k in ('hash', 'revision', 'dirty', 'scope_hash')):
+            integrity_errors.append('Source identity changed during scanning')
+        if after.get('errors'):
+            integrity_errors.append('Source inventory could not be completely verified')
+        stable = not integrity_errors
         run["checks"].append({"id": "source-integrity", "status": "complete" if stable else "incomplete", "required": True,
-            "errors": [] if stable else ["Source identity changed during scanning"],
+            "errors": integrity_errors,
             "coverage": {"eligible": 1, "scanned": 1 if stable else 0, "scope": "full"},
             "before_hash": run["source"].get("hash"), "after_hash": after.get("hash")})
-    except (OSError, ValueError):
+    except (OSError, ValueError, execution.BudgetExceeded):
         run["checks"].append({"id": "source-integrity", "status": "failed", "required": True,
             "errors": ["Source identity could not be rechecked"], "coverage": {"eligible": 1, "scanned": 0, "scope": "full"}})
     run["finished_at"] = _utc()
+    run['execution_metrics'] = budget.summary()
     if profile == "release":
+        if selected:
+            run['checks'].append({'id': 'release-scope', 'status': 'incomplete', 'required': True,
+                'errors': ['Selected application scope does not establish a full release assessment'],
+                'coverage': {'eligible': 1, 'scanned': 0, 'scope': 'selected'}})
         default_reviews = {"role-matrix", "sensitive-data", "external-side-effects", "business-logic"}
         required_reviews = default_reviews | set(trusted.get("required_reviews", []))
         supplied = {r.get("id") for r in reviews if r.get("status") in {"complete", "completed"} and r.get("evidence_refs")}
@@ -270,7 +367,7 @@ def _execute(args, retest_id=None):
     if previous:
         run = store.reconcile(run, previous)
     gate_policy = dict(trusted)
-    gate_policy.update({"profile": profile, "source_revision": run["source"].get("revision") or run["source"].get("hash"),
+    gate_policy.update({"profile": profile, "run_id": run['run_id'], "source_revision": run["source"].get("revision") or run["source"].get("hash"),
                         "scope_hash": run["source"].get("scope_hash"), "require_trusted_evidence": profile == "release"})
     if profile == "release":
         gate_policy["required_reviews"] = sorted(required_reviews)
@@ -349,6 +446,16 @@ def _discuss(args):
     return 0
 
 
+def _plan(args):
+    from .preflight import inspect_inputs
+    with selected_paths(args.exclude_source_path or []), execution.session(
+            args.max_duration_seconds, max_input_bytes=4 * 1024**3):
+        with execution.phase('input-plan'):
+            result = inspect_inputs(args.source)
+    _emit(result)
+    return 2 if result['errors'] else 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="gxsec", description="개발자 실행 · QA/PM 공유용 출시 전 보안 점검")
     parser.add_argument("--version", action="version", version="gx-security " + __version__)
@@ -361,6 +468,10 @@ def build_parser():
     doctor.add_argument("--source", default=".")
     doctor.add_argument("--config")
     doctor.add_argument("--json", action="store_true")
+    plan = sub.add_parser('plan', help='내용을 읽지 않고 입력 범위·용량·검사 제외 후보 확인')
+    plan.add_argument('source', nargs='?', default='.')
+    plan.add_argument('--exclude-source-path', action='append')
+    plan.add_argument('--max-duration-seconds', type=float, default=30)
     for command in ("check", "release", "retest"):
         p = sub.add_parser(command, help={"check": "변경분·영향 범위 점검", "release": "전체 출시 프로파일 점검", "retest": "이전 발견사항 수정 재검증"}[command])
         if command == "retest":
@@ -376,6 +487,10 @@ def build_parser():
         p.add_argument("--execution-id", help="새 실행의 고유 ID; 외부 실행 허가서와 동일하게 지정")
         p.add_argument("--policy", help="검사 소스 밖의 신뢰하는 조직 정책")
         p.add_argument("--review-records", help="신뢰 정책과 대조할 검토/예외 기록")
+        p.add_argument("--expected-framework", choices=('SEF',), help="설정 파일 생성 없이 SEF 필수 경계를 추가 확인")
+        p.add_argument('--max-duration-seconds', type=float, help='수집·검사를 합한 전체 시간 예산 (기본 1200초, 재검증은 이전 한도 유지)')
+        p.add_argument('--max-input-bytes', type=int, help='검사할 작업 트리 파일 용량 예산 (기본 4GiB, 재검증은 이전 한도 유지; Git 이력·DB 사본 제외)')
+        p.add_argument('--exclude-source-path', action='append', help='검사에서 제외할 상대 디렉터리 (반복 가능, 제외 내역 기록)')
         p.add_argument("--execute-dynamic", action="store_true")
         p.add_argument("--creds-stdin", action="store_true")
         p.add_argument("--json", action="store_true")
@@ -408,6 +523,8 @@ def main(argv=None):
             return _init(args)
         if args.command == "doctor":
             return _doctor(args)
+        if args.command == 'plan':
+            return _plan(args)
         if args.command == "report":
             return _report(args)
         if args.command == 'discuss':

@@ -5,8 +5,9 @@ from pathlib import Path
 import stat
 
 from .models import content_hash
-from .source import EXCLUDED_DIRS, is_reparse, reject_reparse_path
+from .source import _is_reparse_stat, directory_exclusion_reason, exclusion_contract, is_reparse, reject_reparse_path
 from .snapshot import _handle_path
+from .execution import BudgetExceeded, checkpoint
 
 SIGNATURE_NAMES = frozenset({
     'build.gradle', 'build.gradle.kts', 'pom.xml', 'SefApplication.java',
@@ -20,6 +21,70 @@ MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_TOTAL_BYTES = 16 * 1024 * 1024
 
 
+def inspect_inputs(source):
+    """Metadata-only preparation; never substitutes for verified source inventory."""
+    root = reject_reparse_path(source).resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError('Source must be a directory')
+    total = count = discovered = 0
+    errors, exclusions, largest, candidates = [], [], [], []
+    try:
+        for directory, dirs, names in os.walk(root, followlinks=False,
+                onerror=lambda exc: errors.append({'type': 'input_plan_unreadable'})):
+            checkpoint()
+            base = Path(directory)
+            retained = []
+            for name in sorted(dirs):
+                path = base / name
+                relative = path.relative_to(root).as_posix()
+                reason = directory_exclusion_reason(relative)
+                if not reason and is_reparse(path):
+                    reason = 'reparse-entry'
+                    errors.append({'type': 'reparse_entry', 'path': relative})
+                if reason:
+                    exclusions.append({'path': relative, 'reason': reason})
+                else:
+                    retained.append(name)
+            dirs[:] = retained
+            discovered += len(dirs) + len(names)
+            if discovered > MAX_DISCOVERED:
+                errors.append({'type': 'input_plan_discovery_limit'})
+                break
+            for name in sorted(names):
+                checkpoint()
+                if name == '.git':
+                    continue
+                path = base / name
+                relative = path.relative_to(root).as_posix()
+                try:
+                    info = path.lstat()
+                    reparse = _is_reparse_stat(info)
+                    reason = directory_exclusion_reason(relative) if reparse else None
+                    if reason:
+                        exclusions.append({'path': relative, 'reason': reason})
+                        continue
+                    if not stat.S_ISREG(info.st_mode) or reparse:
+                        errors.append({'type': 'input_plan_nonregular', 'path': relative})
+                        continue
+                    count += 1
+                    total += info.st_size
+                    largest.append({'path': relative, 'bytes': info.st_size})
+                    largest = sorted(largest, key=lambda item: (-item['bytes'], item['path']))[:10]
+                    if (path.suffix.lower() in {'.dump', '.bak', '.log', '.zip', '.7z'}
+                            or relative.startswith(('outputs/', 'reports/'))):
+                        if len(candidates) < 100:
+                            candidates.append(relative)
+                except OSError:
+                    errors.append({'type': 'input_plan_unreadable', 'path': relative})
+    except BudgetExceeded as exc:
+        errors.append(exc.diagnostic)
+    return {'files': count, 'bytes': total, 'largest_files': largest,
+            'separate_review_candidates': candidates, 'errors': errors, 'exclusions': exclusions,
+            'exclusion_contract': exclusion_contract(), 'content_verified': False,
+            'status': 'incomplete' if errors else 'complete',
+            'notice': 'Metadata estimate only; excluded paths are outside this scan, not security-approved'}
+
+
 def collect_framework_signatures(source):
     """Hash only named controls/build descriptors; never clone history or hash assets.
 
@@ -30,11 +95,22 @@ def collect_framework_signatures(source):
     if not root.is_dir():
         raise ValueError('Source must be a directory')
     rows, errors, total, discovered, attempted = [], [], 0, 0, 0
+    exclusions, contract = [], exclusion_contract()
     exhausted = False
     for directory, dirs, names in os.walk(root, followlinks=False,
             onerror=lambda exc: errors.append({'type': 'preflight_discovery_incomplete'})):
         base = Path(directory)
-        dirs[:] = sorted(name for name in dirs if name not in EXCLUDED_DIRS and not is_reparse(base / name))
+        retained = []
+        for name in sorted(dirs):
+            relative = (base / name).relative_to(root).as_posix()
+            reason = directory_exclusion_reason(relative)
+            if is_reparse(base / name):
+                reason = 'reparse-entry'
+            if reason:
+                exclusions.append({'path': relative, 'reason': reason})
+            else:
+                retained.append(name)
+        dirs[:] = retained
         discovered += len(dirs) + len(names)
         if discovered > MAX_DISCOVERED:
             errors.append({'type': 'preflight_discovery_limit'})
@@ -77,5 +153,6 @@ def collect_framework_signatures(source):
     digest = content_hash(rows)
     return {'files': [row['path'] for row in rows], 'inventory': rows, 'errors': errors,
             'hash': digest, 'revision': digest, 'git': False, 'git_refs': [], 'scope': 'partial',
-            'scope_hash': content_hash({'source': str(root), 'scope': 'known-framework-signatures'}),
-            'selection': 'known-framework-signatures', 'exclusions': []}
+            'scope_hash': content_hash({'source': str(root), 'scope': 'known-framework-signatures',
+                                       'exclusion_contract': contract}),
+            'selection': 'known-framework-signatures', 'exclusions': exclusions, 'exclusion_contract': contract}

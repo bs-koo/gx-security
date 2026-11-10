@@ -473,6 +473,56 @@ class OptionalTests(unittest.TestCase):
                 'source_revision': self.inventory['revision'], 'scope_hash': self.inventory['scope_hash'],
                 'file_hashes': {row['path']: row['hash'] for row in self.inventory['inventory']}}
 
+    def test_relocation_scope_includes_current_exclusions_and_module_layout(self):
+        from gxsec.optional import execution_inventory, source_identity
+        from gxsec.snapshot import verified_snapshot
+        (self.source / 'package.json').write_text('{}', encoding='utf-8')
+        module = self.source / 'backend'
+        module.mkdir()
+        (module / 'pom.xml').write_text('<project/>', encoding='utf-8')
+        inventory = collect_source(self.source)
+        identity = source_identity(inventory, self.source)
+        self.assertEqual(identity.get('exclusion_contract'), inventory['exclusion_contract'])
+        self.assertIsNot(identity['exclusion_contract'], inventory['exclusion_contract'])
+        with verified_snapshot(self.source, inventory) as snap:
+            rebound, actual = execution_inventory(snap.path, identity)
+            self.assertEqual(rebound['scope_hash'], inventory['scope_hash'])
+            self.assertEqual(rebound['modules'], inventory['modules'])
+            self.assertNotEqual(actual['scope_hash'], inventory['scope_hash'])
+
+    def test_relocation_rejects_forged_or_obsolete_scope_even_when_bytes_match(self):
+        from gxsec.optional import execution_inventory
+        from gxsec.snapshot import verified_snapshot
+        from gxsec.source import EXCLUDED_DIRS
+        base = {'root': str(self.source).casefold(), 'scope': 'full',
+                'exclude': sorted(EXCLUDED_DIRS), 'modules': {}}
+        obsolete_contract = copy.deepcopy(self.inventory['exclusion_contract'])
+        obsolete_contract['relative_directory_paths'] = []
+        scopes = {
+            'forged': '0' * 64,
+            'before-exclusion-contract': content_hash(base),
+            'obsolete-exclusions': content_hash({**base, 'exclusion_contract': obsolete_contract}),
+        }
+        with verified_snapshot(self.source, self.inventory) as snap:
+            for label, scope in scopes.items():
+                with self.subTest(label=label), self.assertRaisesRegex(ValueError, 'scope does not derive'):
+                    execution_inventory(snap.path, {**self.source_identity(), 'scope_hash': scope})
+
+    def test_relocation_rejects_foreign_path_case_semantics(self):
+        from gxsec.optional import execution_inventory
+        from gxsec.snapshot import verified_snapshot
+        from gxsec.source import EXCLUDED_DIRS
+        contract = copy.deepcopy(self.inventory['exclusion_contract'])
+        contract['case_sensitive_paths'] = not contract['case_sensitive_paths']
+        foreign_scope = content_hash({'root': str(self.source).casefold(), 'scope': 'full',
+            'exclude': sorted(EXCLUDED_DIRS), 'modules': {}, 'exclusion_contract': contract})
+        with verified_snapshot(self.source, self.inventory) as snap:
+            # A foreign contract is never authority, even with a current scope copied beside it.
+            for scope in (foreign_scope, self.inventory['scope_hash']):
+                with self.subTest(scope=scope), self.assertRaisesRegex(ValueError, 'exclusion contract differs'):
+                    execution_inventory(snap.path, {**self.source_identity(), 'scope_hash': scope,
+                                                    'exclusion_contract': contract})
+
     def test_imported_evidence_accepts_verified_relocation_and_original_native_paths(self):
         from gxsec.optional import run_optional_checks
         from gxsec.snapshot import verified_snapshot
@@ -485,6 +535,26 @@ class OptionalTests(unittest.TestCase):
             self.assertEqual(checks[0]['status'], 'complete', checks)
             self.assertEqual(findings[0]['locations'][0]['path'], 'app.py')
             self.assertTrue(snap.verify())
+
+    def test_budget_exhausted_after_native_parse_preserves_only_incomplete_candidates(self):
+        import io
+        import gxsec.optional as optional
+        from gxsec.execution import session
+        self.evidence('trivy', self.trivy([{'Target': 'app.py', 'Class': 'lang-pkgs',
+            'Vulnerabilities': [{'VulnerabilityID': 'CVE-fixture', 'PkgName': 'fixture', 'Severity': 'HIGH'}]}]))
+        now = [0.0]
+        parse = optional.parse_native
+        def consume_budget(*args, **kwargs):
+            findings = parse(*args, **kwargs)
+            now[0] = 2.0
+            return findings
+        with session(1, max_input_bytes=1024, stream=io.StringIO(), clock=lambda: now[0]):
+            with patch.object(optional, 'parse_native', side_effect=consume_budget):
+                checks, findings = self.run_optional()
+        self.assertEqual(checks[0]['status'], 'incomplete')
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]['validation'], 'candidate')
+        self.assertTrue(any(error['type'] == 'execution_budget_exceeded' for error in checks[0]['errors']))
 
     def test_relocation_never_trusts_an_artifact_inside_original_source(self):
         import gxsec.optional as optional
