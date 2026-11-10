@@ -25,7 +25,7 @@ tags:
 cwe: [CWE-200, CWE-798]
 owasp: [A02:2021-Cryptographic-Failures]
 stacks: [spring-modern, jsp-legacy]
-version: "0.10.2"
+version: "0.10.3"
 author: sqisoft-security
 license: Proprietary
 ---

@@ -1,7 +1,7 @@
 {
   "name": "gx-security",
   "description": "One guided security entry for developers: automatic readiness, checks, result review and retesting with shared evidence and QA/PM reports.",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "author": {
     "name": "SQIsoft Security"
   },

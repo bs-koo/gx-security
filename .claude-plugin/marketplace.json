@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Guided project security checks with automatic readiness and shared evidence.",
-    "version": "0.10.2"
+    "version": "0.10.3"
   },
   "plugins": [
     {
       "name": "gx-security",
       "source": "./",
       "description": "One guided entry for readiness, security checks, result review and same-state retesting with developer/QA/PM reports.",
-      "version": "0.10.2",
+      "version": "0.10.3",
       "author": {
         "name": "bs-koo"
       },

@@ -132,7 +132,8 @@ def test_release_preserves_literal_mounts_security_options_and_state(case):
     assert 'type=bind,source=' + str(case[0]) + ',target=/workspace,readonly' in run
     assert 'type=bind,source=' + str(output) + ',target=/results' in run
     assert run[run.index(IMAGE_ID) + 1:] == ['release', '/workspace', '--profile', 'static-release',
-        '--state-dir', '/results/state', '--output', '/results/report', '--json']
+        '--state-dir', '/results/state', '--output', '/results/report',
+        '--max-duration-seconds', '1200', '--max-input-bytes', '4294967296', '--json']
     assert output.is_dir()
     encoded = next(value.split('=', 1)[1] for value in run if value.startswith('GXSEC_REPORT_CONTEXT_B64='))
     hint = json.loads(base64.b64decode(encoded).decode('utf-8'))
@@ -605,3 +606,42 @@ def test_discuss_show_forwards_only_saved_session_identity(case):
     run = calls(case)[-1]
     assert run[run.index(IMAGE_ID) + 1:] == ['discuss', 'previous-run', '--source', '/workspace',
         '--state-dir', '/results/state', '--session-id', 'session-123', '--json']
+
+
+def test_retest_omits_unset_limits_so_cli_can_restore_saved_run(case):
+    saved_temporary_run(case)
+    result = invoke(case, '-Action', 'retest', '-FindingId', 'GXSEC-123', '-RunId', 'run-example', '-Json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert '--max-duration-seconds' not in run and '--max-input-bytes' not in run
+    assert '--exclude-source-path' not in run
+
+
+def test_retest_forwards_only_explicit_limit_override(case):
+    saved_temporary_run(case)
+    result = invoke(case, '-Action', 'retest', '-FindingId', 'GXSEC-123', '-RunId', 'run-example',
+                    '-MaxDurationSeconds', '600', '-Json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert run[run.index('--max-duration-seconds') + 1] == '600'
+    assert '--max-input-bytes' not in run
+
+
+def test_plan_uses_metadata_only_mount_and_literal_exclusion(case):
+    result = invoke(case, '-Action', 'plan', '-ExcludeSourcePath', 'archive data', '-Json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert run[run.index(IMAGE_ID) + 1:] == ['plan', '/workspace', '--max-duration-seconds', '30',
+        '--exclude-source-path', 'archive data']
+    assert '--read-only' in run and run[run.index('--network') + 1] == 'none'
+    assert not any('target=/results' in item for item in run)
+    assert not (case[0] / '.gxsec-container').exists()
+
+
+@pytest.mark.parametrize('path', ['--profile=release', '../escape', '/absolute', 'C:/absolute',
+                                 'data//nested', 'data/../secret', 'data/*', '.git', 'data\\nested'])
+def test_invalid_selected_exclusion_is_rejected_before_docker(case, path):
+    result = invoke(case, '-Action', 'release', '-ExcludeSourcePath', path, '-Json')
+    assert result.returncode != 0
+    assert calls(case) == []
+    assert not (case[0] / '.gxsec-container').exists()

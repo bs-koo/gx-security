@@ -67,7 +67,7 @@ def _proposal(context):
 
 def _coverage_summary(check):
     coverage = check.get("coverage") or {}
-    scope = {"full": "전체", "diff": "변경분"}.get(coverage.get("scope"), "범위 미확인")
+    scope = {"full": "전체", "diff": "변경분", "selected": "선택한 앱 범위"}.get(coverage.get("scope"), "범위 미확인")
     return f"{coverage.get('scanned', 0)} / {coverage.get('eligible', 0)} 검사 단위 · {scope}"
 
 
@@ -177,6 +177,15 @@ def _markdown(run, qa=False):
              f"버전: {_md(run.get('source', {}).get('commit') or run.get('source', {}).get('hash'))}", "",
              "이 결과는 표시된 프로파일의 검사 범위에 한정됩니다. 최종 출시 승인은 조직 절차를 따릅니다.", "",
              "## 검사 범위와 미완료 항목", ""]
+    selected = run.get('source', {}).get('exclusion_contract', {}).get('selected_directory_paths', [])
+    metrics = run.get('execution_metrics', {})
+    if selected:
+        lines.extend(['별도 점검 대상으로 제외: ' + _md(selected), '',
+                      '선택한 앱 범위의 결과입니다. 제외된 자료의 안전을 확인한 결과가 아닙니다.', ''])
+    if metrics:
+        lines.extend(['실행 소요: ' + _md(metrics.get('elapsed_seconds')) + '초 · 읽기 처리량: '
+                      + _md(metrics.get('bytes_read')) + ' bytes', '',
+                      '단계별 소요·처리량은 result.json의 execution_metrics에서 확인합니다.', ''])
     framework = next((c.get("framework") for c in run.get("checks", []) if c.get("id") == "framework"), None)
     if isinstance(framework, dict):
         lines.extend(["SEF 기반: " + _md(framework.get("family", "unknown")) + " · " + _md(framework.get("variant", "undetermined")), "",
@@ -213,6 +222,8 @@ def _markdown(run, qa=False):
             context = run.get('execution_context')
             temporary_size = temporary_size_hint(context)
             resources = f' Docker 임시 저장공간은 -TemporarySize {temporary_size}로 유지해줘.' if temporary_size else ''
+            if selected:
+                resources += ' 원래 별도 점검 제외 경로와 선택 범위를 그대로 유지해줘: ' + str(selected) + '.'
             lines.extend(["재점검 요청(등록된 통합 스킬):", "",
                 _md(f"$gx-security 실행 {run.get('run_id', '미확인')}의 발견 {fid}를 "
                     f"원래 {run.get('profile', '미확인')} 프로파일과 기존 상태 저장소로 재검증해줘.{resources}"), ""])
@@ -283,13 +294,22 @@ def _html(run):
                  "BLOCK": "확인된 차단 사항을 수정하거나 조직의 위험 수용 절차를 진행하세요.",
                  "PASS": "표시된 검사 범위가 완료됐습니다. 조직의 최종 출시 절차를 진행하세요.",
                  "PASS_WITH_EXCEPTION": "승인된 예외의 범위·담당·만료일을 확인하고 출시 절차를 진행하세요."}.get(status, "검사 상태와 근거를 확인하세요.")
+    selected = run.get('source', {}).get('exclusion_contract', {}).get('selected_directory_paths', [])
+    execution_summary = '<section><h2>실행 범위·소요</h2>'
+    if selected:
+        execution_summary += '<p>선택한 앱 범위 검사입니다. 별도 점검 대상으로 제외: ' + esc(selected) + '</p>'
+    if run.get('execution_metrics'):
+        metrics = run['execution_metrics']
+        execution_summary += '<p>소요 ' + esc(metrics.get('elapsed_seconds')) + '초 · 읽기 ' + esc(metrics.get('bytes_read')) + ' bytes</p>'
+        execution_summary += '<details><summary>단계별 시간·처리량</summary><pre>' + esc(metrics) + '</pre></details>'
+    execution_summary += '</section>'
     return f"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="{html.escape(csp,quote=True)}"><title>gx-security · {esc(run.get('project_id'))}</title>
 <style>body{{overflow-wrap:anywhere}}</style>
 <style>:root{{color-scheme:light dark;font-family:system-ui,'Malgun Gothic',sans-serif;--accent:#34657b}}body{{max-width:1100px;margin:auto;padding:28px;line-height:1.65}}header{{border-bottom:3px solid var(--accent);padding-bottom:20px}}.meta{{font-size:.9rem}}.status{{font-size:1.45rem;font-weight:700}}article{{border-top:1px solid #8887;padding:20px 0;margin:18px 0}}table{{border-collapse:collapse;width:100%;font-size:.9rem}}th,td{{border-bottom:1px solid #8887;text-align:left;vertical-align:top;padding:12px 9px;overflow-wrap:anywhere}}.table-scroll{{overflow-x:auto}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}p,li{{max-width:75ch}}input,select{{font:inherit;padding:8px;max-width:95%}}h1,h2,h3{{text-wrap:balance;overflow-wrap:anywhere}}h2{{margin-top:35px}}summary{{cursor:pointer}}:focus-visible{{outline:3px solid var(--accent);outline-offset:3px}}::selection{{background:#cce6f0;color:#12303d}}[hidden]{{display:none}}a{{color:inherit}}@media(max-width:600px){{body{{padding:16px}}table{{min-width:620px}}input,select{{margin:6px 0}}}}@media(prefers-color-scheme:dark){{:root{{--accent:#8dcde2}}}}</style></head>
 <body><header><h1>{esc(run.get('project_id'))}</h1><p class="status">{esc(LABELS.get(status,status))} · {esc(status)}</p><p>{esc(next_step)}</p><p>프로파일 <strong>{esc(run.get('profile'))}</strong> · 실행 {esc(run.get('run_id'))}</p><p>대상 버전 {esc(run.get('source',{}).get('revision') or run.get('source',{}).get('hash') or run.get('source',{}).get('commit'))}</p><p>이 결과는 해당 프로파일과 버전의 검사 범위에 한정됩니다. 미완료와 예외를 함께 확인하세요.</p></header>
 <section><h2>PM 확인</h2><p>차단 {_text(len(gate.get('blockers',[])))}건 · 미완료 {_text(len(gate.get('incomplete',[])))}건 · 발견사항 {_text(len(run.get('findings',[])))}건</p><p>검토 후보는 취약점 확정 건수와 다릅니다. 개발자와 QA가 근거를 확인하고 결정을 기록합니다.</p><details><summary>판정 근거 자세히 보기</summary><pre>{esc(gate)}</pre></details></section>
-{_framework_html(run, esc)}<section><h2>검사 범위</h2><div class="table-scroll" role="region" aria-label="검사 범위 표" tabindex="0"><table><thead><tr><th>항목</th><th>실행 상태</th><th>범위</th><th>미완료 사유</th></tr></thead><tbody>{rows}</tbody></table></div><details><summary>파일 목록·엔진·검사 증거</summary><pre>{esc(run.get('checks',[]))}</pre></details></section>
+{execution_summary}{_framework_html(run, esc)}<section><h2>검사 범위</h2><div class="table-scroll" role="region" aria-label="검사 범위 표" tabindex="0"><table><thead><tr><th>항목</th><th>실행 상태</th><th>범위</th><th>미완료 사유</th></tr></thead><tbody>{rows}</tbody></table></div><details><summary>파일 목록·엔진·검사 증거</summary><pre>{esc(run.get('checks',[]))}</pre></details></section>
 <section><h2>개발자 조치</h2><p>같은 규칙의 위치를 묶었습니다. 묶음을 펼쳐 각 위치의 근거를 확인하세요.</p><label>검색 <input id="q" type="search" placeholder="항목·위치·담당 검색"></label> <label>등급 <select id="severity"><option value="">전체</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option><option>Info</option><option value="None">미분류</option></select></label>{''.join(cards) or '<p>발견사항 없음. 검사 완료 상태를 확인하세요.</p>'}</section>
 <section><h2>QA 확인</h2><p>qa-checklist.md에 계정·리소스·정상 기능·원래 취약 경로 확인을 기록합니다. 미확인은 완료가 아닙니다.</p><h2>검토·예외</h2><pre>{esc(run.get('reviews') or '등록된 검토 기록 없음')}\n{esc(run.get('exceptions') or '등록된 예외 없음')}</pre></section>
 <footer><p>원본 구조화 결과 result.json · 코드 연동 results.sarif · 검토 묶음 review-packets.json · 기반 관측 framework-baseline.json · 무결성 목록 manifest.json</p></footer><script>{_FILTER_SCRIPT}</script></body></html>"""

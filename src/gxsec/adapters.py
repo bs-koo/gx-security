@@ -23,6 +23,9 @@ from .policy import _trusted
 from .snapshot import verified_snapshot
 from .contextual import contextualize_findings
 from .triage import enrich_framework_findings
+from .diagnostics import MAX_JSON_BYTES, exception_diagnostic, process_failure, semgrep_diagnostics
+from .execution import BudgetExceeded, checkpoint, phase, timeout_for
+from .processes import bounded_run as _process
 
 def _plugin_root():
     candidates = []
@@ -57,9 +60,9 @@ def _run(cmd, *, cwd, timeout=300, extra_env=None):
     with tempfile.TemporaryDirectory(prefix='gxsec-home-') as home:
         environment = _env(extra_env)
         environment.update({'HOME': home, 'USERPROFILE': home, 'XDG_CACHE_HOME': str(Path(home) / 'cache')})
-        return subprocess.run(
-            [str(x) for x in cmd], cwd=str(cwd), capture_output=True, text=True,
-            encoding='utf-8', errors='replace', timeout=max(1, min(float(timeout), 1200)),
+        return _process(
+            [str(x) for x in cmd], cwd=str(cwd),
+            timeout=timeout_for(max(1, min(float(timeout), 1200))),
             shell=False, env=environment,
         )
 
@@ -104,29 +107,21 @@ def probe_engine(name, options, source):
     return redact(check)
 
 
-def _safe_diagnostic(item):
-    item = item if isinstance(item, dict) else {}
-    kind = str(item.get('type', 'unclassified'))
-    if not re.fullmatch(r'[A-Za-z0-9_.-]{1,80}', kind):
-        kind = 'unclassified'
-    result = {'type': 'semgrep_diagnostic', 'error_type': kind}
-    if type(item.get('code')) is int:
-        result['code'] = item['code']
-    return result
-
 def _json_result(result, check, expected=dict):
     if result.returncode not in (0, 1):
-        check['errors'].append(
-            {'type': 'engine_failed', 'returncode': result.returncode, 'message': 'Engine execution failed; raw diagnostics omitted'},
-        )
-        return None
+        check['errors'].append(process_failure(result))
+        check['coverage']['partial'] = True
     try:
+        if not isinstance(result.stdout, (str, bytes)) or len(result.stdout) > MAX_JSON_BYTES:
+            raise ValueError('Engine JSON output exceeds its bound')
+        if isinstance(result.stdout, str) and len(result.stdout.encode('utf-8')) > MAX_JSON_BYTES:
+            raise ValueError('Engine JSON output exceeds its bound')
         data = json.loads(result.stdout)
         if not isinstance(data, expected):
             raise ValueError('Unexpected JSON shape')
         return data
-    except (ValueError, TypeError) as exc:
-        check['errors'].append({'type': 'malformed_output', 'message': str(exc)})
+    except (ValueError, TypeError, RecursionError) as exc:
+        check['errors'].append(exception_diagnostic('malformed_output', exc))
         return None
 
 def _path(path, source):
@@ -315,10 +310,19 @@ def _sast(source, config, inventory, profile):
             result = _run(args, cwd=ROOT, timeout=options.get('timeout_seconds', 300))
             data = _json_result(result, check)
             if data is not None:
-                if not isinstance(data.get('results'), list) or not isinstance(data.get('errors'), list) or (not isinstance(data.get('paths', {}).get('scanned'), list)):
-                    raise ValueError('Semgrep execution/coverage metadata missing')
-                check['errors'] += [_safe_diagnostic(item) for item in data['errors']]
-                scanned = [_path(p, source) for p in data['paths']['scanned']]
+                if isinstance(data.get('errors'), list):
+                    check['errors'] += semgrep_diagnostics(data['errors'], source, inventory['files'])
+                else:
+                    check['errors'].append({'type': 'execution_metadata_missing'})
+                paths = data.get('paths')
+                scanned_paths = paths.get('scanned') if isinstance(paths, dict) else None
+                if not isinstance(scanned_paths, list):
+                    check['errors'].append({'type': 'coverage_metadata_missing'})
+                    check['coverage']['partial'] = True
+                    scanned_paths = []
+                if not isinstance(data.get('results'), list):
+                    raise ValueError('Semgrep result metadata missing')
+                scanned = [_path(p, source) for p in scanned_paths]
                 check['coverage'].update(
                     {
                         'scanned': len(set(scanned) & set(eligible)),
@@ -335,7 +339,7 @@ def _sast(source, config, inventory, profile):
                     try:
                         snippet, context, symbol, encoding, observed_file_hash = _source_slice(source, item, cache)
                     except (OSError, ValueError) as exc:
-                        check['errors'].append({'type': 'source_evidence_unavailable', 'message': str(exc)})
+                        check['errors'].append(exception_diagnostic('source_evidence_unavailable', exc))
                         continue
                     relative = _path(item.get('path', ''), source)
                     rule = item.get('check_id', 'unknown')
@@ -366,7 +370,7 @@ def _sast(source, config, inventory, profile):
                     finding['file_hash'] = observed_file_hash
                     findings.append(finding)
         except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
-            check['errors'].append({'type': 'sast_failed', 'message': str(exc)})
+            check['errors'].append(exception_diagnostic('sast_failed', exc))
     elif command and (not eligible):
         check['errors'].append({'type': 'empty_scope', 'message': 'No supported SAST source files'})
     elif not command and options.get('fallback', True):
@@ -575,7 +579,7 @@ def _sca(source, config, inventory, profile):
                                         rule=vuln.get('id', 'unknown-advisory'),
                                         path=origin_path,
                                         severity=sev,
-                                        validation='source-verified',
+                                        validation='candidate' if result.returncode not in (0, 1) else 'source-verified',
                                         identity={
                                             'name': p.get('name'),
                                             'version': p.get('version'),
@@ -606,7 +610,7 @@ def _sca(source, config, inventory, profile):
                         )
                     _osv_matching_coverage(check, result.stderr, database_input, actual_hashes)
             except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
-                check['errors'].append({'type': 'sca_failed', 'message': str(exc)})
+                check['errors'].append(exception_diagnostic('sca_failed', exc))
     check['status'] = 'complete' if not check['errors'] and inputs and (check['coverage']['scanned'] == len(inputs)) else 'incomplete'
     check['findings'] = [f['finding_id'] for f in findings]
     return (check, findings)
@@ -711,11 +715,16 @@ def _secrets(source, config, inventory, profile):
                 try:
                     output = _run(args, cwd=Path(temp), timeout=options.get('timeout_seconds', 300))
                     if output.returncode not in (0, 1):
-                        raise ValueError('Gitleaks execution failed')
+                        check['errors'].append({**process_failure(output), 'mode': mode})
+                        check['coverage']['partial'] = True
                     # Empty/missing report is not evidence of a clean scan.
                     if not report.is_file():
                         raise ValueError('Gitleaks did not produce a JSON report')
-                    data = json.loads(report.read_text(encoding='utf-8-sig'))
+                    with report.open('rb') as handle:
+                        raw_report = handle.read(MAX_JSON_BYTES + 1)
+                    if len(raw_report) > MAX_JSON_BYTES:
+                        raise ValueError('Gitleaks JSON report exceeds its bound')
+                    data = json.loads(raw_report.decode('utf-8-sig'))
                     if not isinstance(data, list):
                         raise ValueError('Gitleaks JSON report must be an array')
                     for item in data:
@@ -739,11 +748,12 @@ def _secrets(source, config, inventory, profile):
                             observations=[{'engine': 'gitleaks', 'mode': mode, 'commit': item.get('Commit'), 'line': item.get('StartLine')}],
                         )
                         findings.append(f)
-                    check['coverage']['scanned'] += 1
-                    if mode == 'git':
-                        check['coverage']['history_complete'] = not inventory.get('shallow')
+                    if output.returncode in (0, 1):
+                        check['coverage']['scanned'] += 1
+                        if mode == 'git':
+                            check['coverage']['history_complete'] = not inventory.get('shallow')
                 except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
-                    check['errors'].append({'type': 'secret_scan_failed', 'mode': mode, 'message': str(exc)})
+                    check['errors'].append({**exception_diagnostic('secret_scan_failed', exc), 'mode': mode})
     merged = {}
     for f in findings:
         fp = f['fingerprint']
@@ -769,13 +779,16 @@ def _run_snapshot_checks(source, config, inventory, profile):
     framework_rules_hash = hashlib.sha256(Path(framework_analyzer.__file__).read_bytes()).hexdigest()
     for check_id, runner in (('sast', _sast), ('sca', _sca), ('secrets', _secrets), ('framework', run_framework_check)):
         try:
-            if not config['_snapshot_object'].verify():
-                raise ValueError('Private static snapshot bytes changed before engine execution')
-            check, items = runner(source, config, inventory, profile)
+            with phase('engine-' + check_id):
+                if not config['_snapshot_object'].verify():
+                    raise ValueError('Private static snapshot bytes changed before engine execution')
+                check, items = runner(source, config, inventory, profile)
+        except BudgetExceeded as exc:
+            check, items = make_check(check_id, errors=[exc.diagnostic]), []
         except Exception as exc:
             check = make_check(
                 check_id,
-                errors=[{'type': 'adapter_error', 'message': str(exc)}],
+                errors=[exception_diagnostic('adapter_error', exc)],
             )
             items = []
         if inventory.get('errors'):
@@ -799,20 +812,32 @@ def _run_snapshot_checks(source, config, inventory, profile):
             'framework_model': framework_identity if check_id == 'framework' else None})
         checks.append(redact(check))
         findings.extend(redact(items))
-    from .optional import run_optional_checks
-    optional_checks, optional_findings = run_optional_checks(source, config, profile)
+    from .optional import ENGINES, run_optional_checks
+    try:
+        with phase('engine-optional'):
+            optional_checks, optional_findings = run_optional_checks(source, config, profile)
+    except BudgetExceeded as exc:
+        requested = config.get('tools') or {}
+        trusted = (config.get('_trusted_policy') or {}).get('optional') or {}
+        optional_checks = [make_check(name, errors=[exc.diagnostic]) for name in ENGINES
+            if (requested.get(name) or {}).get('enabled') or (trusted.get(name) or {}).get('enabled')
+            or (trusted.get(name) or {}).get('required')]
+        optional_findings = []
     checks.extend(optional_checks)
     findings.extend(optional_findings)
     try:
+        checkpoint()
         if not config['_snapshot_object'].verify():
             raise ValueError('Private snapshot changed before contextual review')
         findings = contextualize_findings(source, inventory, findings)
         findings = enrich_framework_findings(findings, inventory)
-    except (OSError, ValueError, RuntimeError, TypeError):
+    except (OSError, ValueError, RuntimeError, TypeError) as exc:
         framework = next(c for c in checks if c['id'] == 'framework')
         framework['status'] = 'incomplete'
         framework['errors'].append({'type': 'context_analysis_failed',
             'message': 'Source context could not be completed; candidates remain unvalidated.'})
+        if isinstance(exc, BudgetExceeded):
+            framework['errors'].append(exc.diagnostic)
     initial_hashes = {row['path']: row['hash'] for row in inventory.get('inventory', [])}
     contracts = {check['id']: content_hash({'engine': check.get('engine', {}),
         'coverage_signature': check.get('coverage', {}).get('signature')}) for check in checks}
@@ -839,12 +864,18 @@ def run_static_checks(source: Path, config: dict, profile: str) -> tuple[list, l
             runtime['_snapshot_object'] = snapshot
             runtime['_snapshot_provenance'] = snapshot.provenance
             checks, findings = _run_snapshot_checks(snapshot.path, runtime, inventory, profile)
-            stable = snapshot.verify()
+            budget_error = None
+            try:
+                stable = snapshot.verify()
+            except BudgetExceeded as exc:
+                stable, budget_error = False, exc.diagnostic
+                snapshot.provenance['stable_after_scan'] = False
+                snapshot.provenance['verification_incomplete'] = True
             for check in checks:
                 check['snapshot'] = copy.deepcopy(snapshot.provenance)
                 if not stable:
                     check['status'] = 'incomplete'
-                    check['errors'].append({'type': 'snapshot_changed', 'message': 'Private static input bytes changed during scanning'})
+                    check['errors'].append(budget_error or {'type': 'snapshot_changed', 'message': 'Private static input bytes changed during scanning'})
             return checks, findings
     except (OSError, ValueError, RuntimeError) as exc:
         provenance = {'copy_verified': False, 'stable_after_scan': False, 'digest': None, 'source_hash': inventory.get('hash')}

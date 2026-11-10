@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Source,
     [string]$Action='release',
     [string]$Profile,
-    [string]$Image='gx-security:0.10.2',
+    [string]$Image='gx-security:0.10.3',
     [string]$Output,
     [string]$FindingId,
     [string]$Base,
@@ -14,6 +14,10 @@ param(
     [string]$ReviewRecords,
     [string]$ExpectedFramework,
     [string]$TemporarySize='512m',
+    [ValidateRange(1,86400)][int]$MaxDurationSeconds=1200,
+    [Parameter(HelpMessage='Working-tree file byte budget; Git history and advisory database copies are limited separately by TemporarySize.')]
+    [ValidateRange(1,1099511627776)][long]$MaxInputBytes=4294967296,
+    [string[]]$ExcludeSourcePath,
     [switch]$Json
 )
 $ErrorActionPreference='Stop'
@@ -161,7 +165,7 @@ if (-not $PSBoundParameters.ContainsKey('Profile')) {
     if ($Action -eq 'check') { $Profile = 'check' }
     elseif ($Action -ne 'retest') { $Profile = 'static-release' }
 }
-$validArguments = $Action -in @('doctor','check','release','retest','discuss') -and
+$validArguments = $Action -in @('doctor','plan','check','release','retest','discuss') -and
     (-not $forwardProfile -or $Profile -in @('check','static-release','release')) -and
     $Image -match '^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,254}$' -and
     $TemporarySize -cin @('512m','1g','2g','4g')
@@ -193,6 +197,21 @@ if (($PSBoundParameters.ContainsKey('Policy') -and $Action -notin @('check','rel
         ($PSBoundParameters.ContainsKey('ExpectedFramework') -and
             ($ExpectedFramework -cne 'SEF' -or $Action -notin @('check','release','retest')))) {
     $validArguments = $false
+}
+if (($PSBoundParameters.ContainsKey('MaxDurationSeconds') -and $Action -notin @('plan','check','release','retest')) -or
+        ($PSBoundParameters.ContainsKey('MaxInputBytes') -and $Action -notin @('check','release','retest'))) {
+    $validArguments = $false
+}
+if ($PSBoundParameters.ContainsKey('ExcludeSourcePath')) {
+    if ($Action -notin @('plan','check','release','retest') -or
+            $ExcludeSourcePath.Count -lt 1 -or $ExcludeSourcePath.Count -gt 64) { $validArguments = $false }
+    foreach ($relativePath in $ExcludeSourcePath) {
+        if (-not $relativePath -or $relativePath.Length -gt 512 -or
+                $relativePath -match '^[/-]|[\\:*?\[\]\x00-\x1F]' -or
+                @($relativePath.Split('/') | Where-Object { $_ -cin @('','.','..','.git') }).Count -gt 0) {
+            $validArguments = $false
+        }
+    }
 }
 if (-not $validArguments) {
     Stop-Preparation 'invalid_arguments' 'The action or its arguments are invalid.' 'Use FindingId for retest, RunId for retest/discuss, Base for check, and SessionId/Record for discuss.'
@@ -310,7 +329,7 @@ if ($imageParts[1] -ne 'linux') {
 $dockerArguments = @('run','--rm','--pull','never','--network','none','--read-only','--cap-drop','ALL',
     '--security-opt','no-new-privileges','--tmpfs',"/tmp:rw,nosuid,nodev,size=$TemporarySize",
     '--mount',"type=bind,source=$resolvedSource,target=/workspace,readonly")
-if ($Action -ne 'doctor') {
+if ($Action -notin @('doctor','plan')) {
     try { if ($Action -ne 'discuss') { New-Item -ItemType Directory -Path $resolvedOutput -Force | Out-Null } }
     catch { Stop-Preparation 'invalid_output' 'The results directory could not be prepared.' 'Select a writable results directory.' }
     $dockerArguments += @('--mount',"type=bind,source=$resolvedOutput,target=/results")
@@ -339,6 +358,11 @@ if ($Action -in @('check','release','retest')) {
 }
 $dockerArguments += @($imageParts[0],$Action)
 if ($Action -eq 'doctor') { $dockerArguments += @('--source','/workspace','--json') }
+elseif ($Action -eq 'plan') {
+    $planLimit = if ($PSBoundParameters.ContainsKey('MaxDurationSeconds')) { $MaxDurationSeconds } else { 30 }
+    $dockerArguments += @('/workspace','--max-duration-seconds',[string]$planLimit)
+    foreach ($relativePath in $ExcludeSourcePath) { $dockerArguments += @('--exclude-source-path',$relativePath) }
+}
 elseif ($Action -eq 'discuss') {
     $dockerArguments += @($RunId,'--source','/workspace','--state-dir','/results/state')
     if ($PSBoundParameters.ContainsKey('SessionId')) { $dockerArguments += @('--session-id',$SessionId) }
@@ -355,6 +379,13 @@ else {
     if ($PSBoundParameters.ContainsKey('Policy')) { $dockerArguments += @('--policy','/trusted/policy.json') }
     if ($PSBoundParameters.ContainsKey('ReviewRecords')) { $dockerArguments += @('--review-records','/trusted/reviews.json') }
     if ($PSBoundParameters.ContainsKey('ExpectedFramework')) { $dockerArguments += @('--expected-framework',$ExpectedFramework) }
+    if ($Action -ne 'retest' -or $PSBoundParameters.ContainsKey('MaxDurationSeconds')) {
+        $dockerArguments += @('--max-duration-seconds',[string]$MaxDurationSeconds)
+    }
+    if ($Action -ne 'retest' -or $PSBoundParameters.ContainsKey('MaxInputBytes')) {
+        $dockerArguments += @('--max-input-bytes',[string]$MaxInputBytes)
+    }
+    foreach ($relativePath in $ExcludeSourcePath) { $dockerArguments += @('--exclude-source-path',$relativePath) }
     if ($Json) { $dockerArguments += @('--json') }
 }
 & $dockerPath @dockerArguments

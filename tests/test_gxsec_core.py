@@ -323,8 +323,8 @@ def test_dirty_git_tree_uses_content_revision_for_review_binding(tmp_path, monke
 @pytest.mark.parametrize('component', ['runs', 'state.sqlite3', 'state.sqlite3-journal'])
 def test_state_rejects_symlink_storage_components(tmp_path, monkeypatch, component):
     base=tmp_path/'state';base.mkdir()
-    original=Path.is_symlink
-    monkeypatch.setattr(Path,'is_symlink',lambda path: str(path)==str(base/component) or original(path))
+    original=source.is_reparse
+    monkeypatch.setattr(state,'is_reparse',lambda path: str(path)==str(base/component) or original(path))
     with pytest.raises(ValueError,match='symlink'):
         state.Store(base)
 
@@ -370,8 +370,8 @@ def test_narrower_eligible_scope_cannot_close_prior_findings(tmp_path):
 
 def test_reparse_entries_are_not_traversed_or_used_for_state(tmp_path,monkeypatch):
     linked=tmp_path/'junction';linked.mkdir();(linked/'secret.java').write_text('private')
-    original=getattr(Path,'is_junction',lambda _:False)
-    monkeypatch.setattr(Path,'is_junction',lambda p: p==linked or original(p),raising=False)
+    original=source.is_reparse
+    monkeypatch.setattr(source,'is_reparse',lambda p: p==linked or original(p))
     inventory=source.collect_source(tmp_path)
     assert 'junction/secret.java' not in inventory['files'] and inventory['errors']
     with pytest.raises(ValueError):state.Store(linked)

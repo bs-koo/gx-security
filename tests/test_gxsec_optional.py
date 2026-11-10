@@ -536,6 +536,26 @@ class OptionalTests(unittest.TestCase):
             self.assertEqual(findings[0]['locations'][0]['path'], 'app.py')
             self.assertTrue(snap.verify())
 
+    def test_budget_exhausted_after_native_parse_preserves_only_incomplete_candidates(self):
+        import io
+        import gxsec.optional as optional
+        from gxsec.execution import session
+        self.evidence('trivy', self.trivy([{'Target': 'app.py', 'Class': 'lang-pkgs',
+            'Vulnerabilities': [{'VulnerabilityID': 'CVE-fixture', 'PkgName': 'fixture', 'Severity': 'HIGH'}]}]))
+        now = [0.0]
+        parse = optional.parse_native
+        def consume_budget(*args, **kwargs):
+            findings = parse(*args, **kwargs)
+            now[0] = 2.0
+            return findings
+        with session(1, max_input_bytes=1024, stream=io.StringIO(), clock=lambda: now[0]):
+            with patch.object(optional, 'parse_native', side_effect=consume_budget):
+                checks, findings = self.run_optional()
+        self.assertEqual(checks[0]['status'], 'incomplete')
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]['validation'], 'candidate')
+        self.assertTrue(any(error['type'] == 'execution_budget_exceeded' for error in checks[0]['errors']))
+
     def test_relocation_never_trusts_an_artifact_inside_original_source(self):
         import gxsec.optional as optional
         from gxsec.snapshot import verified_snapshot

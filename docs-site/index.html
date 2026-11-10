@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
-<meta name="description" content="GX Security 0.10.2 프리뷰 작업본. 한 번의 요청에서 준비 확인, 정적 보안 점검, 문맥 검토와 보고서까지. 실행기·스킬 등록과 최초 실행 환경 준비가 필요합니다.">
+<meta name="description" content="GX Security 0.10.3 프리뷰 작업본. 한 번의 요청에서 준비 확인, 정적 보안 점검, 문맥 검토와 보고서까지. 실행기·스킬 등록과 최초 실행 환경 준비가 필요합니다.">
 <title>GX Security — 한 번의 요청으로 시작하는 보안 점검</title>
 <style>
 /* Existing institutional identity. Tone: variance 3 / motion 2 / density 5.
@@ -52,7 +52,7 @@
 <main id="main" tabindex="-1">
   <div class="wrap">
     <aside class="preview" aria-label="버전 및 공개 상태 안내">
-      <strong>0.10.2 프리뷰 작업본</strong>
+      <strong>0.10.3 프리뷰 작업본</strong>
       <p><strong>통합 진입점 · 스킬 22개</strong>를 제공합니다. 실행기·스킬 패키지를 함께 등록하고 검사 실행 환경은 처음 한 번 준비합니다.</p>
     </aside>
   </div>
@@ -80,7 +80,7 @@
           <label class="field-label" for="request-output">개발 도구에 붙여 넣을 요청문</label>
           <textarea class="request-output" id="request-output" rows="4" readonly spellcheck="false" aria-describedby="task-note copy-feedback">/gx-security:gx-security 이 프로젝트를 출시 전에 보안 점검해줘.</textarea>
           <button class="button composer__copy" id="copy-request" type="button"><svg class="ico" aria-hidden="true"><use href="#i-copy"/></svg>요청 예시 복사</button>
-          <p class="feedback" id="copy-feedback" role="status" aria-live="polite" aria-atomic="true">0.10.2이 등록된 Claude Code에 붙여 넣으세요.</p>
+          <p class="feedback" id="copy-feedback" role="status" aria-live="polite" aria-atomic="true">0.10.3이 등록된 Claude Code에 붙여 넣으세요.</p>
           <p class="task-note" id="task-note">기본은 정적 출시 점검입니다. 실행 중인 서비스에 공격 요청을 보내지 않습니다.</p>
         </div>
         <noscript><p class="task-note">예시 선택과 자동 복사에는 JavaScript가 필요합니다. 위 기본 요청문을 직접 선택해 복사할 수 있습니다.</p></noscript>
@@ -110,7 +110,7 @@
       </div>
       <div class="setup-grid">
         <dl class="setup-list">
-          <div><dt>플러그인 등록 전</dt><dd><a href="https://github.com/bs-koo/gx-security/blob/main/README.md#설치와-배포-상태">설치·배포 상태</a>를 확인합니다. 이 페이지의 통합 요청에는 0.10.2 설치·등록이 필요합니다.</dd></div>
+          <div><dt>플러그인 등록 전</dt><dd><a href="https://github.com/bs-koo/gx-security/blob/main/README.md#설치와-배포-상태">설치·배포 상태</a>를 확인합니다. 이 페이지의 통합 요청에는 0.10.3 설치·등록이 필요합니다.</dd></div>
           <div><dt>실행 환경 준비됨</dt><dd>직접 실행 환경 또는 준비된 Windows Docker를 사용합니다. Docker 경로에는 호스트 Python이 필요 없습니다.</dd></div>
           <div><dt>Docker만 설치됨</dt><dd>Docker 실행 상태와 고정 Linux 이미지까지 실제로 확인합니다.</dd></div>
           <div><dt>실행 환경 없음</dt><dd>부족 항목과 일회성 설치 경로를 안내합니다. OS 설치·이미지 pull·DB 준비를 알림 없이 진행하지 않습니다.</dd></div>
@@ -175,7 +175,7 @@
     <div class="wrap">
       <h2 id="faq-title">시작 전에 자주 묻는 것</h2>
       <div class="faq">
-        <details><summary>공개 버전을 설치하면 통합 요청을 바로 쓸 수 있나요?</summary><p>0.10.2 프리뷰 작업본의 실행기·스킬 패키지를 함께 설치·등록하면 통합 요청을 사용할 수 있습니다. 기존 설치자는 업데이트 후 세션을 다시 시작합니다. Codex는 전체 패키지를 보관하고 <a href="https://github.com/bs-koo/gx-security/blob/main/USAGE.md#codex-첫-등록--pc에서-한-번">일회성 등록 스크립트</a>로 연결합니다. 검사에는 고정 Docker 이미지 또는 검증된 직접 실행 환경을 별도로 준비해야 하며, 이미지의 자동 다운로드는 제공하지 않습니다.</p></details>
+        <details><summary>공개 버전을 설치하면 통합 요청을 바로 쓸 수 있나요?</summary><p>0.10.3 프리뷰 작업본의 실행기·스킬 패키지를 함께 설치·등록하면 통합 요청을 사용할 수 있습니다. 기존 설치자는 업데이트 후 세션을 다시 시작합니다. Codex는 전체 패키지를 보관하고 <a href="https://github.com/bs-koo/gx-security/blob/main/USAGE.md#codex-첫-등록--pc에서-한-번">일회성 등록 스크립트</a>로 연결합니다. 검사에는 고정 Docker 이미지 또는 검증된 직접 실행 환경을 별도로 준비해야 하며, 이미지의 자동 다운로드는 제공하지 않습니다.</p></details>
         <details><summary>프로젝트마다 setup이나 설정 파일이 필요한가요?</summary><p>별도 setup·init·설정 생성은 필수가 아닙니다. 기존 환경·설정·이력을 재사용하며, 설정이 없으면 기본값으로 진행합니다. 조직의 필수 입력과 보호된 정책은 별도로 충족해야 합니다. 기본 Windows Docker 경로는 외부 정책·DB mount를 자동 제공하지 않습니다.</p></details>
         <details><summary>매번 목적이나 설치 여부를 다시 묻나요?</summary><p>“출시 전에 보안 점검해줘”처럼 목적과 대상이 분명하면 진행합니다. 목적 없는 단독 호출, 여러 검사 대상이나 재검증 항목 중 선택이 필요한 경우에만 짧게 확인합니다. 같은 범위에서 이미 받은 답과 설치 선택은 반복해서 묻지 않습니다.</p></details>
         <details><summary>“보안 점검해줘”가 서비스 공격까지 포함하나요?</summary><p>일반·출시 전 요청의 기본값은 <code>static-release</code>입니다. 실행 중인 서비스에 능동 공격 요청을 보내지 않습니다. 동적 검사, 소스 수정, 외부 전송·배포는 현재 요청과 기존 정책의 권한 범위 안에서만 수행합니다.</p></details>
@@ -192,11 +192,11 @@
       <nav class="footer__links" aria-label="공개 저장소와 참고 문서">
         <a href="https://github.com/bs-koo/gx-security"><svg class="ico" aria-hidden="true"><use href="#i-source"/></svg>GitHub 저장소</a>
         <a href="https://github.com/bs-koo/gx-security/blob/main/README.md"><svg class="ico" aria-hidden="true"><use href="#i-book"/></svg>시작 안내 · README</a>
-        <a href="https://github.com/bs-koo/gx-security/blob/main/USAGE.md"><svg class="ico" aria-hidden="true"><use href="#i-book"/></svg>상세 사용법 · 0.10.2 프리뷰</a>
+        <a href="https://github.com/bs-koo/gx-security/blob/main/USAGE.md"><svg class="ico" aria-hidden="true"><use href="#i-book"/></svg>상세 사용법 · 0.10.3 프리뷰</a>
         <a href="https://github.com/bs-koo/gx-security/blob/main/REFERENCE.md"><svg class="ico" aria-hidden="true"><use href="#i-book"/></svg>기존 전문 명령 참고서</a>
       </nav>
     </div>
-    <p class="footer__note">0.10.2 프리뷰 작업본 · 2026-11-05. 이 페이지의 요청문과 경로는 사용법 예시이며, 실제 사업 소스·결함 위치·검사 결과를 포함하지 않습니다.</p>
+    <p class="footer__note">0.10.3 프리뷰 작업본 · 2026-11-10. 이 페이지의 요청문과 경로는 사용법 예시이며, 실제 사업 소스·결함 위치·검사 결과를 포함하지 않습니다.</p>
   </div>
 </footer>
 <script>
@@ -224,7 +224,7 @@
     const prefix = activeHost === 'claude' ? '/gx-security:gx-security' : '$gx-security';
     output.value = prefix + ' ' + task.request;
     note.textContent = task.note;
-    feedback.textContent = announce ? hostName() + ' · ' + taskSelect.options[taskSelect.selectedIndex].text + ' 예시로 변경했습니다.' : '0.10.2이 등록된 ' + hostName() + '에 붙여 넣으세요.';
+    feedback.textContent = announce ? hostName() + ' · ' + taskSelect.options[taskSelect.selectedIndex].text + ' 예시로 변경했습니다.' : '0.10.3이 등록된 ' + hostName() + '에 붙여 넣으세요.';
   }
   function selectHost(tab, focus = false) {
     activeHost = tab.dataset.host;
@@ -256,7 +256,7 @@
     try {
       if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') throw new Error('Clipboard unavailable');
       await navigator.clipboard.writeText(request);
-      if (revision === requestRevision) feedback.textContent = '요청 예시를 복사했습니다. 0.10.2이 등록된 ' + destination + '에 붙여 넣으세요.';
+      if (revision === requestRevision) feedback.textContent = '요청 예시를 복사했습니다. 0.10.3이 등록된 ' + destination + '에 붙여 넣으세요.';
     } catch (_) {
       if (revision !== requestRevision) return;
       output.focus();

@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 import copy
 import hashlib
+import json
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -11,6 +12,8 @@ import subprocess
 import tempfile
 
 from .models import content_hash
+from .execution import checkpoint, phase, timeout_for
+from .diagnostics import exception_diagnostic, process_failure
 from .source import directory_exclusion_reason, exclusion_contract, is_reparse, reject_reparse_path, runtime_environment, trusted_runtime_tool
 
 
@@ -51,14 +54,21 @@ def _copy_file(root, relative, expected, destination):
         raise ValueError('Inventory input is not a regular file')
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     digest = hashlib.sha256()
-    flags = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOFOLLOW', 0)
+    flags = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
     with os.fdopen(os.open(original, flags), 'rb') as source_handle:
         opened = os.fstat(source_handle.fileno())
         _handle_path(source_handle).relative_to(root)
-        if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+        if (not stat.S_ISREG(opened.st_mode)
+                or (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+                != (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)):
             raise ValueError('Source file changed while opening the copy handle')
+        copied_size = 0
         with destination.open('xb') as copied:
             for chunk in iter(lambda: source_handle.read(1024 * 1024), b''):
+                copied_size += len(chunk)
+                checkpoint(bytes_read=len(chunk))
+                if copied_size > opened.st_size:
+                    raise ValueError('Source bytes changed while copying')
                 copied.write(chunk)
                 digest.update(chunk)
             copied.flush()
@@ -73,16 +83,72 @@ def _copy_file(root, relative, expected, destination):
     if destination.stat().st_nlink != 1:
         raise ValueError('Snapshot files must not share hard links')
     destination.chmod(0o444)
+    checkpoint(files=1)
+
+
+def _private_git_config(root, home):
+    """Pass exact validated source ownership exceptions to Git child processes."""
+    root = reject_reparse_path(root).resolve(strict=True)
+    home = reject_reparse_path(home).resolve(strict=True)
+    allowed = [root]
+    git_dir = root / '.git'
+    if git_dir.exists() and git_dir.is_dir():
+        git_dir = reject_reparse_path(git_dir).resolve(strict=True)
+        git_dir.relative_to(root)
+        allowed.append(git_dir)
+    for path in allowed:
+        if '*' in str(path) or any(ord(character) < 32 for character in str(path)):
+            raise ValueError('Git trust paths must be exact ordinary directory names')
+    config = reject_reparse_path(home / '.gitconfig')
+    before = config.lstat() if config.exists() else None
+    if before and (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1):
+        raise ValueError('Private Git configuration is nonregular or shared')
+    flags = (os.O_WRONLY | os.O_CREAT | getattr(os, 'O_BINARY', 0) |
+             getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0))
+    with os.fdopen(os.open(config, flags, 0o600), 'w', encoding='utf-8', newline='\n') as handle:
+        opened = os.fstat(handle.fileno())
+        _handle_path(handle).relative_to(home)
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+            raise ValueError('Private Git configuration is nonregular or shared')
+        if before and _file_identity(opened) != _file_identity(before):
+            raise ValueError('Private Git configuration changed while opening')
+        os.ftruncate(handle.fileno(), 0)
+        handle.write('[safe]\n' + ''.join(' directory = ' + json.dumps(str(path), ensure_ascii=False) + '\n'
+                                          for path in allowed))
+    return config
 
 
 def _git_run(executable, arguments, root, home):
+    config = _private_git_config(root, home)
     environment = runtime_environment()
-    environment.update({'HOME': str(home), 'USERPROFILE': str(home), 'XDG_CACHE_HOME': str(home / 'cache'), 'GIT_ALLOW_PROTOCOL': 'file'})
+    environment.update({'HOME': str(home), 'USERPROFILE': str(home), 'XDG_CACHE_HOME': str(home / 'cache'),
+                        'GIT_ALLOW_PROTOCOL': 'file', 'GIT_CONFIG_GLOBAL': str(config)})
     return subprocess.run(
         [executable, '-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always', '-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', '-c', 'safe.directory=' + str(root), *arguments],
         cwd=str(home), capture_output=True, text=True, encoding='utf-8', errors='replace',
-        shell=False, timeout=120, env=environment,
+        shell=False, timeout=timeout_for(120), env=environment,
     )
+
+
+class _HistoryFailure(ValueError):
+    """A fixed message authored by this module, safe to share in reports."""
+
+
+def _git_failure(process, stage):
+    diagnostic = process_failure(process)
+    diagnostic.update(type='git_history_failed', stage=stage)
+    stderr = process.stderr
+    if isinstance(stderr, bytes):
+        stderr = stderr[:65536].decode('utf-8', errors='replace')
+    text = stderr[:65536].lower() if isinstance(stderr, str) else ''
+    for marker, category in (
+        ('detected dubious ownership', 'ownership_rejected_reported'),
+        ('not a git repository', 'invalid_repository_reported'),
+    ):
+        if marker in text:
+            diagnostic.update(category=category, evidence='stderr-marker')
+            break
+    return diagnostic
 
 
 def _copy_history(source, target, inventory, home):
@@ -90,60 +156,116 @@ def _copy_history(source, target, inventory, home):
     result = {'required': required, 'status': 'not_available', 'reason': 'No verified initial Git history'}
     if not required:
         return result
+    stage = 'inventory'
     try:
         commit = inventory.get('commit')
         refs = inventory.get('git_refs')
         if not inventory.get('git') or not isinstance(commit, str) or not re.fullmatch(r'[a-fA-F0-9]{40}|[a-fA-F0-9]{64}', commit) or not isinstance(refs, list) or not refs:
-            raise ValueError('Initial Git commit and complete ref manifest are unavailable')
+            raise _HistoryFailure('Initial Git commit and complete ref manifest are unavailable')
         executable = trusted_runtime_tool('git', source)['executable']
         git_dir = target / '.git'
+        stage = 'clone'
         cloned = _git_run(executable, ['clone', '--mirror', '--no-hardlinks', '--no-recurse-submodules', '--dissociate', '--', str(source), str(git_dir)], source, home)
         if cloned.returncode != 0 or not git_dir.is_dir():
-            raise ValueError('Local private Git mirror clone failed')
+            if cloned.returncode != 0:
+                result['diagnostic'] = _git_failure(cloned, stage)
+            raise _HistoryFailure('Local private Git mirror clone failed')
+        stage = 'independent-objects'
         for directory, dirs, files in os.walk(git_dir, followlinks=False):
             for name in [*dirs, *files]:
                 candidate = Path(directory) / name
                 if is_reparse(candidate) or (candidate.is_file() and candidate.stat().st_nlink != 1):
-                    raise ValueError('Git copy contains reparse entries or shared hard links')
+                    raise _HistoryFailure('Git copy contains reparse entries or shared hard links')
         alternate = git_dir / 'objects' / 'info' / 'alternates'
         if alternate.exists() and alternate.read_text(encoding='utf-8').strip():
-            raise ValueError('Git copy still depends on external object storage')
+            raise _HistoryFailure('Git copy still depends on external object storage')
         if (git_dir / 'hooks').exists():
             shutil.rmtree(git_dir / 'hooks')
+        stage = 'object-format'
         format_result = _git_run(executable, ['--git-dir', str(git_dir), 'rev-parse', '--show-object-format'], source, home)
         object_format = format_result.stdout.strip()
         if format_result.returncode or object_format not in {'sha1', 'sha256'}:
-            raise ValueError('Private Git object format is unknown')
+            if format_result.returncode:
+                result['diagnostic'] = _git_failure(format_result, stage)
+            raise _HistoryFailure('Private Git object format is unknown')
         config = '[core]\n repositoryformatversion = ' + ('1' if object_format == 'sha256' else '0') + '\n bare = false\n logallrefupdates = false\n hooksPath =\n fsmonitor = false\n'
         if object_format == 'sha256':
             config += '[extensions]\n objectFormat = sha256\n'
         (git_dir / 'config').write_text(config, encoding='utf-8')
+        stage = 'commit-and-refs'
         head = _git_run(executable, ['--git-dir', str(git_dir), 'rev-parse', '--verify', 'HEAD'], source, home)
         copied_refs = _git_run(executable, ['--git-dir', str(git_dir), 'show-ref', '--head', '--dereference'], source, home)
         if head.returncode or head.stdout.strip() != commit or copied_refs.returncode or sorted(copied_refs.stdout.splitlines()) != sorted(refs):
-            raise ValueError('Private Git history differs from the initial commit/ref manifest')
+            if head.returncode or copied_refs.returncode:
+                result['diagnostic'] = _git_failure(head if head.returncode else copied_refs, stage)
+            raise _HistoryFailure('Private Git history differs from the initial commit/ref manifest')
         if (git_dir / 'shallow').exists() or inventory.get('shallow'):
-            raise ValueError('Private Git history is shallow')
+            raise _HistoryFailure('Private Git history is shallow')
         result.update(status='complete', commit=commit, refs_hash=content_hash(sorted(refs)), reason=None)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        result.update(status='incomplete', reason=str(exc))
+        result.update(status='incomplete', reason=str(exc) if isinstance(exc, _HistoryFailure)
+                      else 'Private Git history could not be verified')
+        diagnostic = exception_diagnostic('git_history_failed', exc)
+        diagnostic['stage'] = stage
+        result.setdefault('diagnostic', diagnostic)
         if (target / '.git').exists():
             shutil.rmtree(target / '.git')
     return result
 
 
+def _file_identity(info):
+    # On Windows, Python 3.12 lstat/fstat expose different ctime semantics.
+    # Compare ctime only between results obtained through the same API below.
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink,
+            info.st_size, info.st_mtime_ns)
+
+
+def _hash_private_file(root, item):
+    """Hash an independently owned regular file without loading it into memory."""
+    item = reject_reparse_path(item)
+    item.resolve(strict=True).relative_to(root)
+    before = item.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+        raise ValueError('Private snapshot acquired a nonregular or shared file')
+    flags = (os.O_RDONLY | getattr(os, 'O_BINARY', 0) |
+             getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0))
+    digest = hashlib.sha256()
+    size = 0
+    with os.fdopen(os.open(item, flags), 'rb') as handle:
+        opened = os.fstat(handle.fileno())
+        _handle_path(handle).relative_to(root)
+        if _file_identity(opened) != _file_identity(before):
+            raise ValueError('Private snapshot file changed while opening the hash handle')
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(chunk)
+            size += len(chunk)
+            checkpoint(bytes_read=len(chunk))
+        after = os.fstat(handle.fileno())
+        _handle_path(handle).relative_to(root)
+        if (_file_identity(opened) != _file_identity(after) or
+                opened.st_ctime_ns != after.st_ctime_ns or size != opened.st_size):
+            raise ValueError('Private snapshot file changed while hashing')
+    reject_reparse_path(item)
+    final = item.lstat()
+    if _file_identity(final) != _file_identity(after) or before.st_ctime_ns != final.st_ctime_ns:
+        raise ValueError('Private snapshot path changed while hashing')
+    checkpoint(files=1)
+    return digest.hexdigest()
+
+
 def _tree_hashes(root):
+    root = reject_reparse_path(root).resolve(strict=True)
     values = {}
-    for directory, dirs, files in os.walk(root, followlinks=False):
-        for name in [*dirs, *files]:
-            item = Path(directory) / name
-            if is_reparse(item):
-                raise ValueError('Private snapshot acquired a reparse entry')
-        for name in files:
-            item = Path(directory) / name
-            if not stat.S_ISREG(item.stat().st_mode) or item.stat().st_nlink != 1:
-                raise ValueError('Private snapshot acquired a nonregular or shared file')
-            values[item.relative_to(root).as_posix()] = hashlib.sha256(item.read_bytes()).hexdigest()
+    with phase('snapshot-verify'):
+        for directory, dirs, files in os.walk(root, followlinks=False):
+            checkpoint()
+            for name in [*dirs, *files]:
+                item = Path(directory) / name
+                if is_reparse(item):
+                    raise ValueError('Private snapshot acquired a reparse entry')
+            for name in files:
+                item = Path(directory) / name
+                values[item.relative_to(root).as_posix()] = _hash_private_file(root, item)
     return values
 
 
@@ -205,14 +327,17 @@ def verified_snapshot(source, inventory, *, include_history=True):
         if not isinstance(records, list) or sorted(inventory.get('files', [])) != sorted(row.get('path') for row in records):
             raise ValueError('Initial source inventory is inconsistent')
         expected = {}
-        for row in records:
-            relative, digest = row.get('path'), row.get('hash')
-            if not isinstance(relative, str) or relative in expected or not isinstance(digest, str) or not re.fullmatch(r'[a-f0-9]{64}', digest):
-                raise ValueError('Initial source file identity is invalid')
-            _copy_file(source, relative, digest, target / relative)
-            expected[relative] = digest
-        history = (_copy_history(source, target, inventory, home) if include_history
-                   else {'required': False, 'status': 'not_available', 'reason': 'File-only snapshot'})
+        with phase('snapshot-copy'):
+            for row in records:
+                checkpoint()
+                relative, digest = row.get('path'), row.get('hash')
+                if not isinstance(relative, str) or relative in expected or not isinstance(digest, str) or not re.fullmatch(r'[a-f0-9]{64}', digest):
+                    raise ValueError('Initial source file identity is invalid')
+                _copy_file(source, relative, digest, target / relative)
+                expected[relative] = digest
+        with phase('git-history'):
+            history = (_copy_history(source, target, inventory, home) if include_history
+                       else {'required': False, 'status': 'not_available', 'reason': 'File-only snapshot'})
         hashes = _tree_hashes(target)
         if any(hashes.get(path) != digest for path, digest in expected.items()):
             raise ValueError('Private copy failed verification before scanning')

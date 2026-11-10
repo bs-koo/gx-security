@@ -8,6 +8,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from gxsec import adapters, config, policy, source
 
 
+def mock_engine_process(monkeypatch, execute):
+    # Native engine and Git invocations share inert fixtures; production capture is tested separately.
+    monkeypatch.setattr(adapters, '_process', execute)
+    monkeypatch.setattr(adapters.subprocess, 'run', execute)
+
+
 @pytest.fixture(autouse=True)
 def approved_runtime(tmp_path, monkeypatch):
     directory = tmp_path.parent / (tmp_path.name + '-runtime')
@@ -57,7 +63,7 @@ def test_subprocess_boundary_semgrep_all_rules_and_parse_failures(tmp_path, monk
                 '',
             )
         return subprocess.CompletedProcess(cmd, 0, '[]', '')
-    monkeypatch.setattr(adapters.subprocess, 'run', execute)
+    mock_engine_process(monkeypatch, execute)
     checks, _ = adapters.run_static_checks(tmp_path, cfg, 'static-release')
     sast = next((c for c in checks if c['id'] == 'sast'))
     assert sast['status'] != 'complete' and sast['errors']
@@ -111,7 +117,7 @@ def test_osv_stale_missing_provenance_and_unknown_severity(tmp_path, monkeypatch
                 '',
             )
         return subprocess.CompletedProcess(cmd, 0, '[]', '')
-    monkeypatch.setattr(adapters.subprocess, 'run', execute)
+    mock_engine_process(monkeypatch, execute)
     checks, findings = adapters.run_static_checks(tmp_path, cfg, 'static-release')
     sca = next((c for c in checks if c['id'] == 'sca'))
     assert sca['status'] != 'complete' and any(('stale' in str(e).lower() for e in sca['errors']))
@@ -163,7 +169,7 @@ def test_gitleaks_directory_and_history_reports_redacted(tmp_path, monkeypatch):
             )
             return subprocess.CompletedProcess(cmd, 1, '', '')
         return subprocess.CompletedProcess(cmd, 0, '{}', '')
-    monkeypatch.setattr(adapters.subprocess, 'run', execute)
+    mock_engine_process(monkeypatch, execute)
     checks, findings = adapters.run_static_checks(tmp_path, cfg, 'static-release')
     assert {c[1] for c in calls if Path(c[0]).name == 'gitleaks' and '--version' not in c} == {'git', 'dir'}
     assert all(
@@ -179,13 +185,13 @@ def test_semgrep_malformed_and_timeout_are_not_complete(tmp_path, monkeypatch):
 
     def malformed(cmd, **kw):
         return subprocess.CompletedProcess(cmd, 0, '1.172.0' if '--version' in cmd else 'not json', '')
-    monkeypatch.setattr(adapters.subprocess, 'run', malformed)
+    mock_engine_process(monkeypatch, malformed)
     checks, _ = adapters.run_static_checks(tmp_path, cfg, 'check')
     assert checks[0]['status'] == 'incomplete' and any((e['type'] == 'malformed_output' for e in checks[0]['errors']))
 
     def timeout(cmd, **kw):
         raise subprocess.TimeoutExpired(cmd, kw['timeout'])
-    monkeypatch.setattr(adapters.subprocess, 'run', timeout)
+    mock_engine_process(monkeypatch, timeout)
     checks, _ = adapters.run_static_checks(tmp_path, cfg, 'check')
     assert checks[0]['status'] == 'incomplete'
 
@@ -199,7 +205,7 @@ def test_engine_version_mismatch_and_repo_executable_never_run(tmp_path, monkeyp
     def execute(cmd, **kw):
         calls.append(cmd)
         return subprocess.CompletedProcess(cmd, 0, '99.0.0', '')
-    monkeypatch.setattr(adapters.subprocess, 'run', execute)
+    mock_engine_process(monkeypatch, execute)
     checks, _ = adapters.run_static_checks(tmp_path, cfg, 'static-release')
     assert not any((Path(c[0]).name == 'python' for c in calls))
     assert all(c['status'] == 'incomplete' for c in checks if c['id'] in {'sast', 'sca', 'secrets'})
@@ -272,7 +278,7 @@ def test_osv_fresh_complete_offline_input_and_unknown_advisory_severity(tmp_path
             Path(cmd[cmd.index('--report-path') + 1]).write_text('[]')
             return subprocess.CompletedProcess(cmd, 0, '', '')
         return subprocess.CompletedProcess(cmd, 0, '', '')
-    monkeypatch.setattr(adapters.subprocess, 'run', execute)
+    mock_engine_process(monkeypatch, execute)
     checks, findings = adapters.run_static_checks(src, cfg, 'static-release')
     assert next((c for c in checks if c['id'] == 'sca'))['status'] == 'complete', checks
     assert findings[0]['severity'] is None
@@ -303,7 +309,7 @@ def test_gitleaks_redacted_engine_tokens_do_not_merge_distinct_locations(tmp_pat
             )
             return subprocess.CompletedProcess(cmd, 1, '', '')
         return subprocess.CompletedProcess(cmd, 0, '', '')
-    monkeypatch.setattr(adapters.subprocess, 'run', execute)
+    mock_engine_process(monkeypatch, execute)
     _, findings = adapters.run_static_checks(tmp_path, cfg, 'check')
     assert len(findings) == 2
     assert 'synthetic-one' not in json.dumps(findings)
@@ -318,7 +324,7 @@ def test_semgrep_uses_real_source_slices_and_keeps_same_file_occurrences_distinc
         if Path(cmd[0]).name=='semgrep':
             return subprocess.CompletedProcess(cmd,0,json.dumps({'results':[{'check_id':'demo.output','path':str(Path(cmd[-1])/'A.java'),'start':{'line':line},'end':{'line':line},'extra':{'lines':'requires login','message':'Review output'}} for line in [3,4]],'errors':[],'paths':{'scanned':[str(Path(cmd[-1])/'A.java')]}}),'')
         return subprocess.CompletedProcess(cmd,0,'','')
-    monkeypatch.setattr(adapters.subprocess,'run',execute)
+    mock_engine_process(monkeypatch, execute)
     _,findings=adapters.run_static_checks(tmp_path,cfg,'check')
     assert len(findings)==2
     assert len({f['finding_id'] for f in findings})==2
@@ -360,7 +366,7 @@ def test_absent_runtime_provenance_never_executes_engine(tmp_path,monkeypatch):
     monkeypatch.setattr(adapters.shutil,'which',lambda c:c)
     def execute(cmd,**kwargs):
         calls.append(cmd);return subprocess.CompletedProcess(cmd,0,'1.172.0','')
-    monkeypatch.setattr(adapters.subprocess,'run',execute)
+    mock_engine_process(monkeypatch, execute)
     checks,_=adapters.run_static_checks(tmp_path,cfg,'check')
     assert not any(Path(c[0]).name in {'semgrep','gitleaks','osv-scanner'} for c in calls)
     assert all(c['status']=='incomplete' for c in checks if c['id'] in {'sast', 'sca', 'secrets'})
@@ -369,7 +375,7 @@ def test_absent_runtime_provenance_never_executes_engine(tmp_path,monkeypatch):
 def test_subprocess_environment_drops_ambient_secrets_and_proxy(tmp_path,monkeypatch):
     observed={};monkeypatch.setenv('GXSEC_TEST_SECRET','fixture-sensitive-value');monkeypatch.setenv('HTTP_PROXY','http://proxy.test')
     def execute(cmd,**kwargs):observed.update(kwargs['env']);return subprocess.CompletedProcess(cmd,0,'','')
-    monkeypatch.setattr(adapters.subprocess,'run',execute)
+    mock_engine_process(monkeypatch, execute)
     adapters._run(['trusted-tool'],cwd=tmp_path)
     assert 'GXSEC_TEST_SECRET' not in observed and 'HTTP_PROXY' not in observed
 
@@ -377,7 +383,7 @@ def test_tampered_runtime_executable_is_not_probed(tmp_path,monkeypatch):
     manifest=json.loads(Path(__import__('os').environ['GXSEC_RUNTIME_MANIFEST']).read_text())
     executable=Path(manifest['tools']['semgrep']['executable']);executable.write_text('changed after approval')
     calls=[]
-    monkeypatch.setattr(adapters.subprocess,'run',lambda cmd,**kwargs:calls.append(cmd))
+    mock_engine_process(monkeypatch, lambda cmd,**kwargs:calls.append(cmd))
     result=adapters.probe_engine('semgrep',{},tmp_path)
     assert result['status']=='incomplete' and calls==[]
     assert 'digest' in str(result['errors']).lower()
@@ -388,7 +394,7 @@ def test_semgrep_unstructured_diagnostics_and_xml_secret_never_export(tmp_path,m
     def execute(cmd,**kwargs):
         if '--version' in cmd:return subprocess.CompletedProcess(cmd,0,'1.172.0','')
         return subprocess.CompletedProcess(cmd,0,json.dumps({'results':[{'check_id':'demo','path':str(tmp_path/'A.java'),'start':{'line':1},'end':{'line':1},'extra':{'lines':'<password>fixture-sensitive-value</password>','message':'fixture-sensitive-value','details':{'message':'fixture-sensitive-value'}}}],'errors':[{'type':'PartialParsing','message':'fixture-sensitive-value','details':{'message':'fixture-sensitive-value'},'code':3}],'paths':{'scanned':[str(tmp_path/'A.java')]}}),'')
-    monkeypatch.setattr(adapters.subprocess,'run',execute)
+    mock_engine_process(monkeypatch, execute)
     check,findings=adapters._sast(tmp_path,cfg,source.collect_source(tmp_path),'check')
     assert 'fixture-sensitive-value' not in json.dumps([check,findings])
     assert check['errors']==[{'type':'semgrep_diagnostic','error_type':'PartialParsing','code':3}]
@@ -401,7 +407,7 @@ def test_subprocess_home_is_ephemeral_and_does_not_read_host_home(tmp_path,monke
         assert Path(observed['HOME']).exists() and observed['HOME']!=str(host_home)
         assert observed['XDG_CACHE_HOME'].startswith(observed['HOME'])
         return subprocess.CompletedProcess(cmd,0,'','')
-    monkeypatch.setattr(adapters.subprocess,'run',execute)
+    mock_engine_process(monkeypatch, execute)
     adapters._run(['approved-tool'],cwd=tmp_path)
     assert not Path(observed['HOME']).exists()
 
@@ -418,7 +424,7 @@ def test_static_engines_read_private_snapshot_during_swap_and_restore(tmp_path,m
             return subprocess.CompletedProcess(cmd,0,json.dumps({'results':[],'errors':[],'paths':{'scanned':[str(scan_root/'A.java')]}}),'')
         if name=='gitleaks':Path(cmd[cmd.index('--report-path')+1]).write_text('[]');return subprocess.CompletedProcess(cmd,0,'','')
         return subprocess.CompletedProcess(cmd,0,'','')
-    monkeypatch.setattr(adapters.subprocess,'run',execute)
+    mock_engine_process(monkeypatch, execute)
     checks,_=adapters.run_static_checks(tmp_path,cfg,'check')
     assert observed and observed[0][0]!=tmp_path and observed[0][1]==original
     assert (tmp_path/'A.java').read_text()==original
@@ -429,7 +435,7 @@ def test_changed_initial_source_and_modified_private_copy_are_incomplete(tmp_pat
     cfg=fixture(tmp_path);cfg['_inventory']=source.collect_source(tmp_path);(tmp_path/'A.java').write_text('class Changed {}')
     calls=[]
     def execute(cmd,**kwargs):calls.append(cmd);return subprocess.CompletedProcess(cmd,0,'1.172.0','')
-    monkeypatch.setattr(adapters.subprocess,'run',execute)
+    mock_engine_process(monkeypatch, execute)
     checks,_=adapters.run_static_checks(tmp_path,cfg,'check')
     assert all(c['status']=='incomplete' for c in checks) and calls==[]
     cfg['_inventory']=source.collect_source(tmp_path)
@@ -440,7 +446,7 @@ def test_changed_initial_source_and_modified_private_copy_are_incomplete(tmp_pat
             target=Path(cmd[-1])/'A.java';target.chmod(0o600);target.write_text('changed inside private copy')
             return subprocess.CompletedProcess(cmd,0,json.dumps({'results':[],'errors':[],'paths':{'scanned':[str(target)]}}),'')
         return subprocess.CompletedProcess(cmd,0,'[]','')
-    monkeypatch.setattr(adapters.subprocess,'run',mutate)
+    mock_engine_process(monkeypatch, mutate)
     checks,_=adapters.run_static_checks(tmp_path,cfg,'check')
     assert all(c['status']=='incomplete' and c['snapshot']['stable_after_scan'] is False for c in checks)
 
@@ -450,7 +456,7 @@ def test_snapshot_preserves_original_tool_trust_boundary(tmp_path,monkeypatch):
     import os,hashlib
     manifest_path=Path(os.environ['GXSEC_RUNTIME_MANIFEST']);manifest=json.loads(manifest_path.read_text());manifest['tools']['semgrep']['executable']=str(exe);manifest['tools']['semgrep']['sha256']=hashlib.sha256(exe.read_bytes()).hexdigest();manifest_path.write_text(json.dumps(manifest));calls=[]
     def execute(cmd,**kwargs):calls.append(cmd);return subprocess.CompletedProcess(cmd,0,'','')
-    monkeypatch.setattr(adapters.subprocess,'run',execute)
+    mock_engine_process(monkeypatch, execute)
     checks,_=adapters.run_static_checks(tmp_path,cfg,'check')
     assert not any(Path(c[0])==exe for c in calls)
     assert next(c for c in checks if c['id']=='sast')['status']=='incomplete'
@@ -467,7 +473,7 @@ def test_git_history_snapshot_is_local_independent_and_sanitized(tmp_path,monkey
         if 'show-ref' in cmd:return subprocess.CompletedProcess(cmd,0,'\n'.join(refs)+'\n','')
         if 'rev-parse' in cmd:return subprocess.CompletedProcess(cmd,0,commit+'\n','')
         return subprocess.CompletedProcess(cmd,0,'','')
-    monkeypatch.setattr(adapters.subprocess,'run',execute)
+    mock_engine_process(monkeypatch, execute)
     with verified_snapshot(tmp_path,inventory) as snap:
         assert snap.provenance['history']['status']=='complete'
         assert not (snap.path/'.git'/'hooks').exists()
@@ -520,7 +526,7 @@ def test_osv_parsed_packages_without_advisory_matching_are_incomplete(tmp_path,m
         stderr=('Loaded npm local db from '+str(tmp_path/'unapproved.zip' if wrong_path else scan_archive)+'\n') if loaded else ''
         if extraction_error:stderr+='Error during extraction: (extracting as vulnmatch/osvlocal) synthetic matcher failure\n'
         return subprocess.CompletedProcess(cmd,0,json.dumps({'results':[{'source':{'path':str(tmp_path/'package-lock.json'),'type':'lockfile'},'packages':[{'package':package}]}]}),stderr)
-    monkeypatch.setattr(adapters.subprocess,'run',execute)
+    mock_engine_process(monkeypatch, execute)
     check,findings=adapters._sca(tmp_path,cfg,inventory,'static-release')
     assert check['status']=='incomplete'
     assert check['errors'] and findings==[]
@@ -532,7 +538,7 @@ def test_osv_approved_loaded_database_and_public_package_prove_matching(tmp_path
         if '--version' in cmd:return subprocess.CompletedProcess(cmd,0,'2.7.0','')
         scan_archive = Path(kwargs['env']['OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY']) / 'osv-scalibr/npm/all.zip'
         return subprocess.CompletedProcess(cmd,0,json.dumps({'results':[{'source':{'path':str(tmp_path/'package-lock.json'),'type':'lockfile'},'packages':[{'package':{'name':'a','version':'1.0.0','ecosystem':'npm','purl':'pkg:npm/a@1.0.0?source=PUBLIC_REGISTRY'}}]}]}),'Loaded npm local db from '+str(scan_archive)+'\n')
-    monkeypatch.setattr(adapters.subprocess,'run',execute)
+    mock_engine_process(monkeypatch, execute)
     check,_=adapters._sca(tmp_path,cfg,inventory,'static-release')
     assert check['status']=='complete'
     assert check['coverage']['packages'][0]['purl']=='pkg:npm/a@1.0.0?source=PUBLIC_REGISTRY'
@@ -546,7 +552,7 @@ def test_sast_uses_protected_catalog_guidance_instead_of_native_interpolated_tex
         if Path(cmd[0]).name=='semgrep':
             scan=Path(cmd[-1]);return subprocess.CompletedProcess(cmd,0,json.dumps({'results':[{'check_id':'sqisoft-jdbc-string-concat-query','path':str(scan/'A.java'),'start':{'line':1},'end':{'line':1},'extra':{'message':'unlabelled-sensitive-fixture','severity':'ERROR','metadata':{'severity':'Critical','category':'forged-category','cwe':'forged-cwe'}}}],'errors':[],'paths':{'scanned':[str(scan/'A.java')]}}),'')
         return subprocess.CompletedProcess(cmd,0,'','')
-    monkeypatch.setattr(adapters.subprocess,'run',execute)
+    mock_engine_process(monkeypatch, execute)
     _,findings=adapters.run_static_checks(tmp_path,cfg,'check')
     finding=findings[0]
     assert 'PreparedStatement' in finding['description'] and '\ud50c\ub808\uc774\uc2a4\ud640\ub354' in finding['remediation']['guidance']
@@ -563,7 +569,7 @@ def test_osv_loaded_ecosystem_cannot_claim_another_approved_ecosystem_archive(tm
         if '--version' in cmd:return subprocess.CompletedProcess(cmd,0,'2.7.0','')
         wrong_archive = Path(kwargs['env']['OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY']) / 'osv-scalibr/Maven/all.zip'
         return subprocess.CompletedProcess(cmd,0,json.dumps({'results':[{'source':{'path':str(tmp_path/'package-lock.json'),'type':'lockfile'},'packages':[{'package':{'name':'a','version':'1.0.0','ecosystem':'npm','purl':'pkg:npm/a@1.0.0?source=PUBLIC_REGISTRY'}}]}]}),'Loaded npm local db from '+str(wrong_archive)+'\n')
-    monkeypatch.setattr(adapters.subprocess,'run',execute)
+    mock_engine_process(monkeypatch, execute)
     check,_=adapters._sca(tmp_path,cfg,inventory,'static-release')
     assert check['status']=='incomplete' and check['coverage']['matching']['complete'] is False
 
@@ -598,7 +604,7 @@ def test_osv_scans_verified_private_database_bytes_and_rejects_snapshot_changes(
                 'purl': 'pkg:npm/a@1.0.0?source=PUBLIC_REGISTRY'}}]}]}
         return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), 'Loaded npm local db from ' + str(scan_archive) + '\n')
 
-    monkeypatch.setattr(adapters.subprocess, 'run', execute)
+    mock_engine_process(monkeypatch, execute)
     check, findings = adapters._sca(tmp_path, cfg, inventory, 'static-release')
     assert check['status'] == ('complete' if change == 'original-database' else 'incomplete'), check
     assert findings == []
@@ -621,7 +627,9 @@ def test_osv_rejects_database_change_between_approval_check_and_private_copy(tmp
         raise AssertionError('Changed database must not be passed to OSV')
 
     monkeypatch.setattr(adapters, 'verified_snapshot', changed_before_copy)
-    monkeypatch.setattr(adapters.subprocess, 'run', execute)
+    mock_engine_process(monkeypatch, execute)
     check, findings = adapters._sca(tmp_path, cfg, inventory, 'static-release')
     assert check['status'] == 'incomplete' and findings == [] and scans == []
-    assert any('hash' in error['message'].lower() for error in check['errors'])
+    assert any(error['type'] == 'sca_failed' and error['category'] == 'invalid_engine_output'
+               for error in check['errors'])
+    assert str(archive) not in json.dumps(check['errors'])

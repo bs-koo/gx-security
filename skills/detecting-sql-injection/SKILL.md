@@ -13,7 +13,7 @@ tags: [sql-injection, sqli, cwe-89, owasp-a03, mybatis, jpa, jdbc, spring, jsp, 
 cwe: [CWE-89]
 owasp: [A03:2021-Injection]
 stacks: [spring-modern, jsp-legacy]
-version: "0.10.2"
+version: "0.10.3"
 author: sqisoft-security
 license: Proprietary
 ---

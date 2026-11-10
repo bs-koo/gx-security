@@ -180,7 +180,7 @@ def evaluate(checks, findings, *, reviews=None, exceptions=None, policy=None, no
             incomplete.append('Required check ' + cid + ' completed scope differs from eligible scope')
         if cov.get('complete') is False or cov.get('missing') or cov.get('parse_errors'):
             incomplete.append('Required check ' + cid + ' coverage is incomplete')
-        if profile in {'release', 'static-release', 'source-review'} and cov.get('scope') in {'diff', 'partial', 'changed'}:
+        if profile in {'release', 'static-release', 'source-review'} and cov.get('scope') in {'diff', 'partial', 'changed', 'selected'}:
             incomplete.append('Full profile ' + cid + ' used partial scope')
     for missing in sorted(set(minimum) - check_ids):
         incomplete.append('Required check ' + missing + ' was not executed')

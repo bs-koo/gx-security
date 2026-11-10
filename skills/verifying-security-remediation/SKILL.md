@@ -1,7 +1,7 @@
 ---
 name: verifying-security-remediation
 description: 이전 보안 발견사항을 동일 ID로 이어 수정 후 재검증하고 해결·재발·미확정을 구분할 때 사용한다.
-version: "0.10.2"
+version: "0.10.3"
 ---
 
 # 보안 수정 재검증

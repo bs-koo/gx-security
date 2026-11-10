@@ -27,6 +27,7 @@ from .models import content_hash, make_check, make_finding
 from .policy import _trusted
 from .redaction import redact
 from .source import collect_source, full_source_scope_hash, reject_reparse_path, runtime_environment
+from .execution import BudgetExceeded, checkpoint, timeout_for
 from .transport import BoundedTransport, TransportError, parse_url
 
 ENGINES = ('trivy', 'codeql', 'nuclei')
@@ -181,6 +182,7 @@ def _bounded_process(command, *, cwd, environment, timeout, maximum, reports=())
     prompt failure detection, and does not claim to implement a kernel disk quota.
     """
     _require(type(maximum) is int and 1 <= maximum <= MAX_REPORT_BYTES, 'Invalid streaming output quota')
+    timeout = timeout_for(timeout)
     deadline = time.monotonic() + timeout
     process = subprocess.Popen([str(x) for x in command], cwd=cwd, env=environment, shell=False,
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -647,6 +649,7 @@ def run_optional_checks(source: Path, config: dict, profile: str) -> tuple[list,
             check.update(status='unsupported', errors=[{'type': 'missing_prerequisites', 'message': 'Protected scanner evidence or confined runner plan is required'}])
             continue
         try:
+            checkpoint()
             _require(not inventory.get('errors'), 'Source inventory contains unreadable files')
             plan = not bool(org.get('evidence'))
             if config.get('_snapshot_object'):
@@ -671,12 +674,26 @@ def run_optional_checks(source: Path, config: dict, profile: str) -> tuple[list,
                 finding['expected_file_hash'] = hashes.get(location)
                 finding['normalized_result_hash'] = content_hash({key: value for key, value in finding.items() if key != 'normalized_result_hash'})
             findings.extend(items)
+        except BudgetExceeded as error:
+            check['errors'].append(error.diagnostic)
         except (ValueError, TypeError, KeyError, AttributeError, OSError, subprocess.SubprocessError, yaml.YAMLError, TransportError) as error:
             # Exception text from parsers/OS may contain evidence values or credentials.
             message = str(error) if isinstance(error, OptionalEvidenceError) else 'Native scanner evidence, inputs or execution could not be validated'
             check['errors'].append({'type': 'optional_engine_incomplete', 'message': message})
-    after = collect_source(source, git_boundary=trust_source) if inventory else None
-    snapshot_stable = config['_snapshot_object'].verify() if config.get('_snapshot_object') else True
+    try:
+        checkpoint()
+        after = collect_source(source, git_boundary=trust_source) if inventory else None
+        checkpoint()
+        snapshot_stable = config['_snapshot_object'].verify() if config.get('_snapshot_object') else True
+        checkpoint()
+    except BudgetExceeded as error:
+        for check in checks:
+            check['status'] = 'incomplete'
+            check['coverage']['partial'] = True
+            check['errors'].append(error.diagnostic)
+        for finding in findings:
+            finding['validation'] = 'candidate'
+        return redact(checks), redact(findings)
     if not snapshot_stable or (after and (after.get('hash') != actual_before.get('hash') or after.get('scope_hash') != actual_before.get('scope_hash') or {row['path']: row['hash'] for row in after.get('inventory', [])} != {row['path']: row['hash'] for row in actual_before.get('inventory', [])} or after.get('errors'))):
         for check in checks:
             check['status'] = 'incomplete'
