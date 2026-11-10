@@ -66,9 +66,9 @@ Files: `scripts/gxsec.ps1`, `scripts/install-engines.py`, `src/gxsec/reporting.p
 ## Task 6: Integrated validation and delivery
 
 - [x] Run the full regression suite once the integrated changes stabilize.
-- [ ] Run pinned-engine regressions, build/packaging and isolated runtime smoke.
+- [x] Run pinned-engine regressions, build/packaging and isolated runtime smoke.
 - [x] Review source/trust/operations changes independently and resolve material findings.
 - [x] Update version, concise README/site/status/changelog consistently.
-- [ ] Record measured coverage, remaining real-user/independent-review limits and framework handoff paths.
+- [x] Record measured coverage, remaining real-user/independent-review limits and framework handoff paths.
 
 Review limits: independent model reviews are not organizational approval or human-labeled ground truth. The 28-case evaluation measures candidate detection expectations for 12/88 rules; five simple negative controls and conditional examples limit its interpretation. See `docs/RULE-QUALITY.md` and its label review. Host behavior fixtures are provided but have not been executed in actual user sessions. Supported remediation closure is currently limited to SAST/framework and SCA; other legacy closure markers remain incomplete.
