@@ -107,9 +107,27 @@ def test_real_engine_preserves_test_files_despite_native_ignores(tmp_path, monke
         'executable': str(command), 'sha256': hashlib.sha256(command.read_bytes()).hexdigest()}}}), encoding='utf-8')
     monkeypatch.setenv('GXSEC_RUNTIME_MANIFEST', str(manifest))
     root, cfg, inventory = fixture(tmp_path, monkeypatch, ignores=ignores, command=str(command))
+    # Only synthetic fixtures are inspected here. Preserve a bounded launcher
+    # failure in CI to distinguish host Python startup from option drift; the
+    # production adapter continues to omit native prose from project reports.
+    native_run = adapters._run
+    native_results = []
+
+    def capture_native(*args, **kwargs):
+        result = native_run(*args, **kwargs)
+        native_results.append({'returncode': result.returncode,
+                               'stdout': result.stdout[:2048], 'stderr': result.stderr[:4096]})
+        return result
+
+    monkeypatch.setattr(adapters, '_run', capture_native)
+    startup = adapters._run([str(command), '--version'], cwd=root, timeout=15)
+    if startup.returncode != 0:
+        pytest.fail(json.dumps({'stage': 'synthetic-engine-startup', 'native': native_results[-1]}, indent=2))
     initial = {name: (root / name).read_bytes() for name in inventory['files']}
     check, _ = adapters._sast(root, cfg, inventory, 'release')
-    assert check['status'] == 'complete', check['errors']
+    if check['status'] != 'complete':
+        pytest.fail(json.dumps({'stage': 'synthetic-engine-scan', 'errors': check['errors'],
+                               'synthetic_native': native_results[-1]}, indent=2))
     assert set(JAVA_PATHS) <= set(check['coverage']['scanned_files'])
     assert check['coverage']['eligible'] == check['coverage']['scanned'] == 4
     assert check['coverage']['missing'] == []
