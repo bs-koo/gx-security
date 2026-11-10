@@ -17,10 +17,10 @@
 
 - [x] Reproduce nonzero-output diagnostic loss; preserve safe structured errors and partial findings without a passing gate (adapters/diagnostics tests).
 - [x] Reproduce large-file memory allocation; stream snapshot hashes and preserve handle/race checks (snapshot tests).
-- [ ] Diagnose Git mirror and Semgrep with bounded small reproductions; fix demonstrated cause and add regression.
+- [x] Diagnose Git mirror and Semgrep with bounded small reproductions; fix demonstrated cause and add regression. Git ownership rejection was reproduced and fixed with a private exact-path trust configuration. Semgrep small-input reproductions completed; the old discarded exit-2 diagnostic cannot be reconstructed.
 - [x] Add monotonic execution deadline, working-tree byte budgets, phase timings and heartbeat, with persisted INCOMPLETE reports on exhaustion (execution/source/CLI tests).
 - [x] Add inexpensive input planning and integrated workflow guidance; record explicit choices and limits.
-- [ ] Measure Windows source transfer and introduce justified transport/verification optimization, preserving original-source correspondence.
+- [x] Measure bounded Windows input reads, remove redundant metadata work, and stream private-file hashing while preserving original-source correspondence. Repeated full integrity checks remain; OS-enforced immutable snapshot optimization is deferred until independently validated.
 - [ ] Build image, run appropriate regression and independent review, then run actual public/private/KREB checks with comparable timings and full gap reporting.
 - [ ] Update usage, result documents, existing PR and final evidence. No automatic merge.
 

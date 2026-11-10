@@ -23,8 +23,10 @@ using System;
 using System.IO;
 using System.Text;
 using System.Threading;
+using System.Diagnostics;
 class FakeDocker {
     static int Main(string[] args) {
+        if (args.Length > 0 && args[0] == "hold-output") { Thread.Sleep(1500); return 0; }
         string line = "";
         foreach (string arg in args) {
             if (line.Length > 0) line += "\t";
@@ -33,10 +35,14 @@ class FakeDocker {
         File.AppendAllText(Environment.GetEnvironmentVariable("GXSEC_FAKE_LOG"), line + "\n");
         if (args.Length > 0 && args[0] == "info") {
             string mode = Environment.GetEnvironmentVariable("GXSEC_FAKE_DAEMON");
-            if (mode == "timeout") {
+            if (mode == "timeout" || mode == "slow" || mode == "slow-budget") {
                 File.WriteAllText(Environment.GetEnvironmentVariable("GXSEC_FAKE_PROBE_STARTED"),
                     DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
-                Thread.Sleep(60000);
+                Thread.Sleep(mode == "timeout" ? 60000 : mode == "slow" ? 8000 : 13000);
+            }
+            if (mode == "held-output") {
+                Process.Start(new ProcessStartInfo { FileName = Environment.GetCommandLineArgs()[0],
+                    Arguments = "hold-output", UseShellExecute = false, CreateNoWindow = true });
             }
             if (mode == "down") { Console.Error.WriteLine("PRETEND_SECRET_SHOULD_NOT_LEAK"); return 1; }
             Console.WriteLine(mode == "windows" ? "windows" : "linux");
@@ -44,6 +50,7 @@ class FakeDocker {
         }
         if (args.Length > 1 && args[0] == "image" && args[1] == "inspect") {
             string mode = Environment.GetEnvironmentVariable("GXSEC_FAKE_IMAGE");
+            if (mode == "slow-budget") { Thread.Sleep(13000); }
             if (mode == "missing") { Console.Error.WriteLine("PRETEND_SECRET_SHOULD_NOT_LEAK"); return 1; }
             Console.WriteLine("sha256:" + new String('f', 64) + "|" + (mode == "windows" ? "windows" : "linux"));
             return 0;
@@ -466,8 +473,78 @@ def test_docker_probe_has_bounded_wait(case):
     incomplete(invoke(case, '-Action', 'doctor', '-Json', timeout=60), 'docker_probe_timeout')
     # Exclude PowerShell/fixture startup on loaded Windows hosts; measure the blocked probe.
     started = int(Path(case[2]['GXSEC_FAKE_PROBE_STARTED']).read_text()) / 1000
-    assert time.time() - started < 14
+    assert time.time() - started < 26
     assert len(calls(case)) == 1
+
+
+def test_slow_healthy_docker_can_complete_within_shared_preparation_budget(case):
+    case[2]['GXSEC_FAKE_DAEMON'] = 'slow'
+    result = invoke(case, '-Action', 'doctor', '-Json', timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [row[0] for row in calls(case)] == ['info', 'image', 'run']
+    assert '[gxsec]' in result.stderr and 'Docker' in result.stderr
+    assert 'PRETEND_SECRET_SHOULD_NOT_LEAK' not in result.stdout + result.stderr
+
+
+def test_exited_probe_waits_for_output_without_confusing_it_with_process_timeout(case):
+    case[2]['GXSEC_FAKE_DAEMON'] = 'held-output'
+    result = invoke(case, '-Action', 'doctor', '-Json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [row[0] for row in calls(case)] == ['info', 'image', 'run']
+
+
+def test_daemon_and_image_share_one_preparation_deadline(case):
+    case[2]['GXSEC_FAKE_DAEMON'] = 'slow-budget'
+    case[2]['GXSEC_FAKE_IMAGE'] = 'slow-budget'
+    result = invoke(case, '-Action', 'doctor', '-Json', timeout=60)
+    incomplete(result, 'docker_probe_timeout')
+    assert [row[0] for row in calls(case)] == ['info', 'image']
+    diagnostic = json.loads(result.stdout)['probe']
+    assert diagnostic['check'] == 'image' and diagnostic['stage'] == 'process_wait'
+    assert 19000 <= diagnostic['preparation_elapsed_ms'] < 26000
+    assert not (case[0] / '.gxsec-container').exists()
+
+
+def test_faulted_stderr_collection_cannot_approve_a_probe(tmp_path):
+    harness = tmp_path / 'faulted-probe.ps1'
+    harness.write_text("$runner = '" + str(RUNNER).replace("'", "''") + "'\n" + r'''
+$ErrorActionPreference = 'Stop'
+$ast = [Management.Automation.Language.Parser]::ParseFile($runner, [ref]$null, [ref]$null)
+foreach ($name in @('ConvertTo-ProcessArgument', 'Invoke-DockerProbe')) {
+    $definition = $ast.FindAll({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+    }, $true) | Select-Object -First 1
+    Invoke-Expression $definition.Extent.Text
+}
+$script:stdoutCompletion = New-Object 'System.Threading.Tasks.TaskCompletionSource[string]'
+$script:stdoutCompletion.SetResult('linux')
+$script:stderrCompletion = New-Object 'System.Threading.Tasks.TaskCompletionSource[string]'
+$script:stderrCompletion.SetException((New-Object InvalidOperationException -ArgumentList 'PRETEND_SECRET_SHOULD_NOT_LEAK'))
+$stdoutReader = New-Object PSObject
+$stdoutReader | Add-Member ScriptMethod ReadToEndAsync { return $script:stdoutCompletion.Task }
+$stderrReader = New-Object PSObject
+$stderrReader | Add-Member ScriptMethod ReadToEndAsync { return $script:stderrCompletion.Task }
+$script:fakeProcess = New-Object PSObject -Property @{
+    StartInfo=$null;StandardOutput=$stdoutReader;StandardError=$stderrReader;HasExited=$true;ExitCode=0
+}
+$script:fakeProcess | Add-Member ScriptMethod Start { return $true }
+$script:fakeProcess | Add-Member ScriptMethod WaitForExit { param($Milliseconds) return $true }
+$script:fakeProcess | Add-Member ScriptMethod Dispose {}
+function New-Object {
+    param([string]$TypeName)
+    if ($TypeName -eq 'Diagnostics.Process') { return $script:fakeProcess }
+    Microsoft.PowerShell.Utility\New-Object -TypeName $TypeName
+}
+$result = Invoke-DockerProbe 'unused-fake.exe' @('info')
+$result | ConvertTo-Json -Depth 5 -Compress
+''', encoding='utf-8')
+    result = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                             '-File', str(harness)], capture_output=True, text=True,
+                            encoding='utf-8', errors='replace', timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    probe = json.loads(result.stdout)
+    assert probe['Code'] == -1 and probe['Probe']['stage'] == 'output_collection'
+    assert 'PRETEND_SECRET_SHOULD_NOT_LEAK' not in result.stdout + result.stderr
 
 
 def test_docker_executable_from_project_is_never_executed(case, fake_docker):

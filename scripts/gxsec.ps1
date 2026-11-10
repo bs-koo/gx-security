@@ -22,10 +22,11 @@ param(
 )
 $ErrorActionPreference='Stop'
 
-function Stop-Preparation([string]$Reason, [string]$Detail, [string]$NextAction) {
+function Stop-Preparation([string]$Reason, [string]$Detail, [string]$NextAction, [hashtable]$Probe) {
     if ($Json) {
-        [ordered]@{status='INCOMPLETE';phase='preparation';reason=$Reason;detail=$Detail;next_action=$NextAction} |
-            ConvertTo-Json -Compress
+        $failure = [ordered]@{status='INCOMPLETE';phase='preparation';reason=$Reason;detail=$Detail;next_action=$NextAction}
+        if ($Probe) { $failure.probe = $Probe }
+        $failure | ConvertTo-Json -Compress
     }
     else {
         Write-Output "Preparation incomplete: $Detail"
@@ -129,7 +130,13 @@ function ConvertTo-ProcessArgument([string]$Value) {
     return $quoted.ToString()
 }
 
-function Invoke-DockerProbe([string]$Executable, [string[]]$ProbeArguments) {
+function Invoke-DockerProbe([string]$Executable, [string[]]$ProbeArguments,
+        [Diagnostics.Stopwatch]$PreparationClock=$null, [string]$ProbeName='daemon') {
+    if (-not $PreparationClock) { $PreparationClock = [Diagnostics.Stopwatch]::StartNew() }
+    $probeClock = [Diagnostics.Stopwatch]::StartNew()
+    $limitMilliseconds = 20000
+    $nextProgress = $PreparationClock.ElapsedMilliseconds + 3000
+    $result = @{TimedOut=$false;Code=-1;Text='';Probe=@{check=$ProbeName;stage='launch'}}
     $start = New-Object Diagnostics.ProcessStartInfo
     $start.FileName = $Executable
     $start.Arguments = (($ProbeArguments | ForEach-Object { ConvertTo-ProcessArgument $_ }) -join ' ')
@@ -141,21 +148,55 @@ function Invoke-DockerProbe([string]$Executable, [string[]]$ProbeArguments) {
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $start
     try {
+        if ($PreparationClock.ElapsedMilliseconds -ge $limitMilliseconds) {
+            $result.TimedOut = $true
+            return $result
+        }
         [void]$process.Start()
         $stdout = $process.StandardOutput.ReadToEndAsync()
         $stderr = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit(7000)) {
-            try { $process.Kill() } catch {}
-            [void]$process.WaitForExit(1000)
-            return @{TimedOut=$true;Code=-1;Text=''}
+        $result.Probe.stage = 'process_wait'
+        while ($true) {
+            $remaining = $limitMilliseconds - $PreparationClock.ElapsedMilliseconds
+            if ($remaining -le 0) { $result.TimedOut = $true; return $result }
+            if ($process.WaitForExit([int][Math]::Min(250, $remaining))) { break }
+            if ($PreparationClock.ElapsedMilliseconds -ge $nextProgress) {
+                [Console]::Error.WriteLine(('[gxsec] Docker preparation ({0}): {1}s elapsed.' -f
+                    $ProbeName, [Math]::Round($PreparationClock.Elapsed.TotalSeconds, 1)))
+                $nextProgress = $PreparationClock.ElapsedMilliseconds + 5000
+            }
         }
-        if (-not $stdout.Wait(500) -or -not $stderr.Wait(500)) {
-            return @{TimedOut=$true;Code=-1;Text=''}
+        $result.Code = $process.ExitCode
+        $result.Probe.stage = 'output_collection'
+        while (-not $stdout.IsCompleted -or -not $stderr.IsCompleted) {
+            $remaining = $limitMilliseconds - $PreparationClock.ElapsedMilliseconds
+            if ($remaining -le 0) { $result.TimedOut = $true; return $result }
+            $pending = if (-not $stdout.IsCompleted) { $stdout } else { $stderr }
+            [void]$pending.Wait([int][Math]::Min(250, $remaining))
+            if ($PreparationClock.ElapsedMilliseconds -ge $nextProgress) {
+                [Console]::Error.WriteLine(('[gxsec] Docker output collection ({0}): {1}s elapsed.' -f
+                    $ProbeName, [Math]::Round($PreparationClock.Elapsed.TotalSeconds, 1)))
+                $nextProgress = $PreparationClock.ElapsedMilliseconds + 5000
+            }
         }
-        return @{TimedOut=$false;Code=$process.ExitCode;Text=$stdout.Result.Trim()}
+        [void]$stderr.GetAwaiter().GetResult()
+        $result.Text = $stdout.Result.Trim()
+        $result.Probe.stage = 'complete'
+        return $result
     }
-    catch { return @{TimedOut=$false;Code=-1;Text=''} }
-    finally { $process.Dispose() }
+    catch { $result.Code = -1; return $result }
+    finally {
+        try {
+            if (-not $process.HasExited) {
+                $process.Kill()
+                [void]$process.WaitForExit(1000)
+            }
+        } catch {}
+        $result.Probe.elapsed_ms = [int]$probeClock.ElapsedMilliseconds
+        $result.Probe.preparation_elapsed_ms = [int]$PreparationClock.ElapsedMilliseconds
+        $result.Probe.exit_code = $result.Code
+        $process.Dispose()
+    }
 }
 
 $Action = $Action.ToLowerInvariant()
@@ -301,22 +342,25 @@ $sourcePrefix = $resolvedSource.TrimEnd('\','/') + [IO.Path]::DirectorySeparator
 if ($dockerPath.StartsWith($sourcePrefix, [StringComparison]::OrdinalIgnoreCase) -or (Test-ReparseComponents $dockerPath)) {
     Stop-Preparation 'untrusted_docker_location' 'The Docker executable resolves inside the inspected project or through a reparse entry.' 'Use the installed Docker application outside the project.'
 }
-$daemon = Invoke-DockerProbe $dockerPath @('info','--format','{{.OSType}}')
+$preparationClock = [Diagnostics.Stopwatch]::StartNew()
+$daemon = Invoke-DockerProbe $dockerPath @('info','--format','{{.OSType}}') $preparationClock 'daemon'
 if ($daemon.TimedOut) {
-    Stop-Preparation 'docker_probe_timeout' 'Docker preparation did not respond within the time limit.' 'Start Docker and retry the same request.'
+    $reason = if ($daemon.Probe.stage -eq 'output_collection') { 'docker_probe_output_timeout' } else { 'docker_probe_timeout' }
+    Stop-Preparation $reason 'Docker preparation exceeded the shared 20-second waiting budget.' 'Check Docker readiness and retry the same request.' $daemon.Probe
 }
 if ($daemon.Code -ne 0) {
-    Stop-Preparation 'docker_unavailable' 'The Docker service is not ready.' 'Start Docker and retry the same request.'
+    Stop-Preparation 'docker_unavailable' 'The Docker service is not ready.' 'Start Docker and retry the same request.' $daemon.Probe
 }
 if ($daemon.Text -ne 'linux') {
     Stop-Preparation 'docker_linux_required' 'This runtime requires Linux containers.' 'Select the Linux container engine in Docker.'
 }
-$localImage = Invoke-DockerProbe $dockerPath @('image','inspect',$Image,'--format','{{.Id}}|{{.Os}}')
+$localImage = Invoke-DockerProbe $dockerPath @('image','inspect',$Image,'--format','{{.Id}}|{{.Os}}') $preparationClock 'image'
 if ($localImage.TimedOut) {
-    Stop-Preparation 'docker_probe_timeout' 'The local image check did not respond within the time limit.' 'Check Docker and retry the same request.'
+    $reason = if ($localImage.Probe.stage -eq 'output_collection') { 'docker_probe_output_timeout' } else { 'docker_probe_timeout' }
+    Stop-Preparation $reason 'The local image check exceeded the shared 20-second waiting budget.' 'Check Docker readiness and retry the same request.' $localImage.Probe
 }
 if ($localImage.Code -ne 0) {
-    Stop-Preparation 'image_unavailable' 'The selected runtime image is not available locally.' 'Prepare the fixed runtime image once; this command does not download it.'
+    Stop-Preparation 'image_unavailable' 'The selected runtime image is not available locally.' 'Prepare the fixed runtime image once; this command does not download it.' $localImage.Probe
 }
 $imageParts = $localImage.Text.Split('|')
 if ($imageParts.Count -ne 2 -or $imageParts[0] -notmatch '^sha256:[a-f0-9]{64}$') {
