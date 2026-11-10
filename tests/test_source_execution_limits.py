@@ -11,12 +11,22 @@ from gxsec import source, execution
 def test_input_limit_records_partial_inventory_without_reading_large_file(tmp_path, monkeypatch):
     (tmp_path / 'a.java').write_bytes(b'abcd')
     (tmp_path / 'z.data').write_bytes(b'12345678')
-    monkeypatch.setattr(source, '_git', lambda *a, **k: None)
+    original_open = source.os.open
+
+    def guarded_open(path, *args, **kwargs):
+        assert Path(path) != tmp_path / 'z.data', 'Over-budget input must not be opened'
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(source.os, 'open', guarded_open)
+    monkeypatch.setattr(source, '_git', lambda *a, **k: pytest.fail('Git read after input exhaustion'))
     with execution.session(60, max_input_bytes=6, stream=io.StringIO()):
         with execution.phase('source-inventory'):
             result = source.collect_source(tmp_path)
-    assert result['files'] == ['a.java']
-    assert any(e.get('type') == 'execution_budget_exceeded' for e in result['errors'])
+    # Parallel work can finish before its ordered result is consumed; an aborted
+    # window retains only its safe assembled subset, not a guaranteed prefix.
+    assert set(result['files']) <= {'a.java'}
+    assert {'type': 'execution_budget_exceeded', 'reason': 'input_bytes',
+            'stage': 'source-inventory'} in result['errors']
     assert result['inventory_complete'] is False
 
 

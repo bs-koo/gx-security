@@ -7,11 +7,12 @@ from pathlib import Path, PurePosixPath
 import subprocess
 import shutil
 import tempfile
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from contextvars import ContextVar
 from .models import content_hash
 from .redaction import redact
 from .execution import BudgetExceeded, checkpoint, admit_input, current, timeout_for
+from .parallel import ordered_bounded_map
 EXCLUDED_DIRS = {'.git', '.gxsec', '.worktrees', '.venv', 'venv', '__pycache__', 'node_modules', 'target', 'dist', 'build', '.gradle', '.nuxt', '.output', '.next', '.pytest_cache', '.mypy_cache', '.superpowers', '.dev', '.omc', '.humanize', '.gxsec-container', '.gxsec-tools'}
 EXCLUDED_DIRECTORY_PATHS = (('.claude', 'worktrees'),)
 _selected_paths = ContextVar('gxsec_selected_paths', default=())
@@ -193,65 +194,76 @@ def collect_source(source: Path, *, git_boundary=None) -> dict:
 
     def onerror(exc):
         errors.append({'path': str(getattr(exc, 'filename', '')), 'error': str(exc)})
-    for directory, dirs, names in os.walk(root, followlinks=False, onerror=onerror):
-        try:
+
+    def inputs():
+        # Directory traversal and scope decisions stay on the parent thread.
+        for directory, dirs, names in os.walk(root, followlinks=False, onerror=onerror):
             checkpoint()
-        except BudgetExceeded as exc:
-            errors.append(exc.diagnostic)
-            exhausted = True
-            break
-        base = Path(directory)
-        for name in list(dirs):
-            p = base / name
-            reason = directory_exclusion_reason(p.relative_to(root).as_posix())
-            # Explicit vendor/generated exclusions never follow their entries,
-            # including junctions. Unspecified links still make scope incomplete.
-            reparse = not reason and is_reparse(p)
-            if reason or reparse:
-                dirs.remove(name)
-                if reparse:
-                    errors.append({'type': 'reparse_entry', 'path': p.relative_to(root).as_posix()})
-                exclusions.append(
-                    {
-                        'path': p.relative_to(root).as_posix(),
-                        'reason': 'reparse-entry' if reparse else reason,
-                    },
-                )
-        dirs.sort()
-        for name in sorted(names):
-            p = base / name
-            rel = p.relative_to(root).as_posix()
-            if name == '.git':
-                exclusions.append({'path': rel, 'reason': 'git-metadata'})
-                continue
-            try:
-                # Reuse this exact pre-open observation; opened/final identities
-                # are still checked independently by the reader.
-                before = p.lstat()
-                if _is_reparse_stat(before):
-                    exclusions.append({'path': rel, 'reason': 'reparse-entry'})
-                    errors.append({'type': 'reparse_entry', 'path': rel})
+            base = Path(directory)
+            for name in list(dirs):
+                p = base / name
+                reason = directory_exclusion_reason(p.relative_to(root).as_posix())
+                # Explicit exclusions never follow entries, including junctions.
+                reparse = not reason and is_reparse(p)
+                if reason or reparse:
+                    dirs.remove(name)
+                    if reparse:
+                        errors.append({'type': 'reparse_entry', 'path': p.relative_to(root).as_posix()})
+                    exclusions.append({'path': p.relative_to(root).as_posix(),
+                                       'reason': 'reparse-entry' if reparse else reason})
+            dirs.sort()
+            for name in sorted(names):
+                p = base / name
+                if name == '.git':
+                    exclusions.append({'path': p.relative_to(root).as_posix(), 'reason': 'git-metadata'})
                     continue
-                h, size = _read_inventory_file(p, root, before=before)
-                files.append(rel)
-                if rel not in {'gxsec.yaml', 'gxsec.yml', 'gxsec.json'}:
-                    digest.update(rel.encode('utf-8') + b'\x00' + h.encode() + b'\x00')
-                supported = p.suffix.lower() in SUPPORTED or name == '.env' or name.startswith('.env.') or (name in {'Dockerfile', 'Pipfile', 'go.mod', 'go.sum', 'Gemfile', 'Gemfile.lock', 'yarn.lock', 'pnpm-lock.yaml', 'gradle.lockfile'})
-                inventory.append({'path': rel, 'hash': h, 'size': size, 'supported': supported})
-                if name in {'pom.xml', 'build.gradle', 'build.gradle.kts', 'package.json', 'pyproject.toml', 'go.mod'}:
-                    module = p.parent.relative_to(root).as_posix()
-                    modules.setdefault(module, []).append(name)
-            except BudgetExceeded as exc:
-                errors.append(exc.diagnostic)
-                exhausted = True
-                break
-            except ValueError as exc:
-                kind = str(exc) if str(exc) in {'nonregular_input', 'source_changed_while_opening', 'source_changed_while_reading'} else 'input_unavailable'
-                errors.append({'type': kind, 'path': rel})
-            except OSError as exc:
-                errors.append({'path': rel, 'error': str(exc)})
-        if exhausted:
-            break
+                yield p
+
+    def input_error(exc, relative):
+        if isinstance(exc, OSError):
+            return {'path': relative, 'error': str(exc)}
+        kind = str(exc) if str(exc) in {'nonregular_input', 'source_changed_while_opening', 'source_changed_while_reading'} else 'input_unavailable'
+        return {'type': kind, 'path': relative}
+
+    def read_input(p):
+        # Workers do file I/O only; ordered results are assembled by the parent.
+        checkpoint()
+        relative = p.relative_to(root).as_posix()
+        try:
+            before = p.lstat()
+            if _is_reparse_stat(before):
+                return p, None, None, {'type': 'reparse_entry', 'path': relative}
+            h, size = _read_inventory_file(p, root, before=before)
+            return p, h, size, None
+        except (ValueError, OSError) as exc:
+            return p, None, None, input_error(exc, relative)
+
+    try:
+        # Closing joins every submitted reader even if parent assembly fails.
+        with closing(ordered_bounded_map(read_input, inputs())) as results:
+            for p, h, size, error in results:
+                rel, name = p.relative_to(root).as_posix(), p.name
+                if error is not None:
+                    errors.append(error)
+                    if error.get('type') == 'reparse_entry':
+                        exclusions.append({'path': rel, 'reason': 'reparse-entry'})
+                    continue
+                try:
+                    files.append(rel)
+                    if rel not in {'gxsec.yaml', 'gxsec.yml', 'gxsec.json'}:
+                        digest.update(rel.encode('utf-8') + b'\x00' + h.encode() + b'\x00')
+                    supported = p.suffix.lower() in SUPPORTED or name == '.env' or name.startswith('.env.') or (name in {'Dockerfile', 'Pipfile', 'go.mod', 'go.sum', 'Gemfile', 'Gemfile.lock', 'yarn.lock', 'pnpm-lock.yaml', 'gradle.lockfile'})
+                    inventory.append({'path': rel, 'hash': h, 'size': size, 'supported': supported})
+                    if name in {'pom.xml', 'build.gradle', 'build.gradle.kts', 'package.json', 'pyproject.toml', 'go.mod'}:
+                        module = p.parent.relative_to(root).as_posix()
+                        modules.setdefault(module, []).append(name)
+                except (ValueError, OSError) as exc:
+                    errors.append(input_error(exc, rel))
+    except BudgetExceeded as exc:
+        # A failed window may discard unconsumed successes. Only the assembled
+        # safe subset is retained; it cannot represent a complete source scope.
+        errors.append(exc.diagnostic)
+        exhausted = True
     def git(*arguments):
         nonlocal exhausted
         if exhausted:

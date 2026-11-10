@@ -1,6 +1,7 @@
 import io
 import json
 import time
+import threading
 
 import pytest
 
@@ -73,3 +74,58 @@ def test_heartbeat_visible_during_blocked_engine():
         with execution.phase('engine-sast'):
             time.sleep(0.04)
     assert 'heartbeat' in stream.getvalue()
+
+
+def test_first_input_failure_is_rethrown_after_later_deadline_and_phase():
+    ticks = [0.0]
+    with execution.session(10, max_input_bytes=1, stream=io.StringIO(), clock=lambda: ticks[0]) as budget:
+        with execution.phase('source-inventory'):
+            with pytest.raises(execution.BudgetExceeded) as first:
+                execution.admit_input(2)
+        ticks[0] = 11.0
+        with pytest.raises(execution.BudgetExceeded) as later:
+            with execution.phase('source-recheck'):
+                pytest.fail('An exhausted execution resumed')
+        assert later.value.diagnostic == first.value.diagnostic == budget.summary()['budget_exceeded']
+        assert later.value.diagnostic['reason'] == 'input_bytes'
+        assert later.value.diagnostic['stage'] == 'source-inventory'
+
+
+def test_parallel_callback_order_cannot_change_the_first_budget_reason():
+    from gxsec.parallel import ordered_bounded_map
+    ticks = [0.0]
+    first_failure, later_failure = threading.Event(), threading.Event()
+    with execution.session(10, max_input_bytes=1, stream=io.StringIO(), clock=lambda: ticks[0]) as budget:
+        with execution.phase('snapshot-copy'):
+            def work(index):
+                if index == 0:
+                    try:
+                        execution.admit_input(2)
+                    except execution.BudgetExceeded:
+                        first_failure.set()
+                        assert later_failure.wait(3)
+                        time.sleep(0.03)  # Make the later worker's exception observable first.
+                        raise
+                assert first_failure.wait(3)
+                ticks[0] = 11.0
+                try:
+                    execution.checkpoint()
+                finally:
+                    later_failure.set()
+
+            with pytest.raises(execution.BudgetExceeded) as error:
+                list(ordered_bounded_map(work, [0, 1], workers=2))
+        assert error.value.diagnostic == budget.summary()['budget_exceeded']
+        assert error.value.diagnostic['reason'] == 'input_bytes'
+
+
+def test_expired_budget_cannot_resume_when_clock_recovers():
+    ticks = [0.0]
+    with execution.session(10, max_input_bytes=1, stream=io.StringIO(), clock=lambda: ticks[0]) as budget:
+        ticks[0] = 11.0
+        with pytest.raises(execution.BudgetExceeded) as first:
+            execution.checkpoint()
+        ticks[0] = 0.0
+        with pytest.raises(execution.BudgetExceeded) as later:
+            execution.checkpoint()
+        assert later.value.diagnostic == first.value.diagnostic == budget.summary()['budget_exceeded']

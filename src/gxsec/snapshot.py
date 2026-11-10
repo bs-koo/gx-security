@@ -1,10 +1,10 @@
 """Private byte-verified static inputs, independent of the mutable working tree."""
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 import copy
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shutil
 import stat
@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 
 from .models import content_hash
+from .parallel import ordered_bounded_map
 from .execution import checkpoint, phase, timeout_for
 from .diagnostics import exception_diagnostic, process_failure
 from .source import directory_exclusion_reason, exclusion_contract, is_reparse, reject_reparse_path, runtime_environment, trusted_runtime_tool
@@ -329,17 +330,37 @@ def verified_snapshot(source, inventory, *, include_history=True):
     home.mkdir(mode=0o700)
     try:
         records = inventory.get('inventory')
-        if not isinstance(records, list) or sorted(inventory.get('files', [])) != sorted(row.get('path') for row in records):
+        names = inventory.get('files')
+        if (not isinstance(records, list) or not isinstance(names, list)
+                or any(not isinstance(name, str) for name in names)
+                or any(not isinstance(row, dict) or not isinstance(row.get('path'), str) for row in records)
+                or sorted(names) != sorted(row['path'] for row in records)):
             raise ValueError('Initial source inventory is inconsistent')
         expected = {}
+        normalized = set()
+        def copy_input(item):
+            checkpoint()
+            relative, digest = item
+            _copy_file(source, relative, digest, target.joinpath(*PurePosixPath(relative).parts))
+
         with phase('snapshot-copy'):
             for row in records:
                 checkpoint()
                 relative, digest = row.get('path'), row.get('hash')
-                if not isinstance(relative, str) or relative in expected or not isinstance(digest, str) or not re.fullmatch(r'[a-f0-9]{64}', digest):
+                logical = PurePosixPath(relative)
+                key = os.path.normcase(logical.as_posix())
+                if (not logical.parts or relative != logical.as_posix() or '\\' in relative
+                        or any(ord(character) < 32 for character in relative)
+                        or logical.is_absolute() or PureWindowsPath(relative).drive
+                        or any(part in {'..', '.', '.git'} for part in logical.parts)
+                        or key in normalized or not isinstance(digest, str)
+                        or not re.fullmatch(r'[a-f0-9]{64}', digest)):
                     raise ValueError('Initial source file identity is invalid')
-                _copy_file(source, relative, digest, target / relative)
+                normalized.add(key)
                 expected[relative] = digest
+            with closing(ordered_bounded_map(copy_input, expected.items())) as copies:
+                for _ in copies:
+                    pass
         with phase('git-history'):
             history = (_copy_history(source, target, inventory, home) if include_history
                        else {'required': False, 'status': 'not_available', 'reason': 'File-only snapshot'})

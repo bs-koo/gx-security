@@ -33,13 +33,15 @@ class Execution:
         self.lock = threading.RLock()
 
     def check(self):
-        reason = ('duration' if self.clock() - self.started >= self.seconds else
-                  'input_bytes' if self.input_bytes > self.max_input_bytes else None)
-        if reason:
-            error = BudgetExceeded(reason, self.stage)
-            if self.failure is None:
-                self.failure = error.diagnostic
-            raise error
+        with self.lock:
+            if self.failure is not None:
+                raise BudgetExceeded(self.failure['reason'], self.failure['stage'])
+            reason = ('duration' if self.clock() - self.started >= self.seconds else
+                      'input_bytes' if self.input_bytes > self.max_input_bytes else None)
+            if reason:
+                error = BudgetExceeded(reason, self.stage)
+                self.failure = dict(error.diagnostic)
+                raise error
 
     def emit(self, event):
         with self.lock:
@@ -57,12 +59,13 @@ class Execution:
             self.emit('heartbeat')
 
     def summary(self):
-        return {'elapsed_seconds': round(self.clock() - self.started, 3),
-                'max_duration_seconds': self.seconds, 'max_input_bytes': self.max_input_bytes,
-                'input_scope': 'working-tree-files',
-                'input_bytes': self.input_bytes, 'bytes_read': self.bytes_read, 'files': self.files,
-                'phases': {name: dict(value) for name, value in self.phases.items()},
-                'budget_exceeded': self.failure}
+        with self.lock:
+            return {'elapsed_seconds': round(self.clock() - self.started, 3),
+                    'max_duration_seconds': self.seconds, 'max_input_bytes': self.max_input_bytes,
+                    'input_scope': 'working-tree-files',
+                    'input_bytes': self.input_bytes, 'bytes_read': self.bytes_read, 'files': self.files,
+                    'phases': {name: dict(value) for name, value in self.phases.items()},
+                    'budget_exceeded': dict(self.failure) if self.failure is not None else None}
 
 
 @contextmanager
@@ -90,10 +93,10 @@ def phase(name):
         return
     if not isinstance(name, str) or not name or any(c not in 'abcdefghijklmnopqrstuvwxyz0123456789-_' for c in name):
         raise ValueError('Execution phase must be a fixed non-sensitive identifier')
-    previous = budget.stage
-    budget.stage = name
-    started = budget.clock()
     with budget.lock:
+        previous = budget.stage
+        budget.stage = name
+        started = budget.clock()
         row = budget.phases.setdefault(name, {'seconds': 0, 'bytes_read': 0, 'files': 0, 'calls': 0})
         row['calls'] += 1
     budget.emit('phase-started')
@@ -104,7 +107,8 @@ def phase(name):
         with budget.lock:
             row['seconds'] = round(row['seconds'] + budget.clock() - started, 6)
         budget.emit('phase-finished')
-        budget.stage = previous
+        with budget.lock:
+            budget.stage = previous
 
 
 def checkpoint(*, bytes_read=0, files=0):
@@ -123,16 +127,18 @@ def checkpoint(*, bytes_read=0, files=0):
 def admit_input(size):
     budget = _active.get()
     if budget is not None:
-        budget.input_bytes += size
-        budget.check()
+        with budget.lock:
+            budget.input_bytes += size
+            budget.check()
 
 
 def timeout_for(seconds):
     budget = _active.get()
     if budget is None:
         return seconds
-    budget.check()
-    return max(0.001, min(float(seconds), budget.seconds - (budget.clock() - budget.started)))
+    with budget.lock:
+        budget.check()
+        return max(0.001, min(float(seconds), budget.seconds - (budget.clock() - budget.started)))
 
 
 def current():
