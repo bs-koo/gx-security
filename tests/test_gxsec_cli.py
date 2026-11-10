@@ -5,6 +5,7 @@ import subprocess
 import sys
 import hashlib
 from types import SimpleNamespace
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -216,7 +217,41 @@ def test_source_drift_while_scanning_prevents_pass(tmp_path, monkeypatch, capsys
     assert module.main(["release", str(source), "--profile", "static-release", "--json"]) == 2
     run = json.loads(capsys.readouterr().out)
     assert run["gate"]["status"] == "INCOMPLETE"
-    assert any(c["id"] == "source-integrity" and c["status"] != "complete" for c in run["checks"])
+    integrity = next(c for c in run['checks'] if c['id'] == 'source-integrity')
+    assert integrity['status'] == 'incomplete'
+    assert integrity['errors'] == ['Source identity changed during scanning']
+
+
+@pytest.mark.parametrize('source_changed', [False, True])
+def test_source_inventory_error_is_distinct_from_identity_change(tmp_path, monkeypatch, capsys, source_changed):
+    from gxsec import cli as module
+    source = tmp_path / 'source'
+    source.mkdir()
+    app = source / 'App.java'
+    app.write_text('class Before {}', encoding='utf-8')
+    original_collect = module.collect_source
+    scans = []
+    def collect(root):
+        result = original_collect(root)
+        if scans:
+            result['errors'] = [{'type': 'reparse_entry', 'path': 'private-path-marker'}]
+        scans.append(result)
+        return result
+    def scanner(*args):
+        if source_changed:
+            app.write_text('class After {}', encoding='utf-8')
+        return [], []
+    monkeypatch.setattr(module, 'collect_source', collect)
+    monkeypatch.setattr(module.adapters, 'run_static_checks', scanner)
+    assert module.main(['release', str(source), '--profile', 'static-release', '--json']) == 2
+    run = json.loads(capsys.readouterr().out)
+    integrity = next(c for c in run['checks'] if c['id'] == 'source-integrity')
+    assert integrity['status'] == 'incomplete'
+    expected = ['Source identity changed during scanning'] if source_changed else []
+    assert integrity['errors'] == expected + ['Source inventory could not be completely verified']
+    assert (integrity['before_hash'] != integrity['after_hash']) == source_changed
+    assert integrity['coverage']['scanned'] == 0
+    assert 'private-path-marker' not in json.dumps(integrity)
 
 
 def test_dynamic_lease_uses_the_saved_execution_identity(tmp_path, monkeypatch, capsys):

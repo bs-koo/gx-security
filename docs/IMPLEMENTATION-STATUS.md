@@ -25,6 +25,7 @@
 | 새 호스트 행동 평가 | [8개 fixture와 독립 평가 지침](research/credibility-hardening-2026-11-10/host-behavior-review.md) 제공. **실제 호스트 평가 미완료** |
 | Windows 전체 자동 회귀 | **1,180 passed / 15 skipped / 314 subtests passed**. `GXSEC_NO_SEMGREP=1` 경로, 2026-11-10. 실제 엔진 평가는 위 별도 행과 구분 |
 | 후속 경로 경계 회귀 | 폴더 끝 구분자를 포함한 출력 중첩·정책·DB·정상 실행 **9개 통과**. 전체 회귀와 겹치므로 합산하지 않음 |
+| 입력 무결성 진단 회귀 | 실제 소스 변경, 수집 오류 단독·변경 동반, 정상 실행을 구분한 **4개 통과**. 수집 미완료를 실제 소스 변경으로 오인하지 않고 미완료 판정 유지 |
 | 원격 필수 검사 | [구현 커밋의 CI](https://github.com/bs-koo/gx-security/actions/runs/42734769053): Windows **1,181 passed / 16 skipped**, Ubuntu **1,120 passed / 77 skipped**, 고정 Semgrep **1,133 passed / 64 skipped**. 환경별 범위가 겹치므로 합산하지 않음 |
 | 고정 Linux 패키지 | 같은 CI의 원본 Dockerfile 빌드·네트워크 차단 준비 확인·실제 엔진 시험 통과. 합성 의존성 취약 버전 `BLOCK` → 수정 버전 `PASS`와 종료 근거 검증 |
 | 실제 사용자 등록·OS 설치 | 이번 등록기 검증에서는 수행하지 않음 |

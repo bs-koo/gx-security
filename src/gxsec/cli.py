@@ -257,9 +257,14 @@ def _execute(args, retest_id=None):
                               "errors": [type(exc).__name__ + ": " + str(exc)], "coverage": {"eligible": 1, "scanned": 0}})
     try:
         after = collect_source(source)
-        stable = not after.get("errors") and all(after.get(k) == run["source"].get(k) for k in ("hash", "revision", "dirty", "scope_hash"))
+        integrity_errors = []
+        if any(after.get(k) != run['source'].get(k) for k in ('hash', 'revision', 'dirty', 'scope_hash')):
+            integrity_errors.append('Source identity changed during scanning')
+        if after.get('errors'):
+            integrity_errors.append('Source inventory could not be completely verified')
+        stable = not integrity_errors
         run["checks"].append({"id": "source-integrity", "status": "complete" if stable else "incomplete", "required": True,
-            "errors": [] if stable else ["Source identity changed during scanning"],
+            "errors": integrity_errors,
             "coverage": {"eligible": 1, "scanned": 1 if stable else 0, "scope": "full"},
             "before_hash": run["source"].get("hash"), "after_hash": after.get("hash")})
     except (OSError, ValueError):
