@@ -57,6 +57,7 @@
               "finding-review",
               "finding-validation",
               "finding-refutation",
+              "remediation-validation",
               "risk-acceptance",
               "not-applicable",
               "release-evidence",
@@ -80,6 +81,22 @@
     },
     "require_framework_baseline": {
       "type": "boolean"
+    },
+    "framework": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected_family"],
+      "description": "Protected minimum framework inspection contract. Project configuration cannot remove these requirements.",
+      "properties": {
+        "expected_family": {"const": "SEF"},
+        "required_contracts": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 5,
+          "description": "Omission requires all five supported boundaries. Missing controls remain unobserved, not automatically not-applicable.",
+          "items": {"enum": ["admin-boundary", "jwt-purpose", "menu-object-association", "route-boundary", "file-confinement"]}
+        }
+      }
     },
     "release_evidence": {
       "type": "object",

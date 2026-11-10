@@ -10,6 +10,21 @@ PROFILE_REQUIREMENTS = {
     'source-review': STATIC_REQUIRED,
     'release': RELEASE_REQUIRED,
 }
+FRAMEWORK_CONTRACTS = ('admin-boundary', 'jwt-purpose', 'menu-object-association',
+                       'route-boundary', 'file-confinement')
+
+
+def framework_requirement(value):
+    """Validate an additive expectation; it never supplies baseline or approval trust."""
+    if (not isinstance(value, dict) or set(value) - {'expected_family', 'required_contracts'}
+            or value.get('expected_family') != 'SEF'):
+        raise ValueError('framework must declare expected_family SEF and optional required_contracts')
+    contracts = value.get('required_contracts', list(FRAMEWORK_CONTRACTS))
+    if (not isinstance(contracts, list) or len(contracts) > len(FRAMEWORK_CONTRACTS)
+            or any(not isinstance(item, str) or item not in FRAMEWORK_CONTRACTS for item in contracts)
+            or len(set(contracts)) != len(contracts)):
+        raise ValueError('framework required_contracts must contain distinct supported boundary identifiers')
+    return {'expected_family': 'SEF', 'required_contracts': sorted(contracts)}
 
 def default_config(source: Path) -> dict:
     source = Path(source).resolve()
@@ -71,6 +86,8 @@ def load_config(path: Path) -> dict:
         raise ValueError('Trust and approvals must come from an independent protected policy input')
     if not isinstance(raw.get('project', {}), dict):
         raise ValueError('project must be an object')
+    if 'framework' in raw:
+        framework_requirement(raw['framework'])
     src = Path(raw.get('project', {}).get('source', path.parent))
     if not src.is_absolute():
         src = path.parent / src

@@ -118,7 +118,7 @@ def test_osv_stale_missing_provenance_and_unknown_severity(tmp_path, monkeypatch
     if any((Path(c[0]).name == 'osv-scanner' and '--version' not in c for c, k in calls)):
         cmd, kw = next(((c, k) for c, k in calls if Path(c[0]).name == 'osv-scanner' and '--version' not in c))
         assert '--offline' in cmd and '--all-packages' in cmd
-        assert kw['env']['OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY'] == str(db)
+        assert kw['env']['OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY'] != str(db)
     assert policy.evaluate(checks, findings)['status'] == 'INCOMPLETE'
 
 def test_gitleaks_directory_and_history_reports_redacted(tmp_path, monkeypatch):
@@ -259,7 +259,7 @@ def test_osv_fresh_complete_offline_input_and_unknown_advisory_severity(tmp_path
                         }],
                     },
                 ),
-                'Loaded npm local db from ' + str(archive) + '\n',
+                'Loaded npm local db from ' + str(Path(kw['env']['OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY']) / 'osv-scalibr/npm/all.zip') + '\n',
             )
         if Path(cmd[0]).name == 'semgrep':
             return subprocess.CompletedProcess(
@@ -279,7 +279,8 @@ def test_osv_fresh_complete_offline_input_and_unknown_advisory_severity(tmp_path
     assert policy.evaluate(checks, findings)['status'] == 'INCOMPLETE'
     cmd, kw = next(((cmd, kw) for cmd, kw in calls if Path(cmd[0]).name == 'osv-scanner' and '--version' not in cmd))
     assert '--offline' in cmd and '--all-packages' in cmd and ('--config' in cmd)
-    assert kw['env']['OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY'] == str(db)
+    assert kw['env']['OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY'] != str(db)
+    assert not Path(kw['env']['OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY']).exists()
     archive.write_bytes(b'tampered')
     checks, _ = adapters.run_static_checks(src, cfg, 'static-release')
     assert next((c for c in checks if c['id'] == 'sca'))['status'] == 'incomplete'
@@ -513,10 +514,11 @@ def test_osv_parsed_packages_without_advisory_matching_are_incomplete(tmp_path,m
     cfg,inventory,archive=osv_matching_fixture(tmp_path)
     package={'name':'a','version':'1.0.0','ecosystem':'npm'}
     if origin:package['purl']='pkg:npm/a@1.0.0?source='+origin
-    stderr=('Loaded npm local db from '+str(tmp_path/'unapproved.zip' if wrong_path else archive)+'\n') if loaded else ''
-    if extraction_error:stderr+='Error during extraction: (extracting as vulnmatch/osvlocal) synthetic matcher failure\n'
     def execute(cmd,**kwargs):
         if '--version' in cmd:return subprocess.CompletedProcess(cmd,0,'2.7.0','')
+        scan_archive = Path(kwargs['env']['OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY']) / 'osv-scalibr/npm/all.zip'
+        stderr=('Loaded npm local db from '+str(tmp_path/'unapproved.zip' if wrong_path else scan_archive)+'\n') if loaded else ''
+        if extraction_error:stderr+='Error during extraction: (extracting as vulnmatch/osvlocal) synthetic matcher failure\n'
         return subprocess.CompletedProcess(cmd,0,json.dumps({'results':[{'source':{'path':str(tmp_path/'package-lock.json'),'type':'lockfile'},'packages':[{'package':package}]}]}),stderr)
     monkeypatch.setattr(adapters.subprocess,'run',execute)
     check,findings=adapters._sca(tmp_path,cfg,inventory,'static-release')
@@ -528,7 +530,8 @@ def test_osv_approved_loaded_database_and_public_package_prove_matching(tmp_path
     cfg,inventory,archive=osv_matching_fixture(tmp_path)
     def execute(cmd,**kwargs):
         if '--version' in cmd:return subprocess.CompletedProcess(cmd,0,'2.7.0','')
-        return subprocess.CompletedProcess(cmd,0,json.dumps({'results':[{'source':{'path':str(tmp_path/'package-lock.json'),'type':'lockfile'},'packages':[{'package':{'name':'a','version':'1.0.0','ecosystem':'npm','purl':'pkg:npm/a@1.0.0?source=PUBLIC_REGISTRY'}}]}]}),'Loaded npm local db from '+str(archive)+'\n')
+        scan_archive = Path(kwargs['env']['OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY']) / 'osv-scalibr/npm/all.zip'
+        return subprocess.CompletedProcess(cmd,0,json.dumps({'results':[{'source':{'path':str(tmp_path/'package-lock.json'),'type':'lockfile'},'packages':[{'package':{'name':'a','version':'1.0.0','ecosystem':'npm','purl':'pkg:npm/a@1.0.0?source=PUBLIC_REGISTRY'}}]}]}),'Loaded npm local db from '+str(scan_archive)+'\n')
     monkeypatch.setattr(adapters.subprocess,'run',execute)
     check,_=adapters._sca(tmp_path,cfg,inventory,'static-release')
     assert check['status']=='complete'
@@ -548,7 +551,7 @@ def test_sast_uses_protected_catalog_guidance_instead_of_native_interpolated_tex
     finding=findings[0]
     assert 'PreparedStatement' in finding['description'] and '\ud50c\ub808\uc774\uc2a4\ud640\ub354' in finding['remediation']['guidance']
     assert finding['category']=='sql-injection' and finding['cwe']=='CWE-89' and finding['stack']=='jsp-legacy'
-    assert finding['title']!=finding['rule_id'] and finding['severity'] is None
+    assert finding['title']!=finding['rule_id'] and finding['severity']=='High'
     assert 'unlabelled-sensitive-fixture' not in json.dumps(finding) and 'forged-category' not in json.dumps(finding)
 
 def test_osv_loaded_ecosystem_cannot_claim_another_approved_ecosystem_archive(tmp_path,monkeypatch):
@@ -558,7 +561,67 @@ def test_osv_loaded_ecosystem_cannot_claim_another_approved_ecosystem_archive(tm
     manifest=database/'snapshot.json';document=json.loads(manifest.read_text());document['files']['osv-scalibr/Maven/all.zip']=hashlib.sha256(maven.read_bytes()).hexdigest();manifest.write_text(json.dumps(document));cfg['_trusted_policy']['sca']['db_manifest_sha256']=hashlib.sha256(manifest.read_bytes()).hexdigest()
     def execute(cmd,**kwargs):
         if '--version' in cmd:return subprocess.CompletedProcess(cmd,0,'2.7.0','')
-        return subprocess.CompletedProcess(cmd,0,json.dumps({'results':[{'source':{'path':str(tmp_path/'package-lock.json'),'type':'lockfile'},'packages':[{'package':{'name':'a','version':'1.0.0','ecosystem':'npm','purl':'pkg:npm/a@1.0.0?source=PUBLIC_REGISTRY'}}]}]}),'Loaded npm local db from '+str(maven)+'\n')
+        wrong_archive = Path(kwargs['env']['OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY']) / 'osv-scalibr/Maven/all.zip'
+        return subprocess.CompletedProcess(cmd,0,json.dumps({'results':[{'source':{'path':str(tmp_path/'package-lock.json'),'type':'lockfile'},'packages':[{'package':{'name':'a','version':'1.0.0','ecosystem':'npm','purl':'pkg:npm/a@1.0.0?source=PUBLIC_REGISTRY'}}]}]}),'Loaded npm local db from '+str(wrong_archive)+'\n')
     monkeypatch.setattr(adapters.subprocess,'run',execute)
     check,_=adapters._sca(tmp_path,cfg,inventory,'static-release')
     assert check['status']=='incomplete' and check['coverage']['matching']['complete'] is False
+
+
+@pytest.mark.parametrize('change', ['original-database', 'private-snapshot', 'engine-error'])
+def test_osv_scans_verified_private_database_bytes_and_rejects_snapshot_changes(tmp_path, monkeypatch, change):
+    cfg, inventory, archive = osv_matching_fixture(tmp_path)
+    original_bytes = archive.read_bytes()
+    extra = archive.parents[2] / '.git'
+    extra.mkdir()
+    (extra / 'config').write_text('unapproved DB directory metadata must not be copied')
+    private_roots = []
+
+    def execute(cmd, **kwargs):
+        if '--version' in cmd:
+            return subprocess.CompletedProcess(cmd, 0, '2.7.0', '')
+        database = Path(kwargs['env']['OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY'])
+        private_roots.append(database)
+        scan_archive = database / 'osv-scalibr' / 'npm' / 'all.zip'
+        if change == 'original-database':
+            archive.write_bytes(b'changed after initial approval verification')
+            assert scan_archive.read_bytes() == original_bytes
+        elif change == 'private-snapshot':
+            scan_archive.chmod(0o600)
+            scan_archive.write_bytes(b'changed inside the private engine input')
+        assert database != archive.parents[2]
+        assert not (database / '.git').exists()
+        if change == 'engine-error':
+            raise subprocess.TimeoutExpired(cmd, 1)
+        payload = {'results': [{'source': {'path': str(tmp_path / 'package-lock.json'), 'type': 'lockfile'},
+            'packages': [{'package': {'name': 'a', 'version': '1.0.0', 'ecosystem': 'npm',
+                'purl': 'pkg:npm/a@1.0.0?source=PUBLIC_REGISTRY'}}]}]}
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), 'Loaded npm local db from ' + str(scan_archive) + '\n')
+
+    monkeypatch.setattr(adapters.subprocess, 'run', execute)
+    check, findings = adapters._sca(tmp_path, cfg, inventory, 'static-release')
+    assert check['status'] == ('complete' if change == 'original-database' else 'incomplete'), check
+    assert findings == []
+    assert private_roots and all(not path.exists() for path in private_roots)
+
+
+def test_osv_rejects_database_change_between_approval_check_and_private_copy(tmp_path, monkeypatch):
+    cfg, inventory, archive = osv_matching_fixture(tmp_path)
+    original_snapshot = adapters.verified_snapshot
+    scans = []
+
+    def changed_before_copy(database, database_inventory, **kwargs):
+        archive.write_bytes(b'changed after approval check and before private copy')
+        return original_snapshot(database, database_inventory, **kwargs)
+
+    def execute(cmd, **kwargs):
+        if '--version' in cmd:
+            return subprocess.CompletedProcess(cmd, 0, '2.7.0', '')
+        scans.append(cmd)
+        raise AssertionError('Changed database must not be passed to OSV')
+
+    monkeypatch.setattr(adapters, 'verified_snapshot', changed_before_copy)
+    monkeypatch.setattr(adapters.subprocess, 'run', execute)
+    check, findings = adapters._sca(tmp_path, cfg, inventory, 'static-release')
+    assert check['status'] == 'incomplete' and findings == [] and scans == []
+    assert any('hash' in error['message'].lower() for error in check['errors'])

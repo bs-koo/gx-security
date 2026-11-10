@@ -1,12 +1,12 @@
 # GX Security 기존 전문 명령 참고서
 
-> 기존 `gx-diagnose`·`gx-audit`·`gx-pentest`의 구성과 옵션을 설명하는 호환 참고서입니다. 0.10.0 프리뷰의 기본 시작점·준비·판정 기준은 [README](README.md)와 [상세 사용법](USAGE.md)을 따릅니다. 아래 과거 분석 예시를 자동 안전 판정이나 출시 승인으로 사용하지 않습니다.
+> 기존 `gx-diagnose`·`gx-audit`·`gx-pentest`의 구성과 옵션을 설명하는 호환 참고서입니다. 0.10.2 작업본의 기본 시작점·준비·판정 기준은 [README](README.md)와 [상세 사용법](USAGE.md)을 따릅니다. 아래 전문 경로는 출시 판정의 자동 증거가 아닙니다.
 
 [제품 소개로 돌아가기](README.md) · [실전 사용 가이드](USAGE.md)
 
-### 정적 정밀도 표준 (권장)
+### 정적 검사 실행 준비
 
-정적 진단은 semgrep이 있을 때 정밀도(recall)가 크게 오릅니다. **사업부 공통 도입 시 semgrep 설치를 표준으로 합니다.** semgrep이 없으면 grep 폴백으로 동작하되 미탐 위험이 커지며, 스캐너가 `[!] 폴백 경고`를 출력합니다.
+공통 출시 점검은 고정 버전 Semgrep의 실행·규칙·범위 근거를 확인합니다. 정규식 폴백은 후보 탐색용이며 동일한 검사 완료로 인정하지 않습니다. 설치 유무나 경고 감소만으로 정밀도·재현율 향상을 주장하지 않습니다. 실제 평가 범위는 [구현·검증 현황](docs/IMPLEMENTATION-STATUS.md)을 확인합니다.
 
 ```bash
 # Linux/macOS
@@ -38,8 +38,8 @@ pip install -r requirements-dev.txt
 |---|---|---|
 | ① 스택 감지 | `build.gradle.kts`·`settings.gradle` → spring-modern / `WEB-INF/web.xml`·`*.jsp` → jsp-legacy. 디렉토리별로 판별해 스택에 맞는 룰만 적용 | 각 스캐너 내장 |
 | ② 정적 스캔 | 9개 `detecting-*` 스캐너를 각각 실행해 취약 후보(파일·라인·룰ID·스니펫)를 도출. Semgrep 룰을 우선 쓰고, 없으면 grep 정규식으로 폴백 | `scan_all.py` → `scan_*.py` + `rules/*.yml` |
-| ③ AI 검증 | Claude가 각 후보의 실제 코드를 읽어 오탐 제거. 예: MyBatis `#{}`면 안전, `getCanonicalPath()+startsWith()` 있으면 안전, Jasypt `ENC()`는 평문 아님, `csrf().disable()`이 STATELESS면 의도된 예외 | `references/stack-patterns.md` 기준 |
-| ④ 리포트 | 확정 취약점만 심각도순 + 4요소로 정리 | `reports/diagnose-<프로젝트>.md` |
+| ③ 근거 검토 | 실제 source/sink·호출 경로·반대 근거를 확인. helper 이름, 문자열 startsWith, STATELESS 표시만으로 안전·예외를 확정하지 않음. 모호한 업무 의도는 질문 뒤 코드와 대조 | 전문 스킬과 references |
+| ④ 리포트 | 후보·검증·미확정과 심각도를 구분해 근거·수정·남은 확인을 정리 | `reports/diagnose-<프로젝트>.md` |
 
 네트워크로 아무것도 보내지 않습니다(소스 읽기 전용). 앱이 떠 있을 필요가 없습니다.
 
@@ -55,7 +55,7 @@ pip install -r requirements-dev.txt
 |---|---|---|
 | ⓪ 범위 확인 | 대상이 발사 허용 범위인지 **먼저 강제 검증**. 운영(`prod`/`www`/공인)·IP 위장(정수·IPv6 매핑)은 차단, loopback/등록된 스테이징만 통과. 모든 비허용은 차단으로 수렴(fail-closed) | `tools/scope_guard.py` |
 | ① 실제 발사 | 취약점 클래스별 페이로드를 실제로 발사합니다(실재 6종은 [스킬 카탈로그](README.md#스킬-구성) 참고) | `attack_*.py` (+ 공용 `tools/dyn_session.py`) |
-| ② 악용 확정 | 클래스별 판정 기준으로 악용을 확정합니다(마커 반사·시간지연·상태코드·OOB 콜백 등) | Playwright MCP · `dyn_session` |
+| ② 근거 검토 | 정상 대조군·신원/객체/실행 oracle을 확인. 반사·지연·상태코드만으로 확정하거나 반증하지 않음 | Playwright MCP · `dyn_session` |
 | ③ 리포트 | 4요소 + **Evidence**(실제 요청·응답·지연시간·스크린샷 경로) | `reports/pentest-<대상>.md` |
 
 기본은 **비파괴**(탐지 페이로드만)입니다. 데이터 변조·삭제는 `--allow-destructive` + 사람 승인이 있어야 합니다.
@@ -67,13 +67,13 @@ pip install -r requirements-dev.txt
                             (scan_all)    (오탐 제거)  (URL 있을 때만)   audit-*.md
 ```
 
-`audit.py` 하나가 위 두 커맨드를 엮습니다. ②는 `scan_all.py`를 호출해 9종 후보를 모으고 ④는 **대상 URL이 주어졌을 때만** `attack_*.py`를 발사합니다(이때도 각 발사가 `scope_guard`를 통과해야 함). URL이 없으면 정적만 수행(완전 안전).
+`audit.py` 하나가 위 두 커맨드를 엮습니다. ②는 `scan_all.py`를 호출해 9종 후보를 모으고 ④는 **대상 URL이 주어졌을 때만** `attack_*.py`를 발사합니다(이때도 각 발사가 `scope_guard`를 통과해야 함). URL이 없으면 정적 분석만 수행하며 동적 요청을 보내지 않습니다.
 
-④의 동적 발사는 취약점 클래스마다 **표적 옵션 + 테스트 계정이 모두 주어진 조합에서만** 발동하며 그 결과가 `dynamic`(전체 발사) / `partial`(일부만) / `static-only`(정적 추정 유지) 3단계로 갈립니다. 예를 들어 인증·세션·JWT는 로그인 계정과 `--probe`가 모두 있어야 `dynamic`이고 SSRF/오픈 리다이렉트·경로조작/업로드는 각각의 표적 옵션(`--ssrf-target` 등)과 계정이 모두 있어야 발사됩니다(업로드는 파괴적이라 `--allow-destructive`도 추가로 필요). **정확한 옵션 조합·판정 표는 [USAGE.md §4](USAGE.md#4-시나리오별-사용)를 참고하세요.**
+④의 동적 발사는 취약점 클래스마다 **표적 옵션 + 테스트 계정이 모두 주어진 조합에서만** 발동하며 그 결과가 `dynamic`(전체 발사) / `partial`(일부만) / `static-only`(정적 추정 유지) 3단계로 갈립니다. 예를 들어 인증·세션·JWT는 로그인 계정과 `--probe`가 모두 있어야 `dynamic`이고 SSRF/오픈 리다이렉트·경로조작/업로드는 각각의 표적 옵션(`--ssrf-target` 등)과 계정이 모두 있어야 발사됩니다(업로드는 파괴적이라 `--allow-destructive`도 추가로 필요). **정확한 옵션 조합·판정 표는 [동적 실행 안내](docs/RUNBOOK-dynamic.md)를 참고하세요.**
 
 > **원격 대상은 콜백 미수신이 곧 '안전'을 뜻하지 않습니다.** SSRF 검사에 쓰는 canary는 127.0.0.1 루프백에만 바인딩되므로, 원격 스테이징에서는 대상 서버가 자기 loopback으로 실제 아웃바운드 요청을 시도했더라도 그 결과가 audit 실행기로 돌아오지 않을 수 있습니다. 원격 대상의 블라인드 SSRF를 확정하려면 `attack_ssrf.py`를 단독 실행하고 `--canary-host`를 지정하세요.
 
-> 셋 다 ②~④의 자동 산출물은 **1차 후보(오탐 포함)** 이며 확정 취약/오탐 판정과 4요소 리포트는 Claude Code의 **AI 검증 단계에서 완성**됩니다. CLI 단독 실행은 ②까지만 수행합니다.
+> 자동 산출물은 후보와 관찰입니다. AI는 근거·반대 근거·남은 질문을 조사하지만 공식 검증·반증·위험 수용은 보호된 독립 검토 조건을 따라야 합니다. `dynamic`은 실행 경로이며 검증 완료 표시가 아닙니다.
 
 ## 지원 스택
 
@@ -172,4 +172,4 @@ security-plugin/
 
 ---
 
-<sub>Proprietary · GX 사업본부 사내용 · v0.8.2</sub>
+<sub>Proprietary · GX 사업본부 사내용 · 0.10.2 참고서 · 2026-11-10</sub>

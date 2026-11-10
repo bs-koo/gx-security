@@ -2,13 +2,17 @@ param(
     [Parameter(Mandatory=$true)][string]$Source,
     [string]$Action='release',
     [string]$Profile,
-    [string]$Image='gx-security:0.10.1',
+    [string]$Image='gx-security:0.10.2',
     [string]$Output,
     [string]$FindingId,
     [string]$Base,
     [string]$RunId,
     [string]$SessionId,
     [string]$Record,
+    [string]$Policy,
+    [string]$Database,
+    [string]$ReviewRecords,
+    [string]$ExpectedFramework,
     [switch]$Json
 )
 $ErrorActionPreference='Stop'
@@ -37,6 +41,14 @@ function Test-ReparseComponents([string]$Path) {
         $current = $parent
     }
     return $false
+}
+
+function Test-WithinPath([string]$Path, [string]$Root) {
+    $normalizedPath = $Path.TrimEnd('\','/')
+    $normalizedRoot = $Root.TrimEnd('\','/')
+    $prefix = $normalizedRoot + [IO.Path]::DirectorySeparatorChar
+    return $normalizedPath.Equals($normalizedRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        $normalizedPath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
 }
 
 function ConvertTo-ProcessArgument([string]$Value) {
@@ -123,6 +135,13 @@ if ($PSBoundParameters.ContainsKey('Record') -and
         ($Action -ne 'discuss' -or -not $PSBoundParameters.ContainsKey('SessionId'))) {
     $validArguments = $false
 }
+if (($PSBoundParameters.ContainsKey('Policy') -and $Action -notin @('check','release','retest')) -or
+        ($PSBoundParameters.ContainsKey('Database') -and -not $PSBoundParameters.ContainsKey('Policy')) -or
+        ($PSBoundParameters.ContainsKey('ReviewRecords') -and -not $PSBoundParameters.ContainsKey('Policy')) -or
+        ($PSBoundParameters.ContainsKey('ExpectedFramework') -and
+            ($ExpectedFramework -cne 'SEF' -or $Action -notin @('check','release','retest')))) {
+    $validArguments = $false
+}
 if (-not $validArguments) {
     Stop-Preparation 'invalid_arguments' 'The action or its arguments are invalid.' 'Use FindingId for retest, RunId for retest/discuss, Base for check, and SessionId/Record for discuss.'
 }
@@ -130,7 +149,7 @@ if (-not $validArguments) {
 try {
     $sourcePath = Resolve-Path -LiteralPath $Source
     if ($sourcePath.Provider.Name -ne 'FileSystem' -or -not (Test-Path -LiteralPath $sourcePath.Path -PathType Container) -or
-            (Test-ReparseComponents $sourcePath.Path)) { throw 'Invalid source directory' }
+            $sourcePath.Path.Contains(',') -or (Test-ReparseComponents $sourcePath.Path)) { throw 'Invalid source directory' }
     $resolvedSource = $sourcePath.Path
 }
 catch { Stop-Preparation 'invalid_source' 'The source must be an existing local directory without reparse entries.' 'Select the intended project directory.' }
@@ -138,11 +157,40 @@ catch { Stop-Preparation 'invalid_source' 'The source must be an existing local 
 if (-not $Output) { $Output = Join-Path $resolvedSource '.gxsec-container' }
 try {
     $resolvedOutput = [IO.Path]::GetFullPath($Output)
-    if ((Test-Path -LiteralPath $resolvedOutput -PathType Leaf) -or (Test-ReparseComponents $resolvedOutput)) {
+    if ($resolvedOutput.Contains(',') -or (Test-WithinPath $resolvedSource $resolvedOutput) -or
+            (Test-Path -LiteralPath $resolvedOutput -PathType Leaf) -or (Test-ReparseComponents $resolvedOutput)) {
         throw 'Invalid output directory'
     }
 }
 catch { Stop-Preparation 'invalid_output' 'The output must be a directory path without reparse entries.' 'Select a separate results directory.' }
+if ($PSBoundParameters.ContainsKey('Policy')) {
+    try {
+        $resolvedPolicy = [IO.Path]::GetFullPath($Policy)
+        if ($resolvedPolicy.Contains(',') -or -not (Test-Path -LiteralPath $resolvedPolicy -PathType Leaf) -or
+                (Test-ReparseComponents $resolvedPolicy) -or (Test-WithinPath $resolvedPolicy $resolvedSource) -or
+                (Test-WithinPath $resolvedPolicy $resolvedOutput)) { throw 'Invalid protected policy' }
+    }
+    catch { Stop-Preparation 'invalid_policy' 'The policy must be an existing file outside source and output, without reparse entries or mount separators.' 'Select the organization-controlled policy; the launcher does not authenticate its author.' }
+}
+if ($PSBoundParameters.ContainsKey('Database')) {
+    try {
+        $resolvedDatabase = [IO.Path]::GetFullPath($Database)
+        if ($resolvedDatabase.Contains(',') -or -not (Test-Path -LiteralPath $resolvedDatabase -PathType Container) -or
+                (Test-ReparseComponents $resolvedDatabase) -or (Test-WithinPath $resolvedDatabase $resolvedSource) -or
+                (Test-WithinPath $resolvedSource $resolvedDatabase) -or (Test-WithinPath $resolvedDatabase $resolvedOutput) -or
+                (Test-WithinPath $resolvedOutput $resolvedDatabase)) { throw 'Invalid approved database' }
+    }
+    catch { Stop-Preparation 'invalid_database' 'The database must be a separate existing directory without reparse entries or mount separators.' 'Select the approved snapshot outside source and output; set sca.offline_db to /advisories in the policy.' }
+}
+if ($PSBoundParameters.ContainsKey('ReviewRecords')) {
+    try {
+        $resolvedReviews = [IO.Path]::GetFullPath($ReviewRecords)
+        if ($resolvedReviews.Contains(',') -or -not (Test-Path -LiteralPath $resolvedReviews -PathType Leaf) -or
+                (Test-ReparseComponents $resolvedReviews) -or (Test-WithinPath $resolvedReviews $resolvedSource) -or
+                (Test-WithinPath $resolvedReviews $resolvedOutput)) { throw 'Invalid review records' }
+    }
+    catch { Stop-Preparation 'invalid_review_records' 'Review records must be an existing file outside source and output, without reparse entries or mount separators.' 'Select the review records corresponding to the protected policy approvals.' }
+}
 if ($Action -eq 'retest') {
     $previousDatabase = Join-Path $resolvedOutput 'state/state.sqlite3'
     if (-not (Test-Path -LiteralPath $previousDatabase -PathType Leaf) -or (Test-ReparseComponents $previousDatabase)) {
@@ -213,6 +261,24 @@ if ($Action -ne 'doctor') {
 if ($PSBoundParameters.ContainsKey('Record')) {
     $dockerArguments += @('--mount',"type=bind,source=$resolvedRecord,target=/discussion-input/record.json,readonly")
 }
+if ($PSBoundParameters.ContainsKey('Policy')) {
+    $dockerArguments += @('--mount',"type=bind,source=$resolvedPolicy,target=/trusted/policy.json,readonly")
+}
+if ($PSBoundParameters.ContainsKey('Database')) {
+    $dockerArguments += @('--mount',"type=bind,source=$resolvedDatabase,target=/advisories,readonly")
+}
+if ($PSBoundParameters.ContainsKey('ReviewRecords')) {
+    $dockerArguments += @('--mount',"type=bind,source=$resolvedReviews,target=/trusted/reviews.json,readonly")
+}
+if ($Action -in @('check','release','retest')) {
+    $reportContext = @{runner='powershell-docker';source=$resolvedSource;output=$resolvedOutput;
+        state_dir=(Join-Path $resolvedOutput 'state');launcher=$PSCommandPath;image=$imageParts[0]}
+    if ($PSBoundParameters.ContainsKey('Policy')) { $reportContext.policy = $resolvedPolicy }
+    if ($PSBoundParameters.ContainsKey('Database')) { $reportContext.database = $resolvedDatabase }
+    if ($PSBoundParameters.ContainsKey('ReviewRecords')) { $reportContext.review_records = $resolvedReviews }
+    $reportContextEncoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($reportContext | ConvertTo-Json -Compress)))
+    $dockerArguments += @('--env',"GXSEC_REPORT_CONTEXT_B64=$reportContextEncoded")
+}
 $dockerArguments += @($imageParts[0],$Action)
 if ($Action -eq 'doctor') { $dockerArguments += @('--source','/workspace','--json') }
 elseif ($Action -eq 'discuss') {
@@ -228,6 +294,9 @@ else {
     $dockerArguments += @('--state-dir','/results/state','--output','/results/report')
     if ($PSBoundParameters.ContainsKey('Base')) { $dockerArguments += @('--base',$Base) }
     if ($PSBoundParameters.ContainsKey('RunId')) { $dockerArguments += @('--run-id',$RunId) }
+    if ($PSBoundParameters.ContainsKey('Policy')) { $dockerArguments += @('--policy','/trusted/policy.json') }
+    if ($PSBoundParameters.ContainsKey('ReviewRecords')) { $dockerArguments += @('--review-records','/trusted/reviews.json') }
+    if ($PSBoundParameters.ContainsKey('ExpectedFramework')) { $dockerArguments += @('--expected-framework',$ExpectedFramework) }
     if ($Json) { $dockerArguments += @('--json') }
 }
 & $dockerPath @dockerArguments

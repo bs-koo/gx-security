@@ -56,6 +56,22 @@
     "sca": {
       "type": "object"
     },
+    "framework": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected_family"],
+      "description": "An additive inspection requirement, never a framework approval or exemption. Protected policy requirements are combined with these.",
+      "properties": {
+        "expected_family": {"const": "SEF"},
+        "required_contracts": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 5,
+          "description": "Omission requires all five boundaries; absence or unsupported coverage stays incomplete.",
+          "items": {"enum": ["admin-boundary", "jwt-purpose", "menu-object-association", "route-boundary", "file-confinement"]}
+        }
+      }
+    },
     "_trusted_policy": false,
     "_credentials": false,
     "_state_dir": false,

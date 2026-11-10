@@ -6,6 +6,8 @@
 
 호스트가 제공한 이 스킬 파일의 실제 설치 경로를 확인한다. 정상 패키지는 `<plugin>/skills/gx-security/SKILL.md`와 `<plugin>/gxsec.py`, `<plugin>/scripts/gxsec.ps1`을 함께 갖는다. 이동·링크된 설치는 실제 패키지 경로를 먼저 해석하고 그 경로에서만 실행한다. 불완전한 설치면 필요한 패키지 위치를 확인한다. 검사할 프로젝트에서 동명 실행기를 찾아 대신 실행하지 않는다.
 
+처음 Codex에 등록할 때는 [사용법의 일회성 등록](../../../USAGE.md#codex-첫-등록--pc에서-한-번)을 따른다. `register-codex-skills.ps1`은 전체 bundle을 유지한 채 사용자 스킬 위치에 링크를 만들고 기존 다른 스킬은 덮어쓰지 않는다. 등록·링크 해석은 엔진 준비나 보안 승인과 별개다.
+
 검사 대상은 사용자가 지정한 폴더 또는 현재 프로젝트다. 다음 기존 결과를 읽어 경로·발견 ID·이전 실행 ID·프로파일을 확인한다.
 
 - native 기본: `<project>/.gxsec/reports/<run-id>/result.json`, 상태 `<project>/.gxsec`.
@@ -47,7 +49,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<plugin>/scripts/gxsec.ps1"
 
 변경 점검의 프로파일은 `check`다. 재검증의 `-Profile`은 기존 결과를 그대로 사용하며 필요하면 `-RunId`를 추가한다. 경로·ID·기준 커밋은 각각 인자로 전달한다. 사용자 문자열을 명령문으로 합성하거나 실행하지 않는다.
 
+SEF 포크라는 사용자 설명·프로젝트 문서 근거가 있으면 실제 검사에 `-ExpectedFramework SEF`를 추가한다. 일반 프로젝트 또는 `doctor`에는 적용하지 않는다. 새 프로젝트 설정 파일을 만들 필요는 없다.
+
+보호된 조직 입력이 준비된 검사는 소스 밖의 `-Policy <정책JSON>`, `-Database <DB폴더>`를 사용한다. 읽기 전용 연결 경로는 `/trusted/policy.json`, `/advisories`이며 정책의 `sca.offline_db`는 `/advisories`다. `-ReviewRecords <검토JSON>`은 `-Policy`와 함께 사용하며 `/trusted/reviews.json`으로 연결된다. 이 옵션은 check/release/retest 전용이다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "<plugin>/scripts/gxsec.ps1" -Source "<project>" -Action release -ExpectedFramework SEF -Policy "<outside>/policy.json" -Database "<outside>/osv-db" -Json
+```
+
+검토 기록 파일 연결 자체는 승인이 아니다. 일반 SAST의 수정 종결은 `fixed-verified`와 `source-verified`/`runtime-verified`, reason·evidence_refs·source_revision·scope_hash·normalized_result_hash 및 보호 정책의 `remediation-validation` 승인이 필요하다. `independent-reviewer`가 검토하고 High/Critical/미분류에는 `security-reviewer`도 필요하다. 상세 형식은 [운영 안내](../../../docs/OPERATIONS.md)를 따른다.
+
 출력의 `/results/report/report.html`은 기본적으로 `<project>/.gxsec-container/report/report.html`이다. state는 같은 상위 폴더의 `state`다. 최신 공유본은 갱신되고 저장된 실행 이력은 이어진다.
+
+결과의 `execution_context`는 실행 경로·프로파일·state를 잇는 안내 정보다. 보안 승인으로 취급하지 않고 실제 설치와 경로를 확인한다. 재검증은 기존 run/state를 보존하며 새 run으로 연결한다.
 
 ### Native 또는 다른 OS
 
@@ -70,7 +84,7 @@ Windows 실행기를 다른 OS에서 쓸 수 있다고 가정하지 않는다. �
 
 필요한 질문 예: “이 노트북에는 검사 실행 환경이 없습니다. Docker 기반 실행 환경을 준비할까요?” 승인·거절은 같은 범위에서 유지한다. 설치 준비를 거절했으면 반복 설치나 다른 도구의 임의 설치로 우회하지 않는다. 빠진 정보가 승인이라면 무응답을 승인으로 해석하지 않는다.
 
-Docker 이미지가 있어도 최신 승인된 취약점 DB·확정 의존성 자료·검토 기록은 별도다. 기본 PowerShell 경로는 외부 정책/DB mount를 자동 제공하지 않는다. 필요한 조직 입력이 있는 검사는 준비된 native 또는 정확한 외부 mount가 구성된 실행 경로를 사용하며 기존 보호된 정책을 따른다. 정적 검사 가능과 전체 출시 완료를 구분하고, 미완료 사유를 숨기지 않는다.
+Docker 이미지가 있어도 최신 승인된 취약점 DB·확정 의존성 자료·검토 기록은 별도다. 필요한 조직 입력은 위 PowerShell 옵션 또는 준비된 native 경로로 전달하고 기존 보호된 정책을 따른다. 이미지·네트워크 차단·doctor 동작은 유지하며 DB를 자동 다운로드하지 않는다. 정적 검사 가능과 전체 출시 완료를 구분하고 미완료 사유를 숨기지 않는다.
 
 ## 4. 질문 기반 검토의 준비
 

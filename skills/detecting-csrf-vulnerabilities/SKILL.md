@@ -12,12 +12,14 @@ tags: [csrf, cwe-352, owasp-a01, spring-security, jsp, servlet, sqisoft]
 cwe: [CWE-352]
 owasp: [A01:2021-Broken-Access-Control]
 stacks: [spring-modern, jsp-legacy]
-version: "0.10.1"
+version: "0.10.2"
 author: sqisoft-security
 license: Proprietary
 ---
 
-> Release-check contract (0.10.0): use the common gxsec CLI for developer checks and release evidence. Legacy commands below are expert/reference paths, not proof of release completion. Preserve candidate vs verified vs incomplete states; never treat status 200, reflection, a helper name, or an annotation alone as a confirmed exploit/defense. Credentials use references/stdin; no plain passwords/tokens in argv or chat. Required scope/readiness/authentication/confinement evidence is enforced by the new release path.
+> Release-check contract: use the common gxsec CLI for developer checks and release evidence. Legacy commands below are expert/reference paths, not proof of release completion. Preserve candidate vs verified vs incomplete states; never treat status 200, reflection, a helper name, or an annotation alone as a confirmed exploit/defense. Credentials use references/stdin; no plain passwords/tokens in argv or chat. Required scope/readiness/authentication/confinement evidence is enforced by the new release path.
+
+업무 의도·허용 역할·자료 공개 범위만 모호하면 코드와 기존 답변을 먼저 확인한 뒤 호스트 질문 도구(없으면 대화)로 필요한 내용만 묻는다. 답변에 따라 실제 경로·대조 증거를 더 조사하고, 답변 자체로 검증·반증·위험 수용을 확정하지 않는다. 정적 점검과 보고서 읽기에는 동적 계정을 요구하지 않는다.
 
 
 SEF 또는 공통 방어가 관련된 후보는 [공유 SEF 문맥 검토](../checking-release-security/references/sef-context.md)를 읽고 공통 CLI 결과를 사용한다. 아래 전문가용 판정·오탐 표기는 검토 제안이며 원본 finding의 검증 상태·심각도·ID를 바꾸거나 보호된 독립 검토를 대체하지 않는다.

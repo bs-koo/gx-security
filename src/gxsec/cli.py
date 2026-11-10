@@ -22,6 +22,7 @@ from .models import validate_run
 from .reporting import write_reports
 from .source import collect_source, runtime_environment, trusted_runtime_tool, reject_reparse_path
 from .state import Store
+from .handoff import execution_context
 
 
 def _utc():
@@ -41,10 +42,14 @@ def _read(path):
 
 def _config(args, source):
     path = Path(args.config).resolve() if getattr(args, "config", None) else source / "gxsec.yaml"
+    if getattr(args, 'config', None) and not path.is_file():
+        raise ValueError('Explicit config file does not exist')
     data = configuration.load_config(path) if path.exists() else configuration.default_config(source)
     if "_trusted_policy" in data or "_credentials" in data:
         raise ValueError("project config cannot supply trusted policy or credentials")
     data.setdefault("project", {})["source"] = str(source)
+    if getattr(args, 'expected_framework', None):
+        data['framework'] = configuration.framework_requirement({'expected_family': args.expected_framework})
     return data
 
 
@@ -54,9 +59,12 @@ def _trusted_policy(args, source):
     path = Path(args.policy).resolve(strict=True)
     if path.is_relative_to(source.resolve()):
         raise ValueError("trusted policy must be outside the inspected source tree")
-    data = _read(path)
+    raw = path.read_bytes()
+    data = yaml.safe_load(raw.decode('utf-8-sig'))
+    if not isinstance(data, dict):
+        raise ValueError('trusted policy must be an object')
     data["_policy_path"] = str(path)
-    data["_policy_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    data["_policy_sha256"] = hashlib.sha256(raw).hexdigest()
     return data
 
 
@@ -196,6 +204,13 @@ def _execute(args, retest_id=None):
     previous = store.get_run(args.run_id) if retest_id and getattr(args, "run_id", None) else store.latest_run()
     if retest_id and (not previous or not any(f.get("finding_id") == retest_id for f in previous.get("findings", []))):
         raise ValueError("finding not found in latest saved run")
+    expectations = [configuration.framework_requirement(owner['framework'])
+                    for owner in (cfg, trusted) if 'framework' in owner]
+    if retest_id and previous.get('framework_expectation'):
+        expectations.append(configuration.framework_requirement(previous['framework_expectation']))
+    if expectations:
+        cfg['framework'] = {'expected_family': 'SEF', 'required_contracts': sorted({
+            item for expectation in expectations for item in expectation['required_contracts']})}
     profile = args.profile or (previous["profile"] if retest_id else "check" if args.command == "check" else "release")
     if args.execute_dynamic and profile != "release":
         raise ValueError("dynamic execution requires the full release profile")
@@ -205,6 +220,9 @@ def _execute(args, retest_id=None):
            "reviews": reviews, "exceptions": exceptions,
            "policy_hash": trusted.get("_policy_sha256"),
            "configuration_hash": hashlib.sha256(json.dumps(redact({k: v for k, v in cfg.items() if not k.startswith('_')}), sort_keys=True, default=str).encode()).hexdigest()}
+    run['execution_context'] = execution_context(args, source, state_dir)
+    if expectations:
+        run['framework_expectation'] = deepcopy(cfg['framework'])
     cfg.setdefault("dynamic", {})["run_id"] = execution_id
     if profile == "check":
         try:
@@ -270,7 +288,7 @@ def _execute(args, retest_id=None):
     if previous:
         run = store.reconcile(run, previous)
     gate_policy = dict(trusted)
-    gate_policy.update({"profile": profile, "source_revision": run["source"].get("revision") or run["source"].get("hash"),
+    gate_policy.update({"profile": profile, "run_id": run['run_id'], "source_revision": run["source"].get("revision") or run["source"].get("hash"),
                         "scope_hash": run["source"].get("scope_hash"), "require_trusted_evidence": profile == "release"})
     if profile == "release":
         gate_policy["required_reviews"] = sorted(required_reviews)
@@ -376,6 +394,7 @@ def build_parser():
         p.add_argument("--execution-id", help="새 실행의 고유 ID; 외부 실행 허가서와 동일하게 지정")
         p.add_argument("--policy", help="검사 소스 밖의 신뢰하는 조직 정책")
         p.add_argument("--review-records", help="신뢰 정책과 대조할 검토/예외 기록")
+        p.add_argument("--expected-framework", choices=('SEF',), help="설정 파일 생성 없이 SEF 필수 경계를 추가 확인")
         p.add_argument("--execute-dynamic", action="store_true")
         p.add_argument("--creds-stdin", action="store_true")
         p.add_argument("--json", action="store_true")

@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import hashlib
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,6 +26,90 @@ def test_init_creates_secret_free_profile_and_wont_overwrite(tmp_path):
     assert "local-only" in text and "static-release" in text
     assert cli("init", source).returncode == 2
     assert config.read_text(encoding="utf-8") == text
+
+
+def test_explicit_missing_config_is_rejected_before_scan(tmp_path, monkeypatch, capsys):
+    from gxsec import cli as module
+    def unexpected(*args):
+        raise AssertionError('missing explicit config reached scanner')
+    monkeypatch.setattr(module.adapters, 'run_static_checks', unexpected)
+    assert module.main(['release', str(tmp_path), '--config', str(tmp_path / 'missing.yml'), '--json']) == 2
+    result = json.loads(capsys.readouterr().out)
+    assert 'config' in result.get('detail', '').lower()
+    assert not (tmp_path / '.gxsec').exists()
+
+
+def test_policy_object_and_digest_use_one_read(tmp_path, monkeypatch):
+    from gxsec import cli as module
+    source = tmp_path / 'source'
+    source.mkdir()
+    path = tmp_path / 'policy.json'
+    original = b'{"required_reviews": ["original-review"]}'
+    replacement = b'{"required_reviews": ["changed-review"]}'
+    path.write_bytes(original)
+    real_read = Path.read_bytes
+    real_text = Path.read_text
+    def raced_read(file):
+        data = real_read(file)
+        if file == path:
+            path.write_bytes(replacement)
+        return data
+    monkeypatch.setattr(Path, 'read_bytes', raced_read)
+    def raced_text(file, *args, **kwargs):
+        data = real_text(file, *args, **kwargs)
+        if file == path:
+            path.write_bytes(replacement)
+        return data
+    monkeypatch.setattr(Path, 'read_text', raced_text)
+    policy = module._trusted_policy(SimpleNamespace(policy=str(path)), source)
+    actual = json.dumps({'required_reviews': policy['required_reviews']}).encode()
+    assert policy['_policy_sha256'] == hashlib.sha256(actual).hexdigest()
+
+
+def test_saved_report_keeps_native_custom_state_for_retest(tmp_path, monkeypatch, capsys):
+    from gxsec import cli as module
+    source, state = tmp_path / 'source', tmp_path / 'custom-state'
+    source.mkdir()
+    (source / 'App.java').write_text('class App {}', encoding='utf-8')
+    monkeypatch.setattr(module.adapters, 'run_static_checks', lambda *args: ([], []))
+    assert module.main(['release', str(source), '--profile', 'static-release', '--state-dir', str(state), '--json']) == 2
+    run = json.loads(capsys.readouterr().out)
+    assert run['execution_context']['state_dir'] == str(state.resolve())
+    assert run['execution_context']['source'] == str(source.resolve())
+    saved = json.loads((state / 'runs' / (run['run_id'] + '.json')).read_text(encoding='utf-8'))
+    assert saved['execution_context'] == run['execution_context']
+
+
+def test_expected_framework_reaches_scan_without_project_setup(tmp_path, monkeypatch, capsys):
+    from gxsec import cli as module
+    observed = []
+    def scan(source, config, profile):
+        observed.append(config['framework']['expected_family'])
+        return [], []
+    monkeypatch.setattr(module.adapters, 'run_static_checks', scan)
+    assert module.main(['release', str(tmp_path), '--profile', 'static-release', '--expected-framework', 'SEF', '--json']) == 2
+    assert observed == ['SEF']
+    assert not (tmp_path / 'gxsec.yaml').exists()
+    assert json.loads(capsys.readouterr().out)['framework_expectation']['expected_family'] == 'SEF'
+
+
+def test_retest_keeps_prior_framework_expectation_without_repeating_flag(tmp_path, monkeypatch, capsys):
+    from gxsec import cli as module, models, config
+    source = tmp_path / 'source'
+    source.mkdir()
+    (source / 'App.java').write_text('class App {}', encoding='utf-8')
+    observed = []
+    def scan(root, cfg, profile):
+        observed.append(cfg.get('framework'))
+        return [], [models.make_finding(category='sast', rule='example-rule', path='App.java',
+                                        line=1, title='Example', severity='High', check_id='sast')]
+    monkeypatch.setattr(module.adapters, 'run_static_checks', scan)
+    assert module.main(['release', str(source), '--profile', 'static-release', '--expected-framework', 'SEF', '--json']) == 2
+    first = json.loads(capsys.readouterr().out)
+    assert module.main(['retest', first['findings'][0]['finding_id'], '--source', str(source), '--json']) == 2
+    second = json.loads(capsys.readouterr().out)
+    assert observed[0] == observed[1] == second['framework_expectation']
+    assert set(second['framework_expectation']['required_contracts']) == set(config.FRAMEWORK_CONTRACTS)
 
 
 def test_doctor_reports_missing_tools_without_false_success(tmp_path):

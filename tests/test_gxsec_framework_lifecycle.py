@@ -204,13 +204,13 @@ def test_changed_current_source_or_analysis_contract_invalidates_absence_review(
     assert policy.evaluate(second['checks'], second['findings'], reviews=[review], policy=protected)['status'] == 'INCOMPLETE'
 
 
-def test_ordinary_sast_equivalent_complete_scan_still_verifies_closure():
+def test_ordinary_sast_equivalent_complete_scan_requires_remediation_review():
     finding = models.make_finding(category='xss', rule='xss-output', path='Files.java',
         severity='High', validation='source-verified', check_id='sast')
     result = _reconcile(_run('clean', []), _run('old', [finding]))
-    assert result['findings'][0]['lifecycle'] == 'fixed-verified'
-    assert result['findings'][0]['resolution_evidence']['method'] == 'absent-in-equivalent-full-clean-scan'
-    assert policy.evaluate(result['checks'], result['findings'], policy={'profile': 'static-release'})['status'] == 'PASS'
+    assert result['findings'][0]['lifecycle'] == 'remediation-proposed'
+    assert result['findings'][0]['absence_evidence']['method'] == 'sast-finding-not-observed'
+    assert policy.evaluate(result['checks'], result['findings'], policy={'profile': 'static-release'})['status'] == 'INCOMPLETE'
 
 
 def test_new_positive_observation_reopens_previously_fixed_framework_identity():

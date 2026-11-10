@@ -57,6 +57,20 @@ jobs:
           GXSEC_NO_SEMGREP: ""
           SEMGREP_SEND_METRICS: "off"
           SEMGREP_ENABLE_VERSION_CHECK: "0"
+      - name: Measure labeled rule cases with the pinned engine
+        if: ${{ !matrix.experimental }}
+        run: python scripts/evaluate-rule-quality.py --output "${{ runner.temp }}/rule-quality.json"
+        env:
+          SEMGREP_SEND_METRICS: "off"
+          SEMGREP_ENABLE_VERSION_CHECK: "0"
+      - name: Preserve measured coverage and known misses
+        if: ${{ always() && !matrix.experimental }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pinned-rule-quality
+          path: ${{ runner.temp }}/rule-quality.json
+          if-no-files-found: warn
+          retention-days: 14
 
   bundle:
     runs-on: ubuntu-latest

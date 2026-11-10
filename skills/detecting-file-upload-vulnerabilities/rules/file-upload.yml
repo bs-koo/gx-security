@@ -14,6 +14,7 @@ rules:
       validateFile(), FileValidator.validate() 등 화이트리스트 검증이 선행되는지 확인하세요.
       없으면 .jsp 웹쉘 업로드 → RCE(CWE-434) 위험이 있습니다.
     metadata:
+      severity: High
       cwe: "CWE-434"
       owasp: "A04:2021"
       stack: spring-modern
@@ -38,6 +39,7 @@ rules:
       .jsp 파일이 업로드되면 URL로 직접 실행(RCE) 가능합니다.
       업로드 경로를 웹루트 밖으로 이동하세요.
     metadata:
+      severity: High
       cwe: "CWE-434"
       owasp: "A05:2021"
       stack: spring-modern
@@ -56,6 +58,7 @@ rules:
       Path Traversal(../) 및 원본명 노출(예측 가능한 경로) 위험이 있습니다.
       UUID 등 서버 생성 파일명으로 대체하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-434"
       owasp: "A04:2021"
       stack: spring-modern
@@ -74,6 +77,7 @@ rules:
       getContentType()만으로 파일 유형을 판단하고 있습니다.
       Content-Type은 클라이언트가 임의로 설정 가능하므로 서버 측 확장자+매직바이트 검증과 병행해야 합니다.
     metadata:
+      severity: Medium
       cwe: "CWE-434"
       owasp: "A04:2021"
       stack: spring-modern
@@ -99,6 +103,7 @@ rules:
       Gseed_Web_Renew의 표준 업로드 흐름은 FileValidator.validate() → transferTo() 순서입니다.
       새로 추가한 경로가 이를 우회하면 웹쉘 업로드(CWE-434) 위험이 있습니다.
     metadata:
+      severity: High
       cwe: "CWE-434"
       owasp: "A04:2021"
       stack: jsp-legacy
@@ -119,6 +124,7 @@ rules:
       확장자·매직바이트 화이트리스트 검증 없이 파일을 저장하면 .jsp 웹쉘 업로드 → RCE(CWE-434) 위험이 있습니다.
       저장 경로를 웹루트 밖으로 두고 서버 측 검증이 선행되는지 확인하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-434"
       owasp: "A04:2021"
       stack: jsp-legacy
@@ -140,6 +146,7 @@ rules:
       파일 업로드 폼(enctype="multipart/form-data")이 감지됐습니다.
       서버 측에서 FileValidator.validate() 또는 동등한 화이트리스트+매직바이트 검증을 수행하는지 확인하세요.
     metadata:
+      severity: Low
       cwe: "CWE-434"
       owasp: "A04:2021"
       stack: jsp-legacy
@@ -154,6 +161,7 @@ rules:
       압축 해제 경로가 기준 디렉토리를 벗어날 수 있습니다.
       getCanonicalPath()로 기준 경로 내에 있는지 반드시 검증하세요.
     metadata:
+      severity: High
       cwe: "CWE-434"
       owasp: "A04:2021"
       stack: spring-modern

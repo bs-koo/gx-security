@@ -10,6 +10,7 @@ rules:
     severity: ERROR
     message: Plaintext credential in an environment configuration file requires review.
     metadata:
+      severity: High
       cwe: CWE-798
       owasp: A02:2021
       stack: configuration
@@ -23,6 +24,7 @@ rules:
     severity: ERROR
     message: Plaintext credential in frontend source requires review and removal from the client bundle.
     metadata:
+      severity: High
       cwe: CWE-798
       owasp: A02:2021
       stack: frontend
@@ -41,6 +43,7 @@ rules:
       형상관리에 커밋되면 접근자 전원이 자격증명을 획득합니다.
       환경변수 또는 시크릿 저장소(Vault, AWS SM)로 분리하세요.
     metadata:
+      severity: High
       cwe: "CWE-798"
       owasp: "A02:2021"
       stack: spring-modern
@@ -70,6 +73,7 @@ rules:
       @Value 기본값에 시크릿이 하드코딩되어 있습니다.
       환경변수가 설정되지 않은 경우 이 값이 그대로 사용됩니다.
     metadata:
+      severity: High
       cwe: "CWE-798"
       owasp: "A02:2021"
       stack: spring-modern
@@ -83,6 +87,7 @@ rules:
       API 키·인증키가 문자열 리터럴로 소스에 박혀 있습니다.
       Base64 인코딩된 값도 포함됩니다. 환경변수 또는 시크릿 저장소로 분리하세요.
     metadata:
+      severity: High
       cwe: "CWE-798"
       owasp: "A02:2021"
       stack: jsp-legacy
@@ -109,6 +114,7 @@ rules:
       로그 출력에 비밀번호·개인정보 변수가 포함되어 있을 수 있습니다.
       로그 파일은 평문으로 저장되므로 민감 값은 마스킹하거나 제외하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-200"
       owasp: "A02:2021"
       stack: spring-modern
@@ -128,6 +134,7 @@ rules:
       System.out.println/print은 운영 환경에서 로그 파일이나 콘솔에 평문 출력됩니다.
       SLF4J 로거로 교체하고 민감 값은 포함하지 마세요.
     metadata:
+      severity: Low
       cwe: "CWE-200"
       owasp: "A02:2021"
       stack: spring-modern
@@ -145,6 +152,7 @@ rules:
       DTO/VO 클래스에 비밀번호·암호화 필드가 있으나 @JsonIgnore가 없습니다.
       REST 응답에 이 필드가 직렬화되어 클라이언트에 노출될 수 있습니다.
     metadata:
+      severity: Medium
       cwe: "CWE-200"
       owasp: "A02:2021"
       stack: spring-modern
@@ -182,6 +190,7 @@ rules:
       properties 파일에서 비밀번호·시크릿이 평문으로 설정되어 있습니다.
       ${ENV_VAR} 참조 방식으로 교체하고 실제 값은 환경변수 또는 시크릿 저장소로 분리하세요.
     metadata:
+      severity: High
       cwe: "CWE-798"
       owasp: "A02:2021"
       stack: jsp-legacy
@@ -199,6 +208,7 @@ rules:
       JSP/Java 주석에 계정 정보·비밀번호가 포함되어 있을 수 있습니다.
       주석도 소스 코드의 일부이므로 자격증명을 포함하지 마세요.
     metadata:
+      severity: Medium
       cwe: "CWE-200"
       owasp: "A02:2021"
       stack: jsp-legacy
@@ -218,6 +228,7 @@ rules:
       XML 설정 파일에서 비밀번호가 평문으로 설정되어 있습니다.
       ${...} EL 참조로 교체하세요.
     metadata:
+      severity: High
       cwe: "CWE-798"
       owasp: "A02:2021"
       stack: jsp-legacy
@@ -237,6 +248,7 @@ rules:
       AWS Access Key ID(AKIA...)가 소스/설정에 평문으로 노출되어 있습니다.
       즉시 키를 폐기·교체하고 환경변수 또는 시크릿 저장소로 분리하세요.
     metadata:
+      severity: High
       cwe: "CWE-798"
       owasp: "A02:2021"
       stack: spring-modern
@@ -271,6 +283,7 @@ rules:
       GitHub Personal Access Token(ghp_...)이 소스/설정에 평문으로 노출되어 있습니다.
       즉시 토큰을 폐기하고 시크릿 저장소로 분리하세요.
     metadata:
+      severity: High
       cwe: "CWE-798"
       owasp: "A02:2021"
       stack: spring-modern
@@ -305,6 +318,7 @@ rules:
       PEM 개인키(-----BEGIN ... PRIVATE KEY-----)가 형상관리에 포함되어 있습니다.
       개인키는 저장소에서 제거하고 키를 재발급하세요. 공개 인증서(CERTIFICATE)는 대상이 아닙니다.
     metadata:
+      severity: High
       cwe: "CWE-798"
       owasp: "A02:2021"
       stack: spring-modern
@@ -342,6 +356,7 @@ rules:
       JDBC 접속 URL에 DB 비밀번호가 평문으로 포함되어 있습니다.
       비밀번호는 URL에서 분리하고 환경변수 또는 시크릿 저장소로 관리하세요.
     metadata:
+      severity: High
       cwe: "CWE-798"
       owasp: "A02:2021"
       stack: spring-modern

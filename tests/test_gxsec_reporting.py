@@ -72,6 +72,27 @@ def test_qa_lists_unconfirmed_findings_and_check_failures(tmp_path):
     assert "- [ ]" in qa
 
 
+def test_retest_handoff_keeps_docker_host_paths_and_previous_run(tmp_path):
+    run = sample_run()
+    run['execution_context'] = {'authority': 'report-hint-only', 'runner': 'powershell-docker', 'source': 'D:/project',
+        'output': 'D:/shared-results', 'state_dir': 'D:/shared-results/state',
+        'policy': 'D:/approved/policy.json', 'database': 'D:/approved/db'}
+    write_reports(run, tmp_path)
+    text = (tmp_path / 'developer.md').read_text(encoding='utf-8')
+    for required in ('run-example', 'GXSEC-123', 'D:/project', 'D:/shared-results/state', 'D:/approved/policy.json'):
+        assert required in text
+    assert '--config &lt;' not in text
+    assert '$gx-security' in text
+
+
+def test_legacy_run_handoff_does_not_invent_default_state(tmp_path):
+    write_reports(sample_run(), tmp_path)
+    text = (tmp_path / 'developer.md').read_text(encoding='utf-8')
+    assert '--config &lt;' not in text
+    assert '.gxsec/state.sqlite3' not in text
+    assert '기존 상태 저장소' in text
+
+
 def test_export_replaces_file_symlink_without_overwriting_its_target(tmp_path):
     import pytest
     victim = tmp_path / "outside.txt"

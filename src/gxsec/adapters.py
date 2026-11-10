@@ -359,6 +359,7 @@ def _sast(source, config, inventory, profile):
                         stack=metadata.get('stack'),
                         owasp=metadata.get('owasp'),
                         check_id='sast',
+                        review_required=True,
                         observations=[{'engine': 'semgrep', 'engine_severity': extra.get('severity') if extra.get('severity') in {'ERROR','WARNING','INFO'} else 'UNKNOWN', 'source_encoding': encoding, 'source_evidence': 'bounded-local-slice'}],
                     )
                     finding['locations'][0]['symbol'] = symbol
@@ -527,12 +528,19 @@ def _sca(source, config, inventory, profile):
             for path in inputs:
                 args += ['--lockfile', str(source / path)] if not Path(path).name.endswith(('.cdx.json', '.spdx.json', '.spdx', '.bom.json')) else ['--sbom', str(source / path)]
             try:
-                result = _run(
-                    args,
-                    cwd=Path(temp),
-                    timeout=options.get('timeout_seconds', 300),
-                    extra_env={'OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY': str(db)},
-                )
+                db_inventory = {'files': sorted(actual_hashes), 'hash': content_hash(actual_hashes),
+                    'inventory': [{'path': path, 'hash': digest} for path, digest in actual_hashes.items()]}
+                with verified_snapshot(db, db_inventory, include_history=False) as database_snapshot:
+                    database_input = database_snapshot.path
+                    check['engine']['database']['snapshot'] = database_snapshot.provenance
+                    result = _run(
+                        args,
+                        cwd=Path(temp),
+                        timeout=options.get('timeout_seconds', 300),
+                        extra_env={'OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY': str(database_input)},
+                    )
+                    if not database_snapshot.verify():
+                        raise ValueError('Private advisory database bytes changed during scanning')
                 data = _json_result(result, check)
                 if data is not None:
                     if not isinstance(data.get('results'), list):
@@ -596,7 +604,7 @@ def _sca(source, config, inventory, profile):
                         check['errors'].append(
                             {'type': 'empty_dependency_graph', 'message': 'OSV parsed zero packages; unresolved coverage'},
                         )
-                    _osv_matching_coverage(check, result.stderr, db, actual_hashes)
+                    _osv_matching_coverage(check, result.stderr, database_input, actual_hashes)
             except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
                 check['errors'].append({'type': 'sca_failed', 'message': str(exc)})
     check['status'] = 'complete' if not check['errors'] and inputs and (check['coverage']['scanned'] == len(inputs)) else 'incomplete'

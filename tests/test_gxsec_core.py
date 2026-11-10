@@ -175,7 +175,8 @@ def test_sqlite_snapshots_mask_and_reconcile_only_same_complete_full_scope(tmp_p
     different = store.reconcile(run('different', [], source_hash='other'))
     assert different['findings'][0]['lifecycle'] == 'open'
     full = store.reconcile(run('full', []))
-    assert full['findings'][0]['lifecycle'] == 'fixed-verified'
+    assert full['findings'][0]['lifecycle'] == 'remediation-proposed'
+    assert full['findings'][0]['validation'] == 'undetermined'
     bad = run('bad', [])
     bad['checks'][0]['status'] = 'failed'
     assert store.reconcile(bad)['findings'][0]['lifecycle'] == 'open'

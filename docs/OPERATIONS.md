@@ -1,4 +1,4 @@
-# gx-security 운영 0.10.1
+# gx-security 운영 0.10.2
 
 ## 배포와 업데이트
 
@@ -8,7 +8,7 @@ Windows 기본 경로는 고정 Linux 컨테이너입니다. source는 읽기 �
 
 ## 통합 세션 진입점
 
-사용자는 등록된 통합 스킬 `gx-security`로 요청합니다. Claude Code의 명시 호출은 `/gx-security:gx-security`, Codex의 명시 호출은 `$gx-security`입니다. 호스트가 스킬을 제공하는 환경에서는 관련 자연어 요청으로도 선택될 수 있습니다. 폴더를 여는 것만으로 플러그인이 설치되거나 모든 세션에 강제 적용된다고 가정하지 않습니다. 현재 0.10.1 공개 프리뷰의 배포·등록 상태는 실제 설치본에서 확인합니다.
+사용자는 등록된 통합 스킬 `gx-security`로 요청합니다. Claude Code의 명시 호출은 `/gx-security:gx-security`, Codex의 명시 호출은 `$gx-security`입니다. 호스트가 스킬을 제공하는 환경에서는 관련 자연어 요청으로도 선택될 수 있습니다. 폴더를 여는 것만으로 플러그인이 설치되거나 모든 세션에 강제 적용된다고 가정하지 않습니다. 현재 0.10.2 공개 프리뷰의 배포·등록 상태는 실제 설치본에서 확인합니다.
 
 프로젝트마다 setup 호출이나 설정 파일 생성은 요구하지 않습니다. 실제 검사 전에 가벼운 준비 확인을 수행하고 기존 설정·상태를 사용하며 설정이 없으면 기본값으로 실행합니다. 저장된 setup 완료 플래그를 실행 파일·버전·승인 근거 대신 사용하지 않습니다. 무관한 개발 작업은 이 흐름을 적용하지 않고, 결과 설명 요청은 기존 보고서만 읽습니다.
 
@@ -32,6 +32,24 @@ trusted_approvals는 승인 대상 record_id·canonical JSON digest·kind·역�
 
 예외는 finding·revision·scope에 한정되며 담당·사유·만료가 필요합니다. 만료나 범위 변경을 자동 통과시키지 않습니다. baseline은 이력 표시 기준이며 기존 고위험 항목의 면제가 아닙니다.
 
+## 수정 완료의 검증
+
+SAST와 SEF 경고가 다음 검사에서 사라져도 자동으로 수정 완료가 되지 않습니다. 검사 규칙이 호출 구조의 변화를 놓쳤을 수 있으므로 `remediation-proposed`로 남기고 현재 소스·범위·분석 결과에 다시 연결합니다. 이전에 확인된 위험은 불완전한 재검사만으로 해제하지 않습니다. 의존성은 동등한 입력·완료된 검사에서 버전 변경을 확인하는 별도 종료 조건을 유지합니다.
+
+개발자는 같은 상태 저장소로 재검증한 뒤 해당 실행의 `source_revision`, `scope_hash`, 발견의 `normalized_result_hash`를 포함한 검토 초안을 작성합니다. 독립 검토자는 수정 전후 호출 경로와 방어 조건, 필요한 경우 정상·거부 시나리오를 확인합니다. 상태 코드 하나나 “의도된 기능”이라는 답만으로 종료하지 않습니다.
+
+보호된 검토 기록은 `id`, `finding_id`, `decision: fixed-verified`, `validation: source-verified` 또는 `runtime-verified`, 위 세 바인딩 값, `reason`, `evidence_refs`를 포함합니다. 조직의 승인 절차가 기록 전체의 canonical JSON 해시를 `trusted_approvals`의 `digest`로 묶고 `record_id`, `kind: remediation-validation`, `roles`를 지정합니다. `independent-reviewer`가 필요하며 High·Critical·등급 미정에는 `security-reviewer`도 필요합니다. 검토 기록에 낮은 등급을 적어 종료 요건을 완화할 수 없습니다.
+
+검토 파일을 `--review-records`, 보호 정책을 `--policy`로 제공해 다시 실행합니다. Windows 실행기는 `-ReviewRecords`와 `-Policy`로 각각 읽기 전용 연결합니다. 프로젝트 내부·출력 폴더 내부의 파일은 보호 입력으로 사용할 수 없습니다. 파일을 만들거나 해시를 계산한 행위만으로 조직 승인을 얻은 것은 아닙니다. 소스나 결과 바인딩이 바뀌면 다시 검토해야 합니다.
+
+현재 공식 수정 완료 경로는 SAST/SEF의 보호된 수정 검토와 SCA의 동등한 현재 재검사입니다. secrets/auth/authorization/dast의 수정 완료 프로토콜은 아직 지원하지 않습니다. 이 유형의 오래된 `fixed-verified` 표시는 미완료로 되돌립니다. 토큰·비밀값 폐기나 실제 접근통제의 복구가 확인되지 않은 채 과거 표시만으로 통과시키지 않으며, 이 제약을 없애려면 유형별 재현·정상 대조·수정 증거 계약을 구현해야 합니다.
+
+## SEF 프로젝트와 오프라인 자료
+
+SEF에서 시작한 프로젝트는 `--expected-framework SEF` 또는 Windows의 `-ExpectedFramework SEF`로 지정할 수 있습니다. 프로젝트마다 setup을 실행하거나 설정 파일을 만들 필요가 없습니다. 재검증은 이전 기대 조건을 이어받고 현재 조직 정책의 조건을 합칩니다. 제어 클래스 이름 변경·모듈 분리·지원하지 않는 빌드 관계 때문에 필수 경계를 관찰하지 못하면 미완료입니다. 세부 경계 목록과 조직 정책 예시는 [SEF 점검 범위](SEF-CHECKS.md)에 있습니다.
+
+Windows의 `-Database`는 승인된 DB 디렉터리를 `/advisories`에 읽기 전용으로 연결합니다. 함께 전달하는 `-Policy`의 `sca.offline_db`에는 `/advisories`를 사용합니다. DB 해시·기준 시각·확정 의존성 증거와 승인 요건은 기존과 같습니다. 경로 연결만으로 자료의 출처나 최신성이 승인되지는 않습니다.
+
 ## 결과 보관과 공유
 
 직접 실행의 상태는 `.gxsec/state.sqlite3`와 runs snapshot, 공유본은 `.gxsec/reports/<run-id>`입니다. Windows Docker 실행기의 기본 상태는 `.gxsec-container/state`, 최신 공유본은 `.gxsec-container/report`입니다. 별도 Output을 사용했다면 그 아래의 `state`와 `report`를 그대로 사용합니다. 재검증 시 실행 경로만 보고 새 상태 저장소로 전환하지 않습니다.
@@ -43,3 +61,5 @@ trusted_approvals는 승인 대상 record_id·canonical JSON digest·kind·역�
 ## 유지보수
 
 core/schema,규칙,동적 정책과 릴리스의 담당을 지정하고 최소 2인 리뷰 체계를 권장합니다. 정기 업데이트에서는 기존 회귀·실제 엔진 smoke·새 품질 corpus를 확인합니다. 정확도·시간 목표는 실제 사업부 holdout/사용자 파일럿 전에는 달성했다고 표기하지 않습니다.
+
+현재 탐지기의 평가 범위와 알려진 미탐·오탐은 [규칙 품질 보고서](RULE-QUALITY.md)에 공개합니다. 동작 회귀 통과, 합성 사례의 탐지율, 실제 사업부 프로젝트의 위험 판정 정확도는 서로 다른 증거입니다.

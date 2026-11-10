@@ -33,7 +33,11 @@ class FakeDocker {
         File.AppendAllText(Environment.GetEnvironmentVariable("GXSEC_FAKE_LOG"), line + "\n");
         if (args.Length > 0 && args[0] == "info") {
             string mode = Environment.GetEnvironmentVariable("GXSEC_FAKE_DAEMON");
-            if (mode == "timeout") Thread.Sleep(20000);
+            if (mode == "timeout") {
+                File.WriteAllText(Environment.GetEnvironmentVariable("GXSEC_FAKE_PROBE_STARTED"),
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
+                Thread.Sleep(60000);
+            }
             if (mode == "down") { Console.Error.WriteLine("PRETEND_SECRET_SHOULD_NOT_LEAK"); return 1; }
             Console.WriteLine(mode == "windows" ? "windows" : "linux");
             return 0;
@@ -63,7 +67,7 @@ def fake_docker(tmp_path_factory):
     source.write_text(FAKE_DOCKER, encoding='utf-8')
     executable = directory / 'docker.exe'
     built = subprocess.run([str(CSC), '/nologo', '/target:exe', '/out:' + str(executable), str(source)],
-                           capture_output=True, text=True, timeout=30)
+                           capture_output=True, text=True, timeout=60)
     assert built.returncode == 0, built.stdout + built.stderr
     return executable
 
@@ -76,11 +80,12 @@ def case(tmp_path, fake_docker):
     log = tmp_path / 'docker-argv.log'
     environment = os.environ.copy()
     environment.update({'PATH': str(fake_docker.parent), 'GXSEC_FAKE_LOG': str(log),
+                        'GXSEC_FAKE_PROBE_STARTED': str(tmp_path / 'probe-started'),
                         'GXSEC_FAKE_DAEMON': '', 'GXSEC_FAKE_IMAGE': '', 'GXSEC_FAKE_RUN_EXIT': '0'})
     return source, log, environment
 
 
-def invoke(case, *arguments, timeout=30):
+def invoke(case, *arguments, timeout=60):
     source, _, environment = case
     return subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
                            '-File', str(RUNNER), '-Source', str(source), *arguments],
@@ -129,6 +134,33 @@ def test_release_preserves_literal_mounts_security_options_and_state(case):
     assert run[run.index(IMAGE_ID) + 1:] == ['release', '/workspace', '--profile', 'static-release',
         '--state-dir', '/results/state', '--output', '/results/report', '--json']
     assert output.is_dir()
+    encoded = next(value.split('=', 1)[1] for value in run if value.startswith('GXSEC_REPORT_CONTEXT_B64='))
+    hint = json.loads(base64.b64decode(encoded).decode('utf-8'))
+    assert hint['source'] == str(case[0])
+    assert hint['state_dir'] == str(output / 'state')
+    assert hint['output'] == str(output)
+    assert hint['image'] == IMAGE_ID
+
+
+@pytest.mark.parametrize('parent', [False, True])
+@pytest.mark.parametrize('trailing_separator', [False, True])
+def test_output_cannot_expose_writable_source_alias(case, parent, trailing_separator):
+    output = case[0].parent if parent else case[0]
+    argument = str(output) + ('\\' if trailing_separator else '')
+    incomplete(invoke(case, '-Output', argument, '-Json'), 'invalid_output')
+    assert calls(case) == []
+
+
+@pytest.mark.parametrize('location', ['source', 'output'])
+def test_database_cannot_overlap_writable_source_or_output(case, location):
+    policy = case[0].parent / 'approved.json'
+    policy.write_text('{}', encoding='utf-8')
+    output = case[0].parent / 'results'
+    output.mkdir()
+    database = case[0] if location == 'source' else output
+    incomplete(invoke(case, '-Action', 'release', '-Output', str(output), '-Policy', str(policy),
+                      '-Database', str(database), '-Json'), 'invalid_database')
+    assert calls(case) == []
 
 
 def test_check_preserves_base_as_one_argument(case):
@@ -136,6 +168,73 @@ def test_check_preserves_base_as_one_argument(case):
     assert result.returncode == 0, result.stdout + result.stderr
     run = calls(case)[-1]
     assert run[run.index('--base') + 1] == 'feature/demo;literal'
+
+
+def test_protected_policy_and_database_are_readonly_and_preserve_isolation(case):
+    policy = case[0].parent / 'approved policy.json'
+    policy.write_text('{"sca":{"offline_db":"/advisories"}}', encoding='utf-8')
+    database = case[0].parent / 'approved database'
+    database.mkdir()
+    result = invoke(case, '-Action', 'release', '-Policy', str(policy), '-Database', str(database), '-Json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert f'type=bind,source={policy},target=/trusted/policy.json,readonly' in run
+    assert f'type=bind,source={database},target=/advisories,readonly' in run
+    assert run[run.index('--policy') + 1] == '/trusted/policy.json'
+    assert run[run.index('--network') + 1] == 'none'
+    assert run[run.index('--pull') + 1] == 'never'
+
+
+def test_policy_inside_inspected_source_is_rejected_before_docker(case):
+    policy = case[0] / 'pretend-approved.json'
+    policy.write_text('{}', encoding='utf-8')
+    incomplete(invoke(case, '-Action', 'release', '-Policy', str(policy), '-Json'), 'invalid_policy')
+    assert calls(case) == []
+    assert not (case[0] / '.gxsec-container').exists()
+
+
+def test_database_without_policy_is_rejected_before_docker(case):
+    database = case[0].parent / 'db'
+    database.mkdir()
+    incomplete(invoke(case, '-Action', 'release', '-Database', str(database), '-Json'), 'invalid_arguments')
+    assert calls(case) == []
+
+
+def test_policy_mount_separator_is_rejected_before_docker(case):
+    policy = case[0].parent / 'policy,readonly.json'
+    policy.write_text('{}', encoding='utf-8')
+    incomplete(invoke(case, '-Action', 'release', '-Policy', str(policy), '-Json'), 'invalid_policy')
+    assert calls(case) == []
+
+
+def test_review_records_use_protected_readonly_input(case):
+    policy = case[0].parent / 'policy.json'
+    policy.write_text('{}', encoding='utf-8')
+    reviews = case[0].parent / 'review records.json'
+    reviews.write_text('{"reviews":[]}', encoding='utf-8')
+    result = invoke(case, '-Action', 'release', '-Policy', str(policy), '-ReviewRecords', str(reviews), '-Json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert f'type=bind,source={reviews},target=/trusted/reviews.json,readonly' in run
+    assert run[run.index('--review-records') + 1] == '/trusted/reviews.json'
+
+
+def test_expected_framework_is_additive_without_generating_config(case):
+    result = invoke(case, '-Action', 'release', '-ExpectedFramework', 'SEF', '-Json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert run[run.index('--expected-framework') + 1] == 'SEF'
+    assert not (case[0] / 'gxsec.yaml').exists()
+
+
+def test_project_review_records_are_rejected_before_docker(case):
+    policy = case[0].parent / 'policy.json'
+    policy.write_text('{}', encoding='utf-8')
+    reviews = case[0] / 'reviews.json'
+    reviews.write_text('{}', encoding='utf-8')
+    incomplete(invoke(case, '-Action', 'release', '-Policy', str(policy), '-ReviewRecords', str(reviews), '-Json'),
+               'invalid_review_records')
+    assert calls(case) == []
 
 
 def test_check_defaults_to_check_profile(case):
@@ -206,7 +305,6 @@ def test_engine_exit_codes_are_preserved(case, code):
     (['-Action', 'release', '-FindingId', 'GXSEC-synthetic'], 'invalid_arguments'),
     (['-Action', 'release', '-RunId', 'previous'], 'invalid_arguments'),
     (['-Action', 'release', '-Base', 'HEAD~1'], 'invalid_arguments'),
-    (['-Action', 'retest', '-FindingId', '--policy'], 'invalid_arguments'),
     (['-Action', 'check', '-Base', '--bad-option'], 'invalid_arguments'),
     (['-Action', 'retest', '-FindingId', 'GXSEC-synthetic', '-RunId', '../other'], 'invalid_arguments'),
     (['-Action', 'unknown'], 'invalid_arguments'),
@@ -214,6 +312,14 @@ def test_engine_exit_codes_are_preserved(case, code):
 ])
 def test_invalid_arguments_fail_before_docker_or_source_output(case, arguments, reason):
     incomplete(invoke(case, *arguments, '-Json'), reason)
+    assert calls(case) == []
+    assert not (case[0] / '.gxsec-container').exists()
+
+
+def test_named_option_cannot_be_smuggled_as_finding_id(case):
+    # PowerShell binds the new Policy option before the script can emit JSON.
+    result = invoke(case, '-Action', 'retest', '-FindingId', '--policy', '-Json')
+    assert result.returncode != 0
     assert calls(case) == []
     assert not (case[0] / '.gxsec-container').exists()
 
@@ -241,9 +347,10 @@ def test_unready_runtime_never_scans_pulls_or_creates_output(case, variable, val
 
 def test_docker_probe_has_bounded_wait(case):
     case[2]['GXSEC_FAKE_DAEMON'] = 'timeout'
-    started = time.monotonic()
-    incomplete(invoke(case, '-Action', 'doctor', '-Json', timeout=17), 'docker_probe_timeout')
-    assert time.monotonic() - started < 14
+    incomplete(invoke(case, '-Action', 'doctor', '-Json', timeout=60), 'docker_probe_timeout')
+    # Exclude PowerShell/fixture startup on loaded Windows hosts; measure the blocked probe.
+    started = int(Path(case[2]['GXSEC_FAKE_PROBE_STARTED']).read_text()) / 1000
+    assert time.time() - started < 14
     assert len(calls(case)) == 1
 
 

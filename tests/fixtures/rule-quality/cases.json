@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "description": "Authored synthetic expectations for candidate alerts, including desired improvements beyond literal patterns; not exploitability ground truth or real-project accuracy.",
+  "label_semantics": "expected_match means a desired rule candidate alert in this authored fixture. True does not establish an exploitable vulnerability; false does not establish application safety. TP/FP/FN/TN describe agreement with these expectations only.",
+  "review_assumptions": {
+    "review_kind": "Separate model-based source and label review on 2026-11-10; not a human assessment, independent external benchmark, compiled application test, or exploit validation.",
+    "access-vuln": "The method receives an annotated ID but returns a constant. It is an ID-parameter candidate-pattern control, not an IDOR demonstration.",
+    "absence_controls": "auth-safe, access-safe, upload-safe, ssrf-safe, and pathtraversal-safe omit the relevant feature. They test absence of the candidate pattern, not recognition of an effective defense.",
+    "environment": "CSRF requires authentication and request context; CORS requires framework-version and actual response behavior; SSRF requires attacker control of the URL and a reachable server-side call. These fixtures do not establish those conditions.",
+    "cors-different-receivers": "Different variable names are a syntactic negative control; they do not prove the two parameters cannot alias one object.",
+    "sql": "JDBC direct/helper and MyBatis interpolation are risk-retaining positive expectations assuming an externally controlled, unvalidated term/title. Parameter binding is the negative control for this input path only.",
+    "xss-frontend-safe": "The negative expectation assumes the imported DOMPurify is authentic, operates normally with a suitable supported version/configuration, and the sanitized value is not subsequently made unsafe. No browser/runtime validation was performed."
+  },
+  "cases": [
+    {
+      "id": "auth-vuln",
+      "rule_id": "sqisoft-spring-bcrypt-not-used",
+      "expected_match": true,
+      "filename": "WeakHash.java",
+      "source_path": "tests/fixtures/auth/vuln/WeakHash.java"
+    },
+    {
+      "id": "auth-safe",
+      "rule_id": "sqisoft-spring-bcrypt-not-used",
+      "expected_match": false,
+      "filename": "NoAuth.java",
+      "source_path": "tests/fixtures/auth/safe/NoAuth.java"
+    },
+    {
+      "id": "access-vuln",
+      "rule_id": "sqisoft-spring-pathvariable-annotated-id",
+      "expected_match": true,
+      "filename": "Ctrl.java",
+      "source_path": "tests/fixtures/access/vuln/Ctrl.java"
+    },
+    {
+      "id": "access-safe",
+      "rule_id": "sqisoft-spring-pathvariable-annotated-id",
+      "expected_match": false,
+      "filename": "Plain.java",
+      "source_path": "tests/fixtures/access/safe/Plain.java"
+    },
+    {
+      "id": "csrf-vuln",
+      "rule_id": "sqisoft-spring-csrf-disabled",
+      "expected_match": true,
+      "filename": "Sec.java",
+      "source_path": "tests/fixtures/csrf/vuln/Sec.java"
+    },
+    {
+      "id": "csrf-safe",
+      "rule_id": "sqisoft-spring-csrf-disabled",
+      "expected_match": false,
+      "filename": "Sec.java",
+      "source_path": "tests/fixtures/csrf/safe/Sec.java"
+    },
+    {
+      "id": "xss-vuln",
+      "rule_id": "sqisoft-spring-servlet-reflected-xss-writer",
+      "expected_match": true,
+      "filename": "Servlet.java",
+      "source_path": "tests/fixtures/xss/vuln/Servlet.java"
+    },
+    {
+      "id": "xss-safe",
+      "rule_id": "sqisoft-spring-servlet-reflected-xss-writer",
+      "expected_match": false,
+      "filename": "Servlet.java",
+      "source_path": "tests/fixtures/xss/safe/Servlet.java"
+    },
+    {
+      "id": "upload-vuln",
+      "rule_id": "sqisoft-spring-originalfilename-direct-use",
+      "expected_match": true,
+      "filename": "Up.java",
+      "source_path": "tests/fixtures/upload/vuln/Up.java"
+    },
+    {
+      "id": "upload-safe",
+      "rule_id": "sqisoft-spring-originalfilename-direct-use",
+      "expected_match": false,
+      "filename": "NoUp.java",
+      "source_path": "tests/fixtures/upload/safe/NoUp.java"
+    },
+    {
+      "id": "ssrf-vuln",
+      "rule_id": "sqisoft-ssrf-resttemplate-var-call",
+      "expected_match": true,
+      "filename": "Fetch.java",
+      "source_path": "tests/fixtures/ssrf/vuln/Fetch.java"
+    },
+    {
+      "id": "ssrf-safe",
+      "rule_id": "sqisoft-ssrf-resttemplate-var-call",
+      "expected_match": false,
+      "filename": "NoEgress.java",
+      "source_path": "tests/fixtures/ssrf/safe/NoEgress.java"
+    },
+    {
+      "id": "pathtraversal-vuln",
+      "rule_id": "sqisoft-spring-requestparam-to-path",
+      "expected_match": true,
+      "filename": "Dl.java",
+      "source_path": "tests/fixtures/pathtraversal/vuln/Dl.java"
+    },
+    {
+      "id": "pathtraversal-safe",
+      "rule_id": "sqisoft-spring-requestparam-to-path",
+      "expected_match": false,
+      "filename": "NoFile.java",
+      "source_path": "tests/fixtures/pathtraversal/safe/NoFile.java"
+    },
+    {
+      "id": "secrets-vuln",
+      "rule_id": "sqisoft-properties-hardcoded-password",
+      "expected_match": true,
+      "filename": "app.properties",
+      "source_path": "tests/fixtures/secrets/vuln/app.properties"
+    },
+    {
+      "id": "secrets-safe",
+      "rule_id": "sqisoft-properties-hardcoded-password",
+      "expected_match": false,
+      "filename": "app.properties",
+      "source_path": "tests/fixtures/secrets/safe/app.properties"
+    },
+    {
+      "id": "sqli-vuln",
+      "rule_id": "sqisoft-mybatis-xml-dollar-interpolation",
+      "expected_match": true,
+      "filename": "BoardMapper.xml",
+      "source_path": "tests/fixtures/sqli/vuln/BoardMapper.xml"
+    },
+    {
+      "id": "sqli-safe",
+      "rule_id": "sqisoft-mybatis-xml-dollar-interpolation",
+      "expected_match": false,
+      "filename": "BoardMapper.xml",
+      "source_path": "tests/fixtures/sqli/safe/BoardMapper.xml"
+    },
+    {
+      "id": "xss-frontend-vuln",
+      "rule_id": "sqisoft-vue-v-html-unsanitized",
+      "expected_match": true,
+      "filename": "Board.vue",
+      "source_path": "tests/fixtures/xss/frontend/vuln/Board.vue"
+    },
+    {
+      "id": "xss-frontend-safe",
+      "rule_id": "sqisoft-vue-v-html-unsanitized",
+      "expected_match": false,
+      "known_limitation": "The broad v-html regex also flags a DOMPurify.sanitize-wrapped binding. Count this false alarm; confirm sanitizer behavior in review.",
+      "filename": "Board.vue",
+      "source_path": "tests/fixtures/xss/frontend/safe/Board.vue"
+    },
+    {
+      "id": "cors-normal",
+      "rule_id": "sqisoft-spring-cors-wildcard-credentials",
+      "expected_match": true,
+      "filename": "Config.java",
+      "source": "class Config { void configure(CorsRegistration first, CorsRegistration second) { first.allowedOrigins(\"*\"); first.allowCredentials(true); } }\n"
+    },
+    {
+      "id": "cors-reverse",
+      "rule_id": "sqisoft-spring-cors-wildcard-credentials",
+      "expected_match": true,
+      "filename": "Config.java",
+      "source": "class Config { void configure(CorsRegistration first, CorsRegistration second) { first.allowCredentials(true); first.allowedOrigins(\"*\"); } }\n"
+    },
+    {
+      "id": "cors-different-receivers",
+      "rule_id": "sqisoft-spring-cors-wildcard-credentials",
+      "expected_match": false,
+      "filename": "Config.java",
+      "source": "class Config { void configure(CorsRegistration first, CorsRegistration second) { first.allowedOrigins(\"*\"); second.allowCredentials(true); } }\n"
+    },
+    {
+      "id": "cors-trusted-origin",
+      "rule_id": "sqisoft-spring-cors-wildcard-credentials",
+      "expected_match": false,
+      "filename": "Config.java",
+      "source": "class Config { void configure(CorsRegistration first, CorsRegistration second) { first.allowedOrigins(\"https://example.invalid\"); first.allowCredentials(true); } }\n"
+    },
+    {
+      "id": "cors-no-credentials",
+      "rule_id": "sqisoft-spring-cors-wildcard-credentials",
+      "expected_match": false,
+      "filename": "Config.java",
+      "source": "class Config { void configure(CorsRegistration first, CorsRegistration second) { first.allowedOrigins(\"*\"); first.allowCredentials(false); } }\n"
+    },
+    {
+      "id": "jdbc-direct",
+      "rule_id": "sqisoft-spring-jdbctemplate-string-concat",
+      "expected_match": true,
+      "filename": "Search.java",
+      "source": "import org.springframework.jdbc.core.JdbcTemplate;\nclass Search { JdbcTemplate jdbc; Object search(String term) { return jdbc.queryForList(\"SELECT * FROM account WHERE name = '\" + term + \"'\"); } }\n"
+    },
+    {
+      "id": "jdbc-parameterized",
+      "rule_id": "sqisoft-spring-jdbctemplate-string-concat",
+      "expected_match": false,
+      "filename": "Search.java",
+      "source": "import org.springframework.jdbc.core.JdbcTemplate;\nclass Search { JdbcTemplate jdbc; Object search(String term) { return jdbc.queryForList(\"SELECT * FROM account WHERE name = ?\", term); } }\n"
+    },
+    {
+      "id": "jdbc-helper-risk-retained",
+      "rule_id": "sqisoft-spring-jdbctemplate-string-concat",
+      "expected_match": true,
+      "filename": "Search.java",
+      "source": "import org.springframework.jdbc.core.JdbcTemplate;\nclass Search { JdbcTemplate jdbc; Object search(String term) { return jdbc.queryForList(sql(term)); } String sql(String term) { return \"SELECT * FROM account WHERE name = '\" + term + \"'\"; } }\n",
+      "known_limitation": "The current same-expression rule does not follow SQL concatenation through a helper. Count this miss; do not treat disappearance as remediation."
+    }
+  ]
+}

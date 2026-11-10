@@ -17,6 +17,7 @@ rules:
       이스케이프 없이 직접 출력하고 있습니다. 반사형 XSS 위험.
       fn:escapeXml() 또는 <c:out> 으로 감싸세요.
     metadata:
+      severity: Medium
       cwe: "CWE-79"
       owasp: "A03:2021"
       stack: jsp-legacy
@@ -34,6 +35,7 @@ rules:
       JSP EL은 HTML 자동이스케이프를 하지 않습니다. 반사형 XSS 위험.
       ${fn:escapeXml(param.x)} 또는 <c:out value="${param.x}"/> 로 변경하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-79"
       owasp: "A03:2021"
       stack: jsp-legacy
@@ -50,6 +52,7 @@ rules:
       <c:out escapeXml="false">로 HTML 이스케이프를 명시적으로 비활성화했습니다.
       사용자 데이터가 출력되면 XSS 위험입니다. 리치 텍스트라면 AntiSamy/jsoup 정화 후 출력하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-79"
       owasp: "A03:2021"
       stack: jsp-legacy
@@ -67,6 +70,7 @@ rules:
       HTML 이스케이프는 JavaScript 컨텍스트에서 불충분합니다. DOM XSS 위험.
       서버에서 JSON으로 전달하거나, JS 이스케이프(Apache Commons Text StringEscapeUtils.escapeEcmaScript)를 사용하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-79"
       owasp: "A03:2021"
       stack: jsp-legacy
@@ -83,6 +87,7 @@ rules:
       사용자 입력이 포함되면 반사형 XSS 위험입니다.
       템플릿 엔진을 사용하거나 JSON으로 반환하고 프론트에서 textContent로 렌더링하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-79"
       owasp: "A03:2021"
       stack: spring-modern
@@ -108,6 +113,7 @@ rules:
       사용자 데이터가 바인딩되면 XSS 위험입니다. th:text로 변경하거나
       리치 텍스트라면 AntiSamy/jsoup 정화 후 사용하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-79"
       owasp: "A03:2021"
       stack: spring-modern
@@ -128,6 +134,7 @@ rules:
       innerHTML에 동적 값을 할당하고 있습니다. API 응답이나 사용자 입력이
       포함되면 DOM XSS 위험입니다. textContent 또는 DOMPurify.sanitize() 사용을 권장합니다.
     metadata:
+      severity: Medium
       cwe: "CWE-79"
       owasp: "A03:2021"
       stack: spring-modern
@@ -147,6 +154,7 @@ rules:
       dangerouslySetInnerHTML에 사용자 제어 데이터를 전달하고 있습니다. DOM XSS 위험.
       DOMPurify.sanitize()로 정화 후 전달하거나 children 렌더링으로 변경하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-79"
       owasp: "A03:2021"
       stack: spring-modern
@@ -168,6 +176,7 @@ rules:
       document.write()는 사용자 입력이나 URL 파라미터를 받으면 DOM XSS 위험입니다.
       DOM API(createElement, textContent)로 대체하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-79"
       owasp: "A03:2021"
       stack: spring-modern
@@ -181,6 +190,7 @@ rules:
       사용자 입력(request.getParameter 등)을 이스케이프 없이 응답 스트림에 직접 출력합니다(반사형 XSS).
       출력 컨텍스트에 맞는 이스케이프(OWASP Java Encoder 등)를 적용하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-79"
       owasp: "A03:2021"
       stack: spring-modern
@@ -202,6 +212,7 @@ rules:
       JSP EL은 HTML 자동이스케이프를 하지 않아 저장형 XSS 위험입니다.
       <c:out value="${board.title}"/> 또는 ${fn:escapeXml(board.title)}로 변경하세요.
     metadata:
+      severity: High
       cwe: "CWE-79"
       owasp: "A03:2021"
       stack: jsp-legacy

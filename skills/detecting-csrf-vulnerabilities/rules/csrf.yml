@@ -13,6 +13,7 @@ rules:
       쿠키 기반 세션(JSESSIONID 등)을 사용한다면 모든 상태변경 요청이 위조 가능합니다.
       순수 stateless JWT(헤더 인증)인 경우에만 의도된 예외일 수 있으므로 인증 방식을 확인하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-352"
       owasp: "A01:2021"
       stack: spring-modern
@@ -32,6 +33,7 @@ rules:
       CORS가 모든 오리진(*)을 허용합니다. 자격증명(쿠키)을 함께 허용하면 CSRF/정보노출 위험이
       커집니다. 허용 오리진을 사업부 도메인으로 제한하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-942"
       owasp: "A05:2021"
       stack: spring-modern
@@ -61,6 +63,7 @@ rules:
       상태를 변경하는 동작(delete/withdraw/update/remove)을 GET 링크로 노출하고 있을 수 있습니다.
       CSRF 토큰과 무관하게 설계 결함입니다. POST + 토큰으로 전환하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-352"
       owasp: "A01:2021"
       stack: jsp-legacy
@@ -74,6 +77,7 @@ rules:
       Servlet doPost가 상태를 변경하는데 CSRF 토큰 검증 호출이 보이지 않습니다.
       전역 CSRF 필터(CSRFGuard 등) 적용 여부를 확인하고, 없다면 토큰 검증을 추가하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-352"
       owasp: "A01:2021"
       stack: jsp-legacy
@@ -99,6 +103,7 @@ rules:
       POST form입니다. CSRF 토큰(hidden 필드) 부재는 음성 패턴이라 룰로 단정할 수 없습니다 —
       2단계 AI 검증에서 토큰/전역 CSRF 필터(CSRFGuard 등) 유무를 전수 확인하세요.
     metadata:
+      severity: Low
       cwe: "CWE-352"
       owasp: "A01:2021"
       stack: jsp-legacy

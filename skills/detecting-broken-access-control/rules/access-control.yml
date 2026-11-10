@@ -16,6 +16,7 @@ rules:
       역할(Role) 구분이 되지 않아 일반 사용자가 관리자 API를 호출할 수 있습니다(BFLA).
       hasMenuAuthority() 또는 hasAuthority('ROLE_ADMIN') 어노테이션을 추가하세요.
     metadata:
+      severity: High
       cwe: "CWE-285"
       owasp: "A01:2021"
       stack: spring-modern
@@ -44,6 +45,7 @@ rules:
       소유권 비교가 보이지 않습니다. 타인의 리소스에 접근하는 IDOR 가능성이 있습니다.
       @AuthenticationPrincipal로 인증 사용자를 받아 서비스 레이어에서 소유권을 검증하세요.
     metadata:
+      severity: High
       cwe: "CWE-639"
       owasp: "A01:2021"
       stack: spring-modern
@@ -67,6 +69,7 @@ rules:
       세션 사용자와의 소유권 비교 없이 이 값으로 리소스를 조회하면 IDOR 가능성이 있습니다.
       @AuthenticationPrincipal로 인증 사용자를 받아 서비스 레이어에서 소유권을 검증하세요.
     metadata:
+      severity: High
       cwe: "CWE-639"
       owasp: "A01:2021"
       stack: spring-modern
@@ -87,6 +90,7 @@ rules:
       adminPaths/apiPaths에 포함되지 않는 내부 경로가 인증 없이 노출될 수 있습니다.
       anyRequest().authenticated()로 전환하거나 공개 경로를 화이트리스트로 명시하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-284"
       owasp: "A01:2021"
       stack: spring-modern
@@ -98,14 +102,15 @@ rules:
     severity: WARNING
     message: >-
       CORS allowedOrigins("*")와 allowCredentials(true)가 함께 설정되어 있습니다.
-      자격증명이 포함된 크로스사이트 요청이 허용되어 CSRF·정보노출 위험이 가중됩니다.
-      허용 오리진을 사업부 도메인으로 제한하세요.
+      Spring의 검증 경로에서는 이 조합을 오류로 거부할 수 있으므로 정보 유출로 단정하지 않습니다.
+      적용 버전·실제 응답 헤더·쿠키 인증 여부를 확인하고 허용 오리진을 명시하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-284"
       owasp: "A01:2021"
       stack: spring-modern
       confidence: medium
-    patterns:
+    pattern-either:
       - pattern: |
           $CONFIG.allowedOrigins("*");
           ...
@@ -129,6 +134,7 @@ rules:
       off는 인터셉터 완전 비활성, audit은 차단 없이 로그만 수집합니다.
       비인증 사용자가 보호 URL에 접근 가능합니다. mode=enforce로 전환하세요.
     metadata:
+      severity: High
       cwe: "CWE-284"
       owasp: "A01:2021"
       stack: jsp-legacy
@@ -143,6 +149,7 @@ rules:
       세션 사용자와 소유권 비교 없이 DB를 조회하면 IDOR 가능성이 있습니다.
       서비스 레이어에서 loginVo.getId()와 DB 조회 결과의 소유자를 비교하세요.
     metadata:
+      severity: High
       cwe: "CWE-639"
       owasp: "A01:2021"
       stack: jsp-legacy
@@ -167,6 +174,7 @@ rules:
       loginVo가 null이면 NullPointerException 또는 예외 처리에 따라 관리자 가드가
       우회될 수 있습니다. loginVo == null 먼저 체크한 뒤 isAdmin을 호출하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-285"
       owasp: "A01:2021"
       stack: jsp-legacy
@@ -191,6 +199,7 @@ rules:
       GET 링크로 노출하고 있을 수 있습니다. 접근통제 토큰과 무관하게 설계 결함입니다.
       POST 요청으로 전환하고 CSRF 보호를 적용하세요.
     metadata:
+      severity: Medium
       cwe: "CWE-284"
       owasp: "A01:2021"
       stack: jsp-legacy

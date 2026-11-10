@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-EXPECTED = "0.10.1"
+EXPECTED = "0.10.2"
 
 
 class TestVersionConsistency(unittest.TestCase):

@@ -188,7 +188,7 @@ def _remove_private_tree(root):
 
 
 @contextmanager
-def verified_snapshot(source, inventory):
+def verified_snapshot(source, inventory, *, include_history=True):
     source = reject_reparse_path(source).resolve(strict=True)
     temporary = Path(tempfile.mkdtemp(prefix='gxsec-static-'))
     temporary.chmod(0o700)
@@ -207,7 +207,8 @@ def verified_snapshot(source, inventory):
                 raise ValueError('Initial source file identity is invalid')
             _copy_file(source, relative, digest, target / relative)
             expected[relative] = digest
-        history = _copy_history(source, target, inventory, home)
+        history = (_copy_history(source, target, inventory, home) if include_history
+                   else {'required': False, 'status': 'not_available', 'reason': 'File-only snapshot'})
         hashes = _tree_hashes(target)
         if any(hashes.get(path) != digest for path, digest in expected.items()):
             raise ValueError('Private copy failed verification before scanning')

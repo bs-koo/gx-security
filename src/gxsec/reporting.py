@@ -27,6 +27,36 @@ CHECK_NAMES = {"sast": "소스 코드", "sca": "의존성 취약점", "secrets":
                "dast": "웹 실행 검사", "manual-review": "필수 독립 검토", "framework": "SEF 기반·보안 경계"}
 PROPOSAL_LABELS = {"confirmed": "위험 근거 확인 제안", "not_actionable": "비조치 검토 제안",
                    "needs_review": "추가 검토 필요"}
+LIFECYCLE_LABELS = {'open': '미조치', 'reopened': '재발견', 'remediation-proposed': '수정 확인 필요',
+                    'fixed-verified': '수정 검증 완료'}
+
+
+def _qa_checks(finding):
+    """Draft acceptance scenarios; actual accounts/policy and execution remain explicit."""
+    rule = str(finding.get('semantic_rule_id', finding.get('rule_id', '')))
+    category = str(finding.get('category', '')).lower()
+    if rule == 'SEF-JWT-01' or category in {'auth', 'authentication', 'auth-session'}:
+        return ['정상 access와 다른 용도·만료·폐기 토큰의 합성 테스트 계정을 준비',
+                '정상 토큰의 보호 자원 접근은 성공하고 잘못된 토큰은 신원·내용·변경 권한을 얻지 못하는지 확인',
+                '응답 코드뿐 아니라 실제 사용자 신원·자원 내용·상태 변경 여부를 대조']
+    if rule in {'SEF-ADM-01', 'SEF-OBJ-01', 'SEF-ROUTE-01'} or category in {'authorization', 'access-control', 'idor'}:
+        return ['허용 역할과 미허용 역할, 서로 다른 메뉴·조직·소유자의 합성 객체를 준비',
+                '허용된 정상 요청은 성공하고 역할 또는 부모·자식 객체를 바꾼 직접 요청은 거절되는지 확인',
+                '거절 응답의 내용 노출과 DB 변경·메일 발송 등 부작용이 없는지 확인']
+    if rule == 'SEF-FILE-01' or category in {'path-traversal', 'file-upload', 'pathtraversal', 'upload'}:
+        return ['허용 저장소의 정상 파일과 접두어가 같은 형제 경로·외부 링크·다른 소유자 파일을 준비',
+                '정상 파일은 유지하고 경계 밖 읽기·쓰기 및 다른 사용자의 파일 접근이 차단되는지 확인',
+                '업로드는 허용 형식과 실제 내용·크기 검증을 함께 확인']
+    if category in {'sql-injection', 'sqli'} or 'sql' in rule.lower():
+        return ['정상 검색값과 따옴표 등 SQL 구문 문자를 포함한 합성 값을 준비',
+                '실제 실행 경로에서 입력이 바인딩된 데이터로 처리되고 조회 범위가 확장되지 않는지 확인',
+                '함수 분리로 후보만 사라진 경우 수정 완료로 처리하지 않고 원래 위험 경로를 다시 검토']
+    if category in {'xss', 'cross-site-scripting'} or 'xss' in rule.lower():
+        return ['허용 서식과 비활성 합성 HTML·URL 입력, 저장 후 다시 읽는 화면을 준비',
+                '출력 문맥의 정제·인코딩 적용을 확인하고 정상 표시와 이벤트·스크립트 실행 차단을 함께 검증',
+                '반사 문자열이나 sanitizer 이름만으로 실행 성공·방어 완료를 확정하지 않음']
+    return ['정상 기능과 원래 후보 경로의 합성 입력·기대 결과를 먼저 정의',
+            '정상 동작과 방어 동작을 함께 확인하고 미실행·미확정은 구분해 기록']
 
 
 def _proposal(context):
@@ -160,7 +190,7 @@ def _markdown(run, qa=False):
     for f in run.get("findings", []):
         fid = f.get("finding_id", "unknown")
         lines.extend([f"### {_md(fid)} · {_md(_title(f))}", "",
-                      f"등급: {_md(f.get('severity', 'unknown'))} · 검증: {_md(f.get('validation'))} · 조치: {_md(f.get('lifecycle'))}", "",
+                      f"등급: {_md(f.get('severity', 'unknown'))} · 검증: {_md(f.get('validation'))} · 조치: {_md(LIFECYCLE_LABELS.get(f.get('lifecycle'), f.get('lifecycle')))}", "",
                       f"위치: {_md(_location(f))}", "", _md(f.get("description", "")), "",
                       f"수정 방향: {_md(_remediation(f))}", ""])
         context = f.get("context")
@@ -175,10 +205,24 @@ def _markdown(run, qa=False):
         elif f.get("evidence_refs"):
             lines.extend(["소스 근거: " + _md(f["evidence_refs"]), ""])
         if qa:
-            lines.extend(["- [ ] 대상 버전·계정 역할·테스트 데이터가 일치하는지 확인", "- [ ] 정상 기능과 원래 취약 경로의 방어를 함께 확인",
-                          "- [ ] 근거·확인자·결정을 남김. 미확인은 완료로 표시하지 않음", ""])
+            lines.extend(['시험 초안: 업무 정책·승인된 테스트 범위를 확인한 후 구체적인 계정과 기대 결과를 채웁니다.', ''])
+            lines.extend('- [ ] ' + _md(step) for step in _qa_checks(f))
+            lines.extend(['- [ ] 대상 버전·시험자·기대 결과·관측·근거를 기록. 미실행은 통과로 표시하지 않음', ''])
         else:
-            lines.extend([f"재점검: `gxsec retest {_md(fid)} --source <프로젝트> --config <프로파일>`", ""])
+            lines.extend(["재점검 요청(등록된 통합 스킬):", "",
+                _md(f"$gx-security 실행 {run.get('run_id', '미확인')}의 발견 {fid}를 "
+                    f"원래 {run.get('profile', '미확인')} 프로파일과 기존 상태 저장소로 재검증해줘."), ""])
+            context = run.get('execution_context')
+            if isinstance(context, dict) and context.get('authority') == 'report-hint-only':
+                for key, label in (('runner', '실행 방식'), ('source', '원래 소스'), ('state_dir', '기존 상태 저장소'),
+                                   ('output', '기존 Docker Output'), ('config', '설정 파일'), ('policy', '보호 정책'),
+                                   ('database', '승인 DB'), ('review_records', '기존 검토 기록'),
+                                   ('launcher', '설치 실행기'), ('image', '원래 이미지')):
+                    if context.get(key):
+                        lines.append(label + ': ' + _md(context[key]))
+                lines.extend(['', '위 경로는 기존 실행을 찾기 위한 참고이며 승인 근거가 아닙니다. 실제 설치·경로와 일치하는지 확인합니다.', ''])
+            else:
+                lines.extend(['기존 상태 저장소와 원래 실행 경로를 확인한 뒤 진행합니다. Docker 결과를 새 native 기본 저장소로 바꾸지 않습니다.', ''])
     if not run.get("findings"):
         lines.extend(["발견사항이 없어도 필수 검사 미완료 여부를 먼저 확인합니다.", ""])
     lines.extend(["## 예외와 검토", "", _md(run.get("exceptions", [])), "", _md(run.get("reviews", [])), ""])
