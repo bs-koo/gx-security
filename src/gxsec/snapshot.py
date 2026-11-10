@@ -35,9 +35,13 @@ def _handle_path(handle):
             value = value[4:]
         return Path(value)
     proc = Path('/proc/self/fd') / str(handle.fileno())
-    if proc.exists():
-        return Path(os.readlink(proc))
-    raise ValueError('This platform cannot verify source handle locations')
+    try:
+        value = os.readlink(proc)
+    except OSError:
+        raise ValueError('This platform cannot verify source handle locations') from None
+    # Do not resolve/stat the proc target: that repeats source filesystem
+    # metadata round trips. Callers independently check the opened identity.
+    return Path(value)
 
 
 def _copy_file(root, relative, expected, destination):
@@ -48,7 +52,8 @@ def _copy_file(root, relative, expected, destination):
     if any(directory_exclusion_reason(parent.as_posix()) for parent in original.relative_to(root).parents):
         raise ValueError('Source inventory contains an excluded directory')
     original = reject_reparse_path(original)
-    original.resolve(strict=True).relative_to(root)
+    # Lexical inventory validation and the canonical root bind this path;
+    # the opened handle is confined to root before any byte is read below.
     before = original.lstat()
     if not stat.S_ISREG(before.st_mode):
         raise ValueError('Inventory input is not a regular file')

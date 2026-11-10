@@ -32,6 +32,20 @@ def test_input_budget_does_not_count_snapshot_rechecks_as_new_input():
         assert budget.summary()['input_bytes'] == 5
 
 
+def test_first_exhausted_phase_survives_followup_recheck():
+    ticks = [0.0]
+    with execution.session(10, max_input_bytes=1024, stream=io.StringIO(), clock=lambda: ticks[0]) as budget:
+        with execution.phase('snapshot-copy'):
+            ticks[0] = 11
+            with pytest.raises(execution.BudgetExceeded):
+                execution.checkpoint()
+        with pytest.raises(execution.BudgetExceeded):
+            with execution.phase('source-recheck'):
+                pytest.fail('an exhausted budget must not resume work')
+        assert budget.summary()['budget_exceeded'] == {
+            'type': 'execution_budget_exceeded', 'reason': 'duration', 'stage': 'snapshot-copy'}
+
+
 def test_nested_phases_restore_outer_and_do_not_leak_paths():
     stream = io.StringIO()
     with execution.session(60, max_input_bytes=1024, stream=stream) as budget:

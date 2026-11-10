@@ -69,12 +69,16 @@ def full_source_scope_hash(root, modules):
                          'exclusion_contract': exclusion_contract(), 'modules': modules})
 
 
+def _is_reparse_stat(info):
+    return stat.S_ISLNK(info.st_mode) or bool(getattr(info, 'st_file_attributes', 0) & 0x400)
+
+
 def is_reparse(path):
     """Recognize symlinks and Windows junction/reparse entries without following them."""
     path = Path(path)
     try:
         info = path.lstat()
-        return stat.S_ISLNK(info.st_mode) or bool(getattr(info, 'st_file_attributes', 0) & 0x400)
+        return _is_reparse_stat(info)
     except OSError:
         return False
 
@@ -140,10 +144,11 @@ def _git(root, *args, trust_source=None):
         return None
 
 
-def _read_inventory_file(path, root):
+def _read_inventory_file(path, root, *, before=None):
     from .snapshot import _handle_path
-    before = path.lstat()
-    if not stat.S_ISREG(before.st_mode):
+    if before is None:
+        before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or _is_reparse_stat(before):
         raise ValueError('nonregular_input')
     budget = current()
     if budget is not None and budget.stage == 'source-inventory':
@@ -168,7 +173,7 @@ def _read_inventory_file(path, root):
     final = path.lstat()
     identity = lambda item: (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns)
     if (identity(before) != identity(final) or identity(opened) != identity(after)
-            or opened.st_ctime_ns != after.st_ctime_ns or is_reparse(path)):
+            or opened.st_ctime_ns != after.st_ctime_ns or _is_reparse_stat(final)):
         raise ValueError('source_changed_while_reading')
     checkpoint(files=1)
     return digest.hexdigest(), size
@@ -219,12 +224,15 @@ def collect_source(source: Path, *, git_boundary=None) -> dict:
             if name == '.git':
                 exclusions.append({'path': rel, 'reason': 'git-metadata'})
                 continue
-            if is_reparse(p):
-                exclusions.append({'path': rel, 'reason': 'reparse-entry'})
-                errors.append({'type': 'reparse_entry', 'path': rel})
-                continue
             try:
-                h, size = _read_inventory_file(p, root)
+                # Reuse this exact pre-open observation; opened/final identities
+                # are still checked independently by the reader.
+                before = p.lstat()
+                if _is_reparse_stat(before):
+                    exclusions.append({'path': rel, 'reason': 'reparse-entry'})
+                    errors.append({'type': 'reparse_entry', 'path': rel})
+                    continue
+                h, size = _read_inventory_file(p, root, before=before)
                 files.append(rel)
                 if rel not in {'gxsec.yaml', 'gxsec.yml', 'gxsec.json'}:
                     digest.update(rel.encode('utf-8') + b'\x00' + h.encode() + b'\x00')

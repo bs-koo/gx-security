@@ -37,7 +37,8 @@ class Execution:
                   'input_bytes' if self.input_bytes > self.max_input_bytes else None)
         if reason:
             error = BudgetExceeded(reason, self.stage)
-            self.failure = error.diagnostic
+            if self.failure is None:
+                self.failure = error.diagnostic
             raise error
 
     def emit(self, event):

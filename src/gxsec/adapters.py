@@ -879,4 +879,5 @@ def run_static_checks(source: Path, config: dict, profile: str) -> tuple[list, l
             return checks, findings
     except (OSError, ValueError, RuntimeError) as exc:
         provenance = {'copy_verified': False, 'stable_after_scan': False, 'digest': None, 'source_hash': inventory.get('hash')}
-        return [make_check(name, snapshot=provenance, errors=[{'type': 'snapshot_invalid', 'message': str(exc)}]) for name in ('sast','sca','secrets','framework')], []
+        error = exc.diagnostic if isinstance(exc, BudgetExceeded) else {'type': 'snapshot_invalid', 'message': str(exc)}
+        return [make_check(name, snapshot=provenance, errors=[dict(error)]) for name in ('sast','sca','secrets','framework')], []

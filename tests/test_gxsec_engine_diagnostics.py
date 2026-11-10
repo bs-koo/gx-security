@@ -12,6 +12,23 @@ import pytest
 from gxsec import adapters, config, policy, source
 
 
+def test_snapshot_copy_budget_has_structured_budget_diagnostic(tmp_path, monkeypatch):
+    from gxsec.execution import BudgetExceeded
+
+    @contextmanager
+    def exhausted(*args):
+        raise BudgetExceeded('duration', 'snapshot-copy')
+        yield
+
+    monkeypatch.setattr(adapters, 'verified_snapshot', exhausted)
+    checks, findings = adapters.run_static_checks(tmp_path, {'_inventory': {'hash': 'source-hash'}}, 'check')
+    assert findings == []
+    assert len(checks) == 4
+    for check in checks:
+        assert check['status'] == 'incomplete'
+        assert check['errors'] == [{'type': 'execution_budget_exceeded', 'reason': 'duration', 'stage': 'snapshot-copy'}]
+
+
 @pytest.fixture
 def sast(tmp_path, monkeypatch):
     (tmp_path / 'A.java').write_text('class A {}', encoding='utf-8')
