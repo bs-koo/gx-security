@@ -3,13 +3,19 @@
 tools/dyn_session.py — 동적 침투 스킬 공용 엔진.
 로그인 자동화·토큰 보관·인증 HTTP·표준 출력·scope 위임을 제공한다.
 모든 exploiting-* 스킬이 공유하며, 클래스별 공격 로직은 포함하지 않는다.
-Legacy specialist path: hostname preflight does not enforce destination IPs.
-Release checks use gxsec.transport and trusted readiness instead.
+Specialist requests use approved numeric IPs and shared absolute budgets.
+Release checks also require gxsec.transport's separate trusted readiness contract.
 """
 import sys
 import os
 import json
 import time
+import ipaddress
+import hashlib
+from collections import OrderedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
+from urllib.parse import urlsplit
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _PLUGIN_ROOT = os.path.normpath(os.path.join(_HERE, ".."))
@@ -18,18 +24,111 @@ if _PLUGIN_ROOT not in sys.path:
 
 from tools.scope_guard import assert_in_scope, ScopeError  # noqa: F401  (재노출)
 from tools import io_utf8  # noqa: F401  (emit()의 JSON 출력 계약 — Task 1)
+from tools.redaction import redact
+from tools.specialist_transport import BoundedAdapter, OperationContext, PolicyError, canonical_origin
 
 io_utf8.configure()
 
 _burp_warned = False
+ERROR_TYPES = frozenset({"timeout", "connection_error", "request_failed", "invalid_response",
+                         "scope_blocked", "login_failed", "response_limit", "budget_exhausted"})
+_ACTIVE_SCOPE = ContextVar("gxsec_specialist_diagnostic_scope", default=None)
+
+
+class _DiagnosticState:
+    def __init__(self, operation):
+        self.operation = operation
+        self.credential_origins = {}
+
+
+def _transport_settings():
+    proxies = _burp_proxies()
+    proxy = proxies["http"] if proxies else None
+    ca = (os.environ.get("SECURITY_PLUGIN_BURP_CA", "").strip() or None) if proxy else None
+    return proxy, ca
+
+
+@contextmanager
+def diagnostic_scope(target_urls, *, authorized_flag=False, target_ips=None, limits=None):
+    """Bind one approved origin/IP snapshot and budgets across all diagnostic requests."""
+    urls = [target_urls] if isinstance(target_urls, str) else list(target_urls)
+    proxy, ca = _transport_settings()
+    operation = OperationContext(urls, authorized_flag=authorized_flag, target_ips=target_ips,
+                                 limits=limits, proxy_url=proxy, ca_file=ca)
+    token = _ACTIVE_SCOPE.set(_DiagnosticState(operation))
+    try:
+        yield operation
+    finally:
+        _ACTIVE_SCOPE.reset(token)
+
+
+def request_error_type(error):
+    """Return a fixed diagnostic code without retaining exception text or URLs."""
+    code = getattr(error, "code", None)
+    if isinstance(code, str) and code in ERROR_TYPES:
+        return code
+    if isinstance(error, ScopeError):
+        return "scope_blocked"
+    timeout_types = (TimeoutError,)
+    connection_types = (ConnectionError,)
+    try:
+        from requests import exceptions
+        timeout_types += (exceptions.Timeout,)
+        connection_types += (exceptions.ConnectionError,)
+    except ImportError:
+        pass
+    if isinstance(error, timeout_types):
+        return "timeout"
+    if isinstance(error, connection_types):
+        return "connection_error"
+    if isinstance(error, (KeyError, TypeError, ValueError)):
+        return "invalid_response"
+    return "request_failed"
+
+
+class RequestFailure(RuntimeError):
+    """Carry a fixed cause through legacy RuntimeError and CLI boundaries."""
+    def __init__(self, error, message="요청 실패"):
+        self.code = request_error_type(error)
+        super().__init__(f"{message}: {self.code}")
+
+
+def login_error_type(error):
+    code = getattr(error, "code", None)
+    return code if isinstance(code, str) and code in ERROR_TYPES else "login_failed"
+
+
+def validate_burp_proxy_url(val):
+    """Normalize local proxy syntax; the transport additionally requires HTTP CONNECT."""
+    try:
+        if not isinstance(val, str) or not val:
+            raise ValueError
+        parsed = urlsplit(val)
+        if (val != val.strip() or any(c.isspace() for c in val)
+                or any(c in val for c in ("%", "?", "#", "\\"))
+                or parsed.scheme not in {"http", "https"}
+                or parsed.username is not None or parsed.password is not None
+                or parsed.path or parsed.query or parsed.fragment
+                or parsed.netloc.endswith(":")):
+            raise ValueError
+        address = ipaddress.ip_address(parsed.hostname)
+        port = parsed.port
+        if (not address.is_loopback or (port is not None and port == 0)
+                or (isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None)):
+            raise ValueError
+    except (ValueError, TypeError):
+        raise ScopeError("Burp proxy supports only loopback IP literal HTTP(S) endpoints; remote proxies are unsupported") from None
+    host = "[" + address.compressed + "]" if address.version == 6 else address.compressed
+    port = port if port is not None else 443 if parsed.scheme == "https" else 80
+    return f"{parsed.scheme}://{host}:{port}"
 
 
 def _burp_proxies():
-    """SECURITY_PLUGIN_BURP_PROXY env가 있으면 requests용 proxies dict, 없으면 None.
-    하이브리드 Burp 경유 — 값이 없거나 공백이면 프록시를 쓰지 않아 기존 발사와 바이트 동일."""
-    val = os.environ.get("SECURITY_PLUGIN_BURP_PROXY", "").strip()
-    if not val:
+    """An absent/blank environment value means direct, environment-isolated requests."""
+    val = os.environ.get("SECURITY_PLUGIN_BURP_PROXY", "")
+    if not val.strip():
         return None
+    val = validate_burp_proxy_url(val)
     return {"http": val, "https": val}
 
 
@@ -40,6 +139,60 @@ def _proxy_kwargs():
         return {}
     ca = os.environ.get("SECURITY_PLUGIN_BURP_CA", "").strip()
     return {"proxies": proxies, "verify": ca or True}
+
+
+def _client(method, url, *, session=None, **kwargs):
+    """Use the active pinned, bounded operation and keep credentials on one origin."""
+    if "proxies" in kwargs or "verify" in kwargs:
+        raise ValueError("Per-request proxy/TLS overrides are unsupported; use the validated loopback Burp configuration")
+    if kwargs.get("stream", False) is not False or kwargs.get("allow_redirects", False) is not False:
+        raise PolicyError()
+    state = _ACTIVE_SCOPE.get()
+    if state is None:
+        host = urlsplit(canonical_origin(url)).hostname
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            if host != "localhost":
+                raise PolicyError() from None
+        with diagnostic_scope([url]):
+            return _client(method, url, session=session, **kwargs)
+    operation = state.operation
+    origin = operation.ensure_origin(url)
+    if _transport_settings() != (operation.proxy_url, operation.ca_file):
+        raise PolicyError()
+    fingerprints = []
+    for key, value in (kwargs.get("headers") or {}).items():
+        if str(key).lower() in {"authorization", "cookie", "proxy-authorization"}:
+            if not isinstance(value, str):
+                raise PolicyError()
+            fingerprint = hashlib.sha256((str(key).lower() + "\0" + value).encode()).hexdigest()
+            previous = state.credential_origins.get(fingerprint)
+            if previous is not None and previous != origin:
+                raise PolicyError()
+            fingerprints.append(fingerprint)
+    caller = session if session is not None else new_session()
+    previous = vars(caller).get("_gxsec_bound_origin")
+    if previous is not None and previous != origin:
+        if session is None:
+            caller.close()
+        raise PolicyError()
+    caller._gxsec_bound_origin = origin
+    caller.trust_env = False
+    caller.proxies = {}
+    caller.verify = True
+    # Replace the entire prefix table: mount() alone leaves longer custom prefixes.
+    caller.adapters = OrderedDict((scheme, BoundedAdapter(operation)) for scheme in ("https://", "http://"))
+    state.credential_origins.update((fingerprint, origin) for fingerprint in fingerprints)
+    kwargs["stream"] = False
+    kwargs["allow_redirects"] = False
+    proxy_kwargs = {"proxies": {"http": operation.proxy_url, "https": operation.proxy_url}} if operation.proxy_url else {}
+    proxy_kwargs["verify"] = operation.ca_file or True
+    try:
+        return caller.request(method.upper(), url, **kwargs, **proxy_kwargs)
+    finally:
+        if session is None:
+            caller.close()
 
 
 def mask_token(tok):
@@ -83,7 +236,6 @@ def set_by_path(obj, path, value):
 def login(base_url, login_path, cred, *, body_template=None,
           token_json_path="data.accessToken", timeout=10):
     """테스트 계정으로 로그인해 토큰 문자열을 반환. 실패 시 RuntimeError."""
-    import requests
     url = base_url.rstrip("/") + login_path
     if body_template:
         # JSON 중괄호와 충돌하지 않도록 str.format 대신 {id}/{pw} 단순 치환
@@ -95,11 +247,10 @@ def login(base_url, login_path, cred, *, body_template=None,
     else:
         body = {"lgnId": cred["id"], "password": cred["pw"]}  # sef-2026 프리셋
     try:
-        resp = requests.post(url, json=body, timeout=timeout,
-                             allow_redirects=False, **_proxy_kwargs())
+        resp = _client("POST", url, json=body, timeout=timeout, allow_redirects=False)
     except Exception as e:
-        hint = " (Burp 프록시 경유 중 — Burp 가동·Intercept OFF 확인)" if _burp_proxies() else ""
-        raise RuntimeError(f"로그인 요청 실패: {url} — {type(e).__name__}{hint}")
+        hint = " (Burp 프록시 경유 중 — Burp 가동·Intercept OFF 확인)" if os.environ.get("SECURITY_PLUGIN_BURP_PROXY", "").strip() else ""
+        raise RequestFailure(e, f"로그인 요청 실패{hint}") from None
     if not (200 <= resp.status_code < 300):
         raise RuntimeError(f"로그인 실패(HTTP {resp.status_code}): {url} — "
                            f"2xx 아님(3xx 리다이렉트·4xx 거부 포함). 자격/요청형식 확인")
@@ -122,7 +273,6 @@ def login_response(base_url, login_path, cred, *, body_template=None,
     실패(2xx 아님/토큰 추출 실패) 시 RuntimeError (login()과 동일 정책).
     login()을 위임하지 않고 로직을 복제한다(login 시그니처 불변 유지, 회귀 방지).
     """
-    import requests
     url = base_url.rstrip("/") + login_path
     if body_template:
         # JSON 중괄호와 충돌하지 않도록 str.format 대신 {id}/{pw} 단순 치환
@@ -134,11 +284,10 @@ def login_response(base_url, login_path, cred, *, body_template=None,
     else:
         body = {"lgnId": cred["id"], "password": cred["pw"]}  # sef-2026 프리셋
     try:
-        resp = requests.post(url, json=body, timeout=timeout,
-                             allow_redirects=False, **_proxy_kwargs())
+        resp = _client("POST", url, json=body, timeout=timeout, allow_redirects=False)
     except Exception as e:
-        hint = " (Burp 프록시 경유 중 — Burp 가동·Intercept OFF 확인)" if _burp_proxies() else ""
-        raise RuntimeError(f"로그인 요청 실패: {url} — {type(e).__name__}{hint}")
+        hint = " (Burp 프록시 경유 중 — Burp 가동·Intercept OFF 확인)" if os.environ.get("SECURITY_PLUGIN_BURP_PROXY", "").strip() else ""
+        raise RequestFailure(e, f"로그인 요청 실패{hint}") from None
     if not (200 <= resp.status_code < 300):
         raise RuntimeError(f"로그인 실패(HTTP {resp.status_code}): {url} — "
                            f"2xx 아님(3xx 리다이렉트·4xx 거부 포함). 자격/요청형식 확인")
@@ -155,9 +304,11 @@ def login_response(base_url, login_path, cred, *, body_template=None,
 
 
 def new_session():
-    """requests.Session 팩토리(테스트 seam 단일화)."""
+    """Create a cookie-capable session without ambient transport/auth policy."""
     import requests
-    return requests.Session()
+    session = requests.Session()
+    session.trust_env = False
+    return session
 
 
 def _location_matches(location, success_path):
@@ -189,14 +340,22 @@ def form_login(base_url, login_path, cred, *, id_field=None, pw_field=None,
     """
     if not success_path:   # 발사 전 검증 — 대상 서버에 불필요한 로그인 요청을 보내지 않는다
         raise RuntimeError("form 로그인은 --success-path 필요")
-    session = session or new_session()
+    owns_session = session is None
+    session = session if session is not None else new_session()
+
+    def fail_login(message, error=None):
+        if owns_session:
+            session.close()
+        if error is not None:
+            raise RequestFailure(error, message) from None
+        raise RuntimeError(message) from None
+
     url = base_url.rstrip("/") + login_path
     form = {(id_field or "username"): cred["id"], (pw_field or "password"): cred["pw"]}
     try:
-        resp = session.post(url, data=form, timeout=timeout,
-                            allow_redirects=False, **_proxy_kwargs())
+        resp = _client("POST", url, session=session, data=form, timeout=timeout, allow_redirects=False)
     except Exception as e:
-        raise RuntimeError(f"로그인 요청 실패: {url} — {type(e).__name__}")
+        fail_login("로그인 요청 실패", e)
     status = resp.status_code
     location = resp.headers.get("Location", "")
     if 300 <= status < 400:
@@ -205,15 +364,15 @@ def form_login(base_url, login_path, cred, *, id_field=None, pw_field=None,
                     "set_cookie": resp.headers.get("Set-Cookie", ""),
                     "status": status, "location": location}
         if location:
-            raise RuntimeError(
+            fail_login(
                 f"로그인 실패(자격 추정): 성공 경로 '{success_path}' 아닌 "
                 f"'{_safe_location(location)}'로 이동")
-        raise RuntimeError("로그인 실패(형식): 3xx이나 Location 없음")
+        fail_login("로그인 실패(형식): 3xx이나 Location 없음")
     if 200 <= status < 300:
-        raise RuntimeError(
+        fail_login(
             f"로그인 실패(형식/필드): 리다이렉트 없이 {status} — "
             f"폼 재표시 추정, 필드명 확인")
-    raise RuntimeError(f"로그인 실패(형식): 요청 거부 HTTP {status}")
+    fail_login(f"로그인 실패(형식): 요청 거부 HTTP {status}")
 
 
 def request(method, url, *, token=None, json_body=None, files=None, data=None,
@@ -223,11 +382,10 @@ def request(method, url, *, token=None, json_body=None, files=None, data=None,
     headers는 응답 헤더 dict(Location 등 오픈리다이렉트 판정에 필수).
     files/data는 multipart 업로드(파일업로드 동적 검사)용 — 기본 None이면 requests가
     바디에 싣지 않으므로 기존 5종 호출과 바이트 동일(하위호환).
-    session 유무로 발사 경로 결정: 있으면 세션 쿠키 jar 자동 사용, 없으면 requests
-    (미전달 시 requests.request 적중 → 기존 5종 호출 바이트 불변).
+    세션이 있으면 쿠키 jar를 재사용한다. 모든 경로는 환경 proxy/netrc/CA를 무시하는
+    _client를 사용하며 명시한 검증된 loopback Burp proxy만 지원한다.
     attack_auth/access는 status/body만 참조하므로 하위호환(키 추가만).
     """
-    import requests
     headers = {}
     if token:
         headers["Authorization"] = "Bearer " + token
@@ -236,12 +394,11 @@ def request(method, url, *, token=None, json_body=None, files=None, data=None,
     #   · session → requests.Session 쿠키 jar(세션쿠키 인증) + 발사 caller
     # 현재 attack 배선은 둘을 상호배타로 쓴다(bearer=token만 / cookie=session만).
     # 둘 다 전달돼도 오류는 아니며(헤더+쿠키 동시 부착) 단지 현재 미사용 조합일 뿐이다.
-    caller = session if session is not None else requests
     t0 = time.monotonic()
-    resp = caller.request(
-        method.upper(), url, headers=headers, json=json_body,
+    resp = _client(
+        method.upper(), url, session=session, headers=headers, json=json_body,
         files=files, data=data,
-        timeout=timeout, allow_redirects=False, **_proxy_kwargs())
+        timeout=timeout, allow_redirects=False)
     return {"status": resp.status_code, "body": resp.text,
             "headers": dict(resp.headers),
             "elapsed": round(time.monotonic() - t0, 3)}
@@ -249,6 +406,7 @@ def request(method, url, *, token=None, json_body=None, files=None, data=None,
 
 def emit(result, as_json):
     """표준 결과 출력. as_json이면 JSON, 아니면 사람용 요약."""
+    result = redact(result)
     if as_json:
         io_utf8.emit_json(result)
         return
@@ -260,7 +418,9 @@ def emit(result, as_json):
         if f.get("skipped"):
             verdict = f"[미발사: {f['skipped']}]"
         elif f.get("error"):
-            verdict = f"[발사실패: {f['error']}]"
+            error_type = f.get("error_type")
+            safe_error_type = error_type if isinstance(error_type, str) and error_type in ERROR_TYPES else "request_failed"
+            verdict = f"[발사실패: {safe_error_type}]"
         elif f.get("vulnerable"):
             verdict = "[취약 후보]"
         elif f.get("undetermined") or f.get("validation") == "undetermined":

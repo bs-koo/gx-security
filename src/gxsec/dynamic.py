@@ -492,21 +492,47 @@ def _readiness(source, config, policy, *, deadline_epoch=None):
     return errors
 
 
+_MISSING = object()
+
+
 def _pointer(value, path):
     if not isinstance(path, str):
-        return None
+        return _MISSING
     if path.startswith("$."):
         keys = path[2:].split(".")
     elif path.startswith("/"):
+        if re.search(r"~(?![01])", path):
+            return _MISSING
         keys = [key.replace("~1", "/").replace("~0", "~") for key in path[1:].split("/")]
     else:
-        return None
+        return _MISSING
     try:
         for key in keys:
-            value = value[int(key)] if isinstance(value, list) else value[key]
+            if isinstance(value, list):
+                if not re.fullmatch(r"0|[1-9][0-9]*", key):
+                    return _MISSING
+                value = value[int(key)]
+            elif isinstance(value, dict):
+                value = value[key]
+            else:
+                return _MISSING
         return value
     except (KeyError, IndexError, TypeError, ValueError):
-        return None
+        return _MISSING
+
+
+def _json_equal(value, expected):
+    # Python considers True == 1, including inside lists and dictionaries.
+    # JSON evidence must preserve the distinction between booleans and numbers.
+    if isinstance(value, bool) or isinstance(expected, bool):
+        return type(value) is type(expected) and value == expected
+    if isinstance(value, dict):
+        return (isinstance(expected, dict) and value.keys() == expected.keys()
+                and all(_json_equal(item, expected[key]) for key, item in value.items()))
+    if isinstance(value, list):
+        return (isinstance(expected, list) and len(value) == len(expected)
+                and all(_json_equal(item, other) for item, other in zip(value, expected)))
+    return value == expected
 
 
 def _matches(response, oracle):
@@ -514,7 +540,10 @@ def _matches(response, oracle):
         body = json.loads(response["body"])
     except (ValueError, TypeError):
         return False
-    return isinstance(oracle, dict) and "expected" in oracle and _pointer(body, oracle.get("json_pointer", "")) == oracle["expected"]
+    if not isinstance(oracle, dict) or "expected" not in oracle:
+        return False
+    value = _pointer(body, oracle.get("json_pointer", ""))
+    return value is not _MISSING and _json_equal(value, oracle["expected"])
 
 
 def _headers(identity, config):

@@ -1,5 +1,6 @@
 """Rule-specific behavior and initial priority must remain distinct from verification."""
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -146,8 +147,173 @@ def test_committed_corpus_only_uses_known_rules_and_existing_source_inputs():
     module = evaluator()
     _, rules = module.load_catalog()
     cases = module.load_cases(module.DEFAULT_CORPUS, rules)
-    assert len({case['rule_id'] for case in cases}) < len(rules)
-    assert any(case.get('known_limitation') and case['expected_match'] for case in cases)
+    hashes = {case['id']: hashlib.sha256(module._case_source(case).encode('utf-8')).hexdigest() for case in cases}
+    contract = module._corpus_contract(module.DEFAULT_CORPUS, cases, hashes)
+    assert contract['status'] == 'satisfied'
+    assert contract['required_case_count'] == 28 and contract['required_rule_count'] == 12
+
+
+def evaluate_authored_cases(module, tmp_path, monkeypatch, capsys, cases, *, custom=False):
+    corpus = tmp_path / ('custom-cases.json' if custom else 'cases.json')
+    corpus.write_text(json.dumps({'schema_version': 1, 'cases': cases}), encoding='utf-8')
+    if not custom:
+        monkeypatch.setattr(module, 'DEFAULT_CORPUS', corpus)
+    monkeypatch.setattr(module.shutil, 'which', lambda command: 'synthetic-semgrep')
+    calls = []
+
+    def execute(command, **kwargs):
+        calls.append(command)
+        root = Path(command[-1])
+        payload = {'version': module.PINNED_VERSION, 'errors': [], 'paths': {'scanned': []}, 'results': []}
+        for case in cases:
+            path = str(root / case['id'] / case['filename'])
+            payload['paths']['scanned'].append(path)
+            # Preserve the existing known FP/FN while accepting genuine future
+            # improvements; no aggregate metric is a fixed golden value.
+            observed = case['expected_match'] != bool(case.get('known_limitation'))
+            if observed:
+                payload['results'].append({'check_id': case['rule_id'], 'path': path})
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), '')
+
+    monkeypatch.setattr(module.subprocess, 'run', execute)
+    exit_code = module.main(['--corpus', str(corpus)])
+    return exit_code, json.loads(capsys.readouterr().out), calls
+
+
+@pytest.mark.parametrize('reduction', ['known-miss-only', 'positive-only', 'rename-existing-case'])
+def test_default_corpus_cannot_hide_reduced_coverage(tmp_path, monkeypatch, capsys, reduction):
+    module = evaluator()
+    cases = json.loads(module.DEFAULT_CORPUS.read_text(encoding='utf-8'))['cases']
+    if reduction == 'known-miss-only':
+        cases = [case for case in cases if case['id'] == 'jdbc-helper-risk-retained']
+    elif reduction == 'positive-only':
+        cases = [case for case in cases if case['expected_match']]
+    else:
+        cases[0]['id'] += '-renamed'
+    code, result, calls = evaluate_authored_cases(module, tmp_path, monkeypatch, capsys, cases)
+    assert code == 2 and result['execution_complete'] is False
+    assert result['evaluation_scope'] == 'default-corpus'
+    assert result['corpus_contract']['status'] == 'violated'
+    assert any(item['type'] == 'corpus_contract_case_missing' for item in result['errors'])
+    assert calls == []
+
+
+@pytest.mark.parametrize('change,diagnostic', [
+    ('label', 'corpus_contract_case_changed'),
+    ('source', 'corpus_contract_source_changed'),
+    ('waiver', 'corpus_contract_limitation_unapproved'),
+])
+def test_default_corpus_cannot_replace_approved_expectations(tmp_path, monkeypatch, capsys, change, diagnostic):
+    module = evaluator()
+    cases = json.loads(module.DEFAULT_CORPUS.read_text(encoding='utf-8'))['cases']
+    if change == 'label':
+        cases[1]['expected_match'] = True
+    elif change == 'source':
+        cases[1].pop('source_path')
+        cases[1]['source'] = 'class NoAuth {}'
+    else:
+        cases[0]['known_limitation'] = 'Newly hidden regression'
+    code, result, calls = evaluate_authored_cases(module, tmp_path, monkeypatch, capsys, cases)
+    assert code == 2 and result['execution_complete'] is False
+    assert result['corpus_contract']['status'] == 'violated'
+    assert any(item['type'] == diagnostic for item in result['errors'])
+    assert calls == []
+
+
+def test_duplicate_corpus_case_has_explicit_diagnostic(tmp_path, monkeypatch, capsys):
+    module = evaluator()
+    cases = json.loads(module.DEFAULT_CORPUS.read_text(encoding='utf-8'))['cases']
+    cases.append(dict(cases[0]))
+    code, result, calls = evaluate_authored_cases(module, tmp_path, monkeypatch, capsys, cases)
+    assert code == 2 and result['execution_complete'] is False
+    assert any(item['type'] == 'corpus_case_duplicate' for item in result['errors'])
+    assert calls == []
+
+
+def test_default_corpus_allows_additional_labeled_cases(tmp_path, monkeypatch, capsys):
+    module = evaluator()
+    cases = json.loads(module.DEFAULT_CORPUS.read_text(encoding='utf-8'))['cases']
+    cases += [{'id': 'additional-' + str(expected), 'rule_id': CORS_RULE, 'expected_match': expected,
+               'filename': 'Extra.java', 'source': 'class Extra {}'} for expected in (False, True)]
+    code, result, calls = evaluate_authored_cases(module, tmp_path, monkeypatch, capsys, cases)
+    assert code == 0 and result['execution_complete'] is True and len(calls) == 1
+    assert result['corpus_contract']['status'] == 'satisfied'
+    assert result['corpus_contract']['required_case_count'] == 28
+    assert result['corpus_contract']['required_rule_count'] == 12
+    assert len(result['cases']) == 30
+    assert len(result['case_source_sha256']) == 30
+
+
+def test_custom_corpus_is_explicitly_outside_default_coverage_contract(tmp_path, monkeypatch, capsys):
+    module = evaluator()
+    cases = [{'id': 'custom-safe', 'rule_id': CORS_RULE, 'expected_match': False,
+              'filename': 'Custom.java', 'source': 'class Custom {}'}]
+    code, result, calls = evaluate_authored_cases(module, tmp_path, monkeypatch, capsys, cases, custom=True)
+    assert code == 0 and result['execution_complete'] is True and len(calls) == 1
+    assert result['evaluation_scope'] == 'custom-corpus'
+    assert result['corpus_contract']['status'] == 'not-applied'
+    assert result['corpus_contract']['comparable_to_default'] is False
+    assert result['rules_with_cases'] == [CORS_RULE]
+
+
+@pytest.mark.parametrize('fault', ['invalid-json', 'engine-unavailable'])
+def test_failed_custom_corpus_cannot_be_mistaken_for_default_evaluation(tmp_path, monkeypatch, capsys, fault):
+    module = evaluator()
+    corpus = tmp_path / 'custom.json'
+    content = '{' if fault == 'invalid-json' else json.dumps({'schema_version': 1, 'cases': [
+        {'id': 'safe', 'rule_id': CORS_RULE, 'expected_match': False, 'filename': 'Custom.java', 'source': 'class Custom {}'}]})
+    corpus.write_text(content, encoding='utf-8')
+    monkeypatch.setattr(module.shutil, 'which', lambda command: None)
+    assert module.main(['--corpus', str(corpus)]) == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result['evaluation_scope'] == 'custom-corpus'
+    assert result['corpus_contract']['comparable_to_default'] is False
+
+
+@pytest.mark.parametrize('fault', ['missing', 'shortened', 'duplicate', 'one-sided'])
+def test_default_contract_itself_must_preserve_minimum_paired_inputs(tmp_path, monkeypatch, capsys, fault):
+    module = evaluator()
+    cases = json.loads(module.DEFAULT_CORPUS.read_text(encoding='utf-8'))['cases']
+    contract = json.loads(module.DEFAULT_CONTRACT.read_text(encoding='utf-8'))
+    if fault == 'shortened':
+        contract['required_cases'].pop()
+    elif fault == 'duplicate':
+        contract['required_cases'].append(dict(contract['required_cases'][0]))
+    elif fault == 'one-sided':
+        contract['required_cases'][1]['expected_match'] = True
+    path = tmp_path / 'baseline-contract.json'
+    if fault != 'missing':
+        path.write_text(json.dumps(contract), encoding='utf-8')
+    monkeypatch.setattr(module, 'DEFAULT_CONTRACT', path)
+    code, result, calls = evaluate_authored_cases(module, tmp_path, monkeypatch, capsys, cases)
+    assert code == 2 and result['execution_complete'] is False
+    assert result['errors'] == [{'type': 'corpus_contract_invalid'}]
+    assert calls == []
+
+
+def test_known_errors_may_be_fixed_without_preserving_old_metric_counts(tmp_path, monkeypatch, capsys):
+    module = evaluator()
+    cases = json.loads(module.DEFAULT_CORPUS.read_text(encoding='utf-8'))['cases']
+    for case in cases:
+        case.pop('known_limitation', None)
+    code, result, _ = evaluate_authored_cases(module, tmp_path, monkeypatch, capsys, cases)
+    assert code == 0 and result['execution_complete'] is True
+    assert result['corpus_contract']['status'] == 'satisfied'
+    assert result['metrics']['false_positive'] == result['metrics']['false_negative'] == 0
+
+
+def test_incidental_rule_matches_do_not_expand_labeled_rule_coverage(tmp_path):
+    module = evaluator()
+    cases = [{'id': str(expected), 'rule_id': 'labeled', 'expected_match': expected} for expected in (False, True)]
+    files = {case['id']: tmp_path / (case['id'] + '.java') for case in cases}
+    payload = {'version': module.PINNED_VERSION, 'errors': [],
+               'paths': {'scanned': [str(path) for path in files.values()]},
+               'results': [{'check_id': 'incidental', 'path': str(path)} for path in files.values()]}
+    result = module.score_results({'labeled': {}, 'incidental': {}}, cases, files, payload)
+    assert result['rules_with_cases'] == result['rules_with_positive_and_negative'] == ['labeled']
+    assert result['uncovered_rules'] == ['incidental']
+    assert result['rule_coverage']['incidental']['scanned_cases'] == 0
+    assert result['metrics']['true_positive'] == 0 and result['metrics']['false_negative'] == 1
 
 
 @pytest.mark.skipif(bool(os.environ.get('GXSEC_NO_SEMGREP')) or not shutil.which('semgrep'),

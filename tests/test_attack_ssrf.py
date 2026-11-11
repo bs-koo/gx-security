@@ -5,6 +5,7 @@ import os
 import tempfile
 import threading
 import unittest
+from urllib.parse import parse_qs, urlsplit
 from unittest.mock import patch
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
@@ -70,10 +71,16 @@ class TestGetHeader(unittest.TestCase):
 class TestRunOpenRedirect(unittest.TestCase):
     @patch("tools.dyn_session.request")
     def test_external_location_vulnerable(self, mock_req):
-        mock_req.return_value = {"status": 302, "body": "", "elapsed": 0.0,
-                                 "headers": {"Location": "https://evil.test"}}
+        # The redirect must follow the supplied destination; a static 302 page
+        # cannot establish that a user-controlled URL caused the redirect.
+        def request(_method, url, **_kwargs):
+            value = parse_qs(urlsplit(url).query).get("u", [""])[0]
+            return {"status": 302, "body": "", "elapsed": 0.0,
+                    "headers": {"Location": value or "/home"}}
+        mock_req.side_effect = request
         out = attack_ssrf.run_open_redirect("http://app.local", "/go?u=", "app.local")
         self.assertTrue(out["vulnerable"])
+        self.assertEqual(out["validation"], "runtime-verified")
         self.assertEqual(out["kind"], "open-redirect")
         # emit 비-json 요약이 쓰는 키(method/path) 계약 고정
         self.assertEqual(out["method"], "GET")
@@ -106,17 +113,20 @@ class TestRunSsrf(unittest.TestCase):
                                    _FakeListener(hit=True))
         self.assertTrue(out["callback"])
         self.assertTrue(out["vulnerable"])
+        self.assertEqual(out["validation"], "runtime-verified")
         self.assertEqual(out["kind"], "ssrf")
         self.assertEqual(out["method"], "GET")
         self.assertEqual(out["path"], "/api/fetch?url=")
 
     @patch("tools.dyn_session.request")
-    def test_no_callback_defended(self, mock_req):
+    def test_no_callback_is_undetermined(self, mock_req):
         mock_req.return_value = {"status": 200, "body": "", "elapsed": 0.0, "headers": {}}
         out = attack_ssrf.run_ssrf("http://app.local", "/api/fetch?url=",
                                    _FakeListener(hit=False))
         self.assertFalse(out["callback"])
         self.assertFalse(out["vulnerable"])
+        self.assertTrue(out["undetermined"])
+        self.assertEqual(out["validation"], "undetermined")
 
     @patch.object(attack_ssrf, "_gen_nonce", return_value="NONCE123")
     @patch("tools.dyn_session.request")
@@ -201,11 +211,12 @@ class TestClassifyDefensive(unittest.TestCase):
 
 
 class _RedirectHandler(http.server.BaseHTTPRequestHandler):
-    """모든 GET에 302 + Location: http://evil.test 로 응답하는 취약 서버 모사."""
+    """입력한 목적지로 이동한다. 빈 입력과 무해 대조는 내부에 머문다."""
 
     def do_GET(self):
         self.send_response(302)
-        self.send_header("Location", "http://evil.test")
+        value = parse_qs(urlsplit(self.path).query).get("u", [""])[0]
+        self.send_header("Location", value or "/home")
         self.end_headers()
 
     def log_message(self, *args):  # 테스트 로그 소음 억제
@@ -239,7 +250,7 @@ class TestOpenRedirectIntegration(unittest.TestCase):
         self.assertEqual(out["kind"], "open-redirect")
         hit = next(f for f in out["findings"] if f["vulnerable"])
         self.assertEqual(hit["status"], 302)
-        self.assertEqual(hit["location"], "http://evil.test")
+        self.assertEqual(hit["location_origin"], "https://evil.test")
 
 
 if __name__ == "__main__":

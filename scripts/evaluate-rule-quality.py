@@ -22,6 +22,18 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 PINNED_VERSION = '1.172.0'
 DEFAULT_CORPUS = ROOT / 'tests/fixtures/rule-quality/cases.json'
+DEFAULT_CONTRACT = ROOT / 'tests/fixtures/rule-quality/baseline-contract.json'
+
+
+class CorpusValidationError(ValueError):
+    def __init__(self, diagnostics, *, contract=None):
+        super().__init__('Corpus validation failed')
+        self.diagnostics = diagnostics if isinstance(diagnostics, list) else [diagnostics]
+        self.contract = contract
+
+
+def _evaluation_scope(path):
+    return 'default-corpus' if Path(path).resolve() == DEFAULT_CORPUS.resolve() else 'custom-corpus'
 
 
 def load_catalog():
@@ -39,17 +51,21 @@ def load_catalog():
 
 def load_cases(path, rules):
     document = json.loads(Path(path).read_text(encoding='utf-8'))
-    if document.get('schema_version') != 1 or not isinstance(document.get('cases'), list):
-        raise ValueError('Unsupported corpus')
+    if not isinstance(document, dict) or document.get('schema_version') != 1 or not isinstance(document.get('cases'), list):
+        raise CorpusValidationError({'type': 'corpus_invalid'})
     cases, seen = document['cases'], set()
     for case in cases:
+        if not isinstance(case, dict):
+            raise CorpusValidationError({'type': 'corpus_case_invalid'})
         identifier = case.get('id', '')
         filename = case.get('filename', '')
+        if isinstance(identifier, str) and identifier in seen:
+            raise CorpusValidationError({'type': 'corpus_case_duplicate', 'id': identifier})
         if (not isinstance(identifier, str) or not re.fullmatch('[A-Za-z0-9_-]{1,100}', identifier)
-                or identifier in seen or case.get('rule_id') not in rules
+                or not isinstance(case.get('rule_id'), str) or case['rule_id'] not in rules
                 or type(case.get('expected_match')) is not bool
                 or not isinstance(filename, str) or not re.fullmatch(r'[A-Za-z0-9_-]+\.[A-Za-z0-9]+', filename)):
-            raise ValueError('Invalid or duplicate rule/case identity')
+            raise CorpusValidationError({'type': 'corpus_case_invalid'})
         seen.add(identifier)
         if ('source' in case) == ('source_path' in case):
             raise ValueError('Each case needs exactly one source input')
@@ -66,6 +82,65 @@ def load_cases(path, rules):
     if not cases:
         raise ValueError('Empty corpus')
     return cases
+
+
+def _case_source(case):
+    return case['source'] if 'source' in case else (ROOT / case['source_path']).read_text(encoding='utf-8-sig')
+
+
+def _corpus_contract(corpus, cases, source_hashes):
+    """Preserve reviewed inputs, not a fixed precision/recall or known-error count."""
+    if _evaluation_scope(corpus) == 'custom-corpus':
+        return {'status': 'not-applied', 'baseline_preserved': None, 'comparable_to_default': False,
+                'notice': 'Custom corpus metrics do not establish preservation of the default evaluation coverage.'}
+    try:
+        raw = DEFAULT_CONTRACT.read_bytes()
+        document = json.loads(raw)
+        required = document['required_cases']
+        minimum_cases, minimum_rules = document['minimum_case_count'], document['minimum_rule_count']
+        if (document.get('schema_version') != 1 or not isinstance(document.get('contract_id'), str)
+                or not document['contract_id'] or not isinstance(required, list)
+                or type(minimum_cases) is not int or minimum_cases < 1
+                or type(minimum_rules) is not int or minimum_rules < 1 or len(required) < minimum_cases):
+            raise ValueError('Invalid contract schema')
+        expected, labels = {}, {}
+        for row in required:
+            if (not isinstance(row, dict) or not isinstance(row.get('id'), str)
+                    or not re.fullmatch('[A-Za-z0-9_-]{1,100}', row['id']) or row['id'] in expected
+                    or not isinstance(row.get('rule_id'), str) or not row['rule_id']
+                    or type(row.get('expected_match')) is not bool
+                    or not isinstance(row.get('filename'), str)
+                    or not re.fullmatch(r'[A-Za-z0-9_-]+\.[A-Za-z0-9]+', row['filename'])
+                    or not re.fullmatch('[a-f0-9]{64}', str(row.get('source_sha256', '')))
+                    or type(row.get('allow_known_limitation')) is not bool):
+                raise ValueError('Invalid required case')
+            expected[row['id']] = row
+            labels.setdefault(row['rule_id'], set()).add(row['expected_match'])
+        if len(labels) < minimum_rules or any(values != {True, False} for values in labels.values()):
+            raise ValueError('Contract needs both labels for every required rule')
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise CorpusValidationError({'type': 'corpus_contract_invalid'}) from exc
+    metadata = {'contract_id': document['contract_id'], 'sha256': hashlib.sha256(raw).hexdigest(),
+                'required_case_count': len(expected), 'required_rule_count': len(labels),
+                'additional_case_count': len(set(case['id'] for case in cases) - set(expected)),
+                'baseline_preserved': True, 'comparable_to_default': len(cases) == len(expected), 'status': 'satisfied'}
+    actual = {case['id']: case for case in cases}
+    diagnostics = []
+    for identifier, baseline in expected.items():
+        case = actual.get(identifier)
+        if case is None:
+            diagnostics.append({'type': 'corpus_contract_case_missing', 'id': identifier})
+            continue
+        if any(case[key] != baseline[key] for key in ('rule_id', 'expected_match', 'filename')):
+            diagnostics.append({'type': 'corpus_contract_case_changed', 'id': identifier})
+        if source_hashes[identifier] != baseline['source_sha256']:
+            diagnostics.append({'type': 'corpus_contract_source_changed', 'id': identifier})
+        if case.get('known_limitation') and not baseline['allow_known_limitation']:
+            diagnostics.append({'type': 'corpus_contract_limitation_unapproved', 'id': identifier})
+    if diagnostics:
+        metadata.update(status='violated', baseline_preserved=False, comparable_to_default=False)
+        raise CorpusValidationError(diagnostics, contract=metadata)
+    return metadata
 
 
 def _key(path):
@@ -139,6 +214,9 @@ def score_results(rules, cases, files, payload, *, expected_version=PINNED_VERSI
 def evaluate(corpus=DEFAULT_CORPUS, *, engine='semgrep', expected_version=PINNED_VERSION):
     paths, rules = load_catalog()
     cases = load_cases(corpus, rules)
+    sources = {case['id']: _case_source(case) for case in cases}
+    source_hashes = {identifier: hashlib.sha256(text.encode('utf-8')).hexdigest() for identifier, text in sources.items()}
+    contract = _corpus_contract(corpus, cases, source_hashes)
     executable = shutil.which(engine)
     if not executable:
         raise ValueError('Semgrep is unavailable; use the pinned runtime or an explicit verified engine path')
@@ -148,10 +226,7 @@ def evaluate(corpus=DEFAULT_CORPUS, *, engine='semgrep', expected_version=PINNED
         for case in cases:
             destination = root / case['id'] / case['filename']
             destination.parent.mkdir()
-            text = case.get('source')
-            if text is None:
-                text = (ROOT / case['source_path']).read_text(encoding='utf-8-sig')
-            destination.write_text(text, encoding='utf-8')
+            destination.write_text(sources[case['id']], encoding='utf-8', newline='\n')
             files[case['id']] = destination
         command = [executable, 'scan', '--json', '--quiet', '--metrics=off', '--disable-version-check',
                    '--disable-nosem', '--no-git-ignore', '--no-rewrite-rule-ids', '--strict']
@@ -166,6 +241,9 @@ def evaluate(corpus=DEFAULT_CORPUS, *, engine='semgrep', expected_version=PINNED
         result['engine_exit_code'] = process.returncode
         result['execution_complete'] = result['execution_complete'] and process.returncode == 0
         result['corpus_sha256'] = hashlib.sha256(Path(corpus).read_bytes()).hexdigest()
+        result['case_source_sha256'] = source_hashes
+        result['evaluation_scope'] = _evaluation_scope(corpus)
+        result['corpus_contract'] = contract
         result['rule_files'] = {path.relative_to(ROOT).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                                 for path in paths}
         return result
@@ -173,15 +251,25 @@ def evaluate(corpus=DEFAULT_CORPUS, *, engine='semgrep', expected_version=PINNED
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--corpus', type=Path, default=DEFAULT_CORPUS)
+    parser.add_argument('--corpus', type=Path, default=DEFAULT_CORPUS,
+                        help='Default corpus enforces its reviewed baseline; another path is reported as a custom evaluation.')
     parser.add_argument('--engine', default='semgrep')
     parser.add_argument('--expected-version', default=PINNED_VERSION)
     parser.add_argument('--output', type=Path)
     args = parser.parse_args(argv)
+    scope = _evaluation_scope(args.corpus)
+    failed_contract = {'status': 'not-evaluated' if scope == 'default-corpus' else 'not-applied',
+                       'baseline_preserved': None, 'comparable_to_default': False}
     try:
         result = evaluate(args.corpus, engine=args.engine, expected_version=args.expected_version)
+    except CorpusValidationError as exc:
+        result = {'schema_version': 1, 'execution_complete': False, 'error': 'corpus_validation_failed',
+                  'evaluation_scope': scope, 'errors': exc.diagnostics,
+                  'corpus_contract': exc.contract or {**failed_contract,
+                      **({'status': 'invalid', 'baseline_preserved': False} if scope == 'default-corpus' else {})}}
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         result = {'schema_version': 1, 'execution_complete': False,
+                  'evaluation_scope': scope, 'corpus_contract': failed_contract,
                   'error': type(exc).__name__, 'message': 'Rule evaluation could not complete; inspect the local engine/corpus.'}
     serialized = json.dumps(result, ensure_ascii=False, indent=2) + '\n'
     if args.output:

@@ -58,35 +58,43 @@ class TestInject(unittest.TestCase):
 class TestRunPathTraversal(unittest.TestCase):
     @patch("tools.dyn_session.request")
     def test_signature_in_body_vulnerable(self, mock_req):
-        mock_req.return_value = {"status": 200, "body": "root:x:0:0:root:/root",
-                                 "elapsed": 0.0, "headers": {}}
-        out = A.run_path_traversal("http://app.local", "/download?file=")
+        # A positive requires an ordinary filename control without the signature;
+        # returning the same passwd help text for every URL was an invalid fixture.
+        def request(_method, url, **_kwargs):
+            body = "root:x:0:0:root:/root" if ".." in url and "passwd" in url else "not found"
+            return {"status": 200, "body": body, "elapsed": 0.0, "headers": {}}
+        mock_req.side_effect = request
+        out = A.run_path_traversal("http://localhost", "/download?file=")
         self.assertTrue(out["vulnerable"])
+        self.assertEqual(out["validation"], "runtime-verified")
         self.assertEqual(out["kind"], "path-traversal")
         self.assertEqual(out["method"], "GET")
 
     @patch("tools.dyn_session.request")
-    def test_no_signature_defended(self, mock_req):
+    def test_no_signature_is_undetermined(self, mock_req):
         mock_req.return_value = {"status": 404, "body": "not found",
                                  "elapsed": 0.0, "headers": {}}
-        out = A.run_path_traversal("http://app.local", "/download?file=")
+        out = A.run_path_traversal("http://localhost", "/download?file=")
         self.assertFalse(out["vulnerable"])
+        self.assertTrue(out["undetermined"])
 
     @patch("tools.dyn_session.request")
     def test_request_exception_does_not_abort_scan(self, mock_req):
         # 코드리뷰 #13: 요청이 네트워크 오류로 예외를 던져도 스캔 전체가 죽지 않고 결과 dict를 반환.
         mock_req.side_effect = ConnectionError("connection reset")
-        out = A.run_path_traversal("http://app.local", "/download?file=")
+        out = A.run_path_traversal("http://localhost", "/download?file=")
         self.assertFalse(out["vulnerable"])
         self.assertIn("error", out)  # 미도달 → '방어' 아닌 오류로 정직 표기
 
     @patch("tools.dyn_session.request")
     def test_partial_failure_preserves_leak(self, mock_req):
         # 첫 변형이 예외로 실패해도 이후 변형에서 발견한 누출은 보존된다(부분결과 손실 방지).
-        mock_req.side_effect = [ConnectionError("x")] + [
+        mock_req.side_effect = [
+            {"status": 404, "body": "not found", "elapsed": 0.0, "headers": {}},  # available normal control
+            ConnectionError("x")] + [
             {"status": 200, "body": "root:x:0:0:root:/root",
              "elapsed": 0.0, "headers": {}}] * 60
-        out = A.run_path_traversal("http://app.local", "/download?file=")
+        out = A.run_path_traversal("http://localhost", "/download?file=")
         self.assertTrue(out["vulnerable"])
         self.assertNotIn("error", out)  # 누출 확정 시엔 오류 표기하지 않음
 
@@ -104,7 +112,7 @@ class TestRunUpload(unittest.TestCase):
     def test_accepted_without_retrieve_is_undetermined(self, mock_req):
         # retrieve_base 없이 2xx 수용만으로는 취약 확정 아님 → 미확정(undetermined) + note.
         mock_req.return_value = {"status": 200, "body": "ok", "elapsed": 0.0, "headers": {}}
-        out = A.run_upload("http://app.local", "/api/upload")
+        out = A.run_upload("http://localhost", "/api/upload")
         self.assertTrue(out["accepted"])
         self.assertFalse(out["vulnerable"])
         self.assertTrue(out["undetermined"])
@@ -115,11 +123,16 @@ class TestRunUpload(unittest.TestCase):
         self.assertIn("contrast", out["evidence_expectation"])
 
     @patch("tools.dyn_session.request")
-    def test_rejected_defended(self, mock_req):
+    def test_rejected_retains_possible_marker_for_cleanup(self, mock_req):
         mock_req.return_value = {"status": 400, "body": "bad ext", "elapsed": 0.0, "headers": {}}
-        out = A.run_upload("http://app.local", "/api/upload")
+        out = A.run_upload("http://localhost", "/api/upload")
         self.assertFalse(out["accepted"])
         self.assertFalse(out["vulnerable"])
+        # 4xx is an HTTP observation, not proof that a previous server write was
+        # rolled back. Keep this run's marker until deletion/absence is verified.
+        self.assertEqual(out["cleanup"]["status"], "manual-required")
+        self.assertEqual(out["cleanup"]["leftover_status"], "possible")
+        self.assertTrue(out["leftover"].startswith("gxmarker_"))
 
     @patch("tools.dyn_session.request")
     def test_retrievable_marks_webroot(self, mock_req):
@@ -129,11 +142,15 @@ class TestRunUpload(unittest.TestCase):
             {"status": 200, "body": "...GXMARKER-X...", "elapsed": 0.0, "headers": {}},  # 회수 본문에 전체 마커
         ]
         with patch.object(A, "make_marker_upload", return_value=(fn, content, "")):
-            out = A.run_upload("http://app.local", "/api/upload",
-                               retrieve_base="http://app.local/files/")
+            out = A.run_upload("http://localhost", "/api/upload",
+                               retrieve_base="http://localhost/files/")
         self.assertTrue(out["retrievable"])
-        self.assertTrue(out["vulnerable"])         # 회수 확인 → 취약 확정(High)
-        self.assertFalse(out["undetermined"])
+        # Inert marker retrieval proves an observation, not executable upload/RCE.
+        self.assertFalse(out["vulnerable"])
+        self.assertTrue(out["undetermined"])
+        self.assertFalse(out["execution_confirmed"])
+        self.assertEqual(out["cleanup"]["status"], "manual-required")
+        self.assertEqual(out["cleanup"]["leftover_status"], "confirmed")
 
     @patch("tools.dyn_session.request")
     def test_partial_marker_not_retrievable(self, mock_req):
@@ -144,8 +161,8 @@ class TestRunUpload(unittest.TestCase):
             {"status": 200, "body": "GXMARKER docs page", "elapsed": 0.0, "headers": {}},  # 접두만
         ]
         with patch.object(A, "make_marker_upload", return_value=(fn, content, "")):
-            out = A.run_upload("http://app.local", "/api/upload",
-                               retrieve_base="http://app.local/files/")
+            out = A.run_upload("http://localhost", "/api/upload",
+                               retrieve_base="http://localhost/files/")
         self.assertFalse(out["retrievable"])
 
     @patch("tools.dyn_session.request")
@@ -154,7 +171,7 @@ class TestRunUpload(unittest.TestCase):
         mock_req.side_effect = ConnectionError("reset")
         with patch.object(A, "make_marker_upload",
                           return_value=("gxmarker_x.jsp", "GXMARKER-x", "x")):
-            out = A.run_upload("http://app.local", "/api/upload")
+            out = A.run_upload("http://localhost", "/api/upload")
         self.assertFalse(out["vulnerable"])
         self.assertIn("error", out)
 
@@ -166,25 +183,25 @@ class TestRunUpload(unittest.TestCase):
             ConnectionError("retrieve down")]                              # 회수 GET 실패
         with patch.object(A, "make_marker_upload",
                           return_value=("gxmarker_x.jsp", "GXMARKER-x", "x")):
-            out = A.run_upload("http://app.local", "/api/upload",
-                               retrieve_base="http://app.local/files/")
+            out = A.run_upload("http://localhost", "/api/upload",
+                               retrieve_base="http://localhost/files/")
         self.assertTrue(out["accepted"])
         self.assertFalse(out["retrievable"])
         self.assertEqual(out["leftover"], "gxmarker_x.jsp")
 
 
 class TestRunUploadRealPath(unittest.TestCase):
-    """AC-4 — run_upload를 실제 호출 경로(그 아래 requests.request만 mock)로 실행해도
+    """AC-4 — run_upload를 실제 호출 경로(그 아래 requests.Session.request만 mock)로 실행해도
     TypeError 없이 dict를 반환하는지 회귀 검증. 기존 TestRunUpload은 dyn_session.request를
     통째 mock해 request()가 files= 인자를 받지 못하던 결함(업로드 즉시 크래시)을 잡지 못한다.
-    함수 내부 import여도 requests.request 전역 심볼 patch로 dyn_session이 참조하는 것도 mock된다.
+    The safe Session.request seam keeps the actual shared request/files path under test.
     """
 
-    @patch("requests.request")
+    @patch("requests.Session.request")
     def test_run_upload_no_typeerror(self, mock_req):
         # status_code는 int여야 한다 — 미설정(MagicMock) 시 r["status"]//100에서 별개 TypeError.
         mock_req.return_value = MagicMock(status_code=200, text="ok", headers={})
-        out = A.run_upload("http://app.local", "/api/upload")
+        out = A.run_upload("http://localhost", "/api/upload")
         self.assertEqual(out["kind"], "file-upload")
         self.assertTrue(out["accepted"])
         # 마커가 실제 요청의 files= 인자에 실려 나갔는지 확인(dyn_session.request 통째 mock이면 못 잡음)

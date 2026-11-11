@@ -189,17 +189,21 @@ def test_framework_implementation_digest_is_bound_to_execution(tmp_path):
     assert check['engine'].get('implementation_hash') == hashlib.sha256(Path(framework.__file__).read_bytes()).hexdigest()
 
 
-def test_framework_scope_identity_ignores_evidence_bytes_but_tracks_detection_loss(tmp_path, monkeypatch):
+def test_framework_scope_identity_ignores_evidence_bytes_but_tracks_detection_loss(tmp_path, tmp_path_factory, monkeypatch):
     from gxsec import framework
     (tmp_path / 'App.java').write_text('class App {}', encoding='utf-8')
     metadata = {'family': 'SEF', 'variant': 'private', 'modules': [{'path': '.', 'variant': 'private',
         'signals': ['menu-security-expression'], 'evidence': [{'hash': 'a' * 64}]}]}
+    # Real Gitleaks creates its fingerprint key. Keep that state outside the
+    # source so these comparisons change only framework evidence/detection.
+    settings = config.default_config(tmp_path)
+    settings['_state_dir'] = tmp_path_factory.mktemp('framework-identity-state')
     def inspect(*args):
         return models.make_check('framework', status='complete',
             coverage={'eligible': 1, 'scanned': 1, 'files': ['App.java']}, framework=copy.deepcopy(metadata)), []
     monkeypatch.setattr(framework, 'run_framework_check', inspect)
     def signature():
-        checks, _ = adapters.run_static_checks(tmp_path, config.default_config(tmp_path), 'check')
+        checks, _ = adapters.run_static_checks(tmp_path, settings, 'check')
         return next(c for c in checks if c['id'] == 'framework')['coverage']['signature']
     first = signature()
     metadata['modules'][0]['evidence'][0]['hash'] = 'b' * 64

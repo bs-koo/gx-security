@@ -38,6 +38,8 @@ class Fixture(BaseHTTPRequestHandler):
         elif self.path == "/objects/a":
             value = ({"nonce": self.nonce} if token == "A" or self.mode == "vulnerable"
                      and token == "B" else {"error": "access denied"})
+            if token != "A" and self.mode in {"missing-denial", "null-denial"}:
+                value = {} if self.mode == "missing-denial" else {"error": None}
         else:
             value = {"error": "missing"}
         self.wfile.write(json.dumps(value).encode())
@@ -182,6 +184,23 @@ class DynamicTests(unittest.TestCase):
         checks, findings = run_dynamic_checks(self.source, self.config, execute=True)
         self.assertEqual(next(c for c in checks if c["id"] == "dynamic:object-a")["status"], "partial")
         self.assertEqual(findings[0]["validation"], "undetermined")
+
+    def test_missing_null_denial_evidence_cannot_complete_authorization(self):
+        Fixture.mode = "missing-denial"
+        self.policy["budgets"] = {"requests_per_second": 20}
+        self.policy["scenarios"][0]["oracle"]["denied"]["expected"] = None
+        checks, findings = run_dynamic_checks(self.source, self.config, execute=True)
+        self.assertEqual(next(c for c in checks if c["id"] == "dynamic:object-a")["status"], "partial")
+        self.assertEqual(next(c for c in checks if c["id"] == "authorization")["coverage"]["scanned"], 0)
+        self.assertEqual(findings[0]["validation"], "undetermined")
+
+    def test_explicit_json_null_denial_remains_a_valid_oracle(self):
+        Fixture.mode = "null-denial"
+        self.policy["budgets"] = {"requests_per_second": 20}
+        self.policy["scenarios"][0]["oracle"]["denied"]["expected"] = None
+        checks, findings = run_dynamic_checks(self.source, self.config, execute=True)
+        self.assertEqual(next(c for c in checks if c["id"] == "dynamic:object-a")["status"], "complete")
+        self.assertFalse(findings)
 
     def test_zap_is_plan_only_without_process_confinement(self):
         plan = generate_zap_plan(self.config)
