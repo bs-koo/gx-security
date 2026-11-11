@@ -151,5 +151,85 @@ class TransportTests(unittest.TestCase):
                 slow.request("GET", self.origin + "/ok")
 
 
+class AbsoluteDeadlineTests(unittest.TestCase):
+    def drip_request(self, prefix, chunks, *, lease_seconds=None):
+        stop = threading.Event()
+        finished = threading.Event()
+
+        class DripHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                try:
+                    self.connection.sendall(prefix)
+                    for chunk in chunks:
+                        if stop.wait(0.1):
+                            break
+                        self.connection.sendall(chunk)
+                except OSError:
+                    pass
+                finally:
+                    finished.set()
+
+            def log_message(self, *_):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), DripHandler)
+        thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+        thread.start()
+        origin = f"http://127.0.0.1:{server.server_port}"
+        client = BoundedTransport(origin, paths=["/drip"], allowed_ips=["127.0.0.1"],
+                                  budgets={"max_duration_seconds": 1 if lease_seconds is None else 10},
+                                  lease_expires_at=None if lease_seconds is None else time.time() + lease_seconds)
+        original_socket = socket.socket
+        caller = threading.current_thread()
+        client_sockets = []
+
+        def capture_socket(*args, **kwargs):
+            sock = original_socket(*args, **kwargs)
+            if threading.current_thread() is caller:
+                client_sockets.append(sock)
+            return sock
+
+        started = time.monotonic()
+        try:
+            # Retaining the traceback must not keep a detached response socket open.
+            held_error = None
+            with patch("gxsec.transport.socket.socket", new=capture_socket):
+                try:
+                    client.request("GET", origin + "/drip")
+                except TransportError as error:
+                    held_error = error
+            self.assertIsNotNone(held_error)
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 1.7, "Every status/header receive must use the absolute deadline")
+            self.assertEqual([sock.fileno() for sock in client_sockets], [-1])
+            self.assertEqual(client.requests_sent, 1)
+            self.assertFalse(client.observed_paths)
+        finally:
+            stop.set()
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+            self.assertTrue(finished.wait(2), "The loopback response worker must stop after cancellation")
+
+    def test_slow_status_line_cannot_reset_total_duration(self):
+        self.drip_request(b"", [bytes([byte]) for byte in b"HTTP/1.1 200 OK\r\n"] +
+                          [b"Content-Length: 2\r\n\r\n{}"])
+
+    def test_slow_headers_cannot_reset_total_duration(self):
+        self.drip_request(b"HTTP/1.1 200 OK\r\nX-Slow: ", [b"x"] * 25 +
+                          [b"\r\nContent-Length: 2\r\n\r\n{}"])
+
+    def test_slow_headers_respect_the_earlier_lease_deadline(self):
+        self.drip_request(b"HTTP/1.1 200 OK\r\nX-Slow: ", [b"x"] * 25 +
+                          [b"\r\nContent-Length: 2\r\n\r\n{}"], lease_seconds=1)
+
+    def test_slow_body_respects_deadline_after_connection_close_headers(self):
+        self.drip_request(b"HTTP/1.0 200 OK\r\nContent-Length: 30\r\n\r\n", [b"x"] * 30)
+
+    def test_slow_chunk_metadata_respects_absolute_deadline(self):
+        self.drip_request(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
+                          [bytes([byte]) for byte in b"1;slow=" + b"x" * 25 + b"\r\nx\r\n0\r\n\r\n"])
+
+
 if __name__ == "__main__":
     unittest.main()

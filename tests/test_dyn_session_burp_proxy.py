@@ -22,7 +22,7 @@ class TestBurpProxyResolution(unittest.TestCase):
 
 
 class TestRequestProxyWiring(unittest.TestCase):
-    @patch("requests.request")
+    @patch("requests.Session.request")
     def test_request_no_env_no_proxies_kwarg(self, mock_req):
         # 하위호환: env 없으면 proxies/verify 키를 아예 넘기지 않는다(바이트 불변).
         mock_req.return_value = MagicMock(status_code=200, text="ok", headers={})
@@ -33,7 +33,7 @@ class TestRequestProxyWiring(unittest.TestCase):
         self.assertNotIn("proxies", kwargs)
         self.assertNotIn("verify", kwargs)
 
-    @patch("requests.request")
+    @patch("requests.Session.request")
     def test_request_env_sets_proxies_and_verified_tls(self, mock_req):
         mock_req.return_value = MagicMock(status_code=200, text="ok", headers={})
         with patch.dict(os.environ, {"SECURITY_PLUGIN_BURP_PROXY": "http://127.0.0.1:8080"}):
@@ -45,7 +45,7 @@ class TestRequestProxyWiring(unittest.TestCase):
 
 
 class TestLoginProxyWiring(unittest.TestCase):
-    @patch("requests.post")
+    @patch("requests.Session.request")
     def test_login_env_sets_proxies(self, mock_post):
         mock_post.return_value = MagicMock(
             status_code=200, headers={}, json=lambda: {"data": {"accessToken": "T"}})
@@ -55,7 +55,7 @@ class TestLoginProxyWiring(unittest.TestCase):
         self.assertEqual(kwargs["proxies"]["http"], "http://127.0.0.1:8080")
         self.assertIs(kwargs["verify"], True)
 
-    @patch("requests.post", side_effect=OSError("proxy refused"))
+    @patch("requests.Session.request", side_effect=OSError("proxy refused"))
     def test_login_proxy_error_hint(self, _mock):
         # 엣지 F: 프록시 활성 중 요청 예외를 '자격 실패'로 오진단하지 않도록 Burp 힌트를 남긴다
         with patch.dict(os.environ, {"SECURITY_PLUGIN_BURP_PROXY": "http://127.0.0.1:8080"}):
@@ -65,7 +65,7 @@ class TestLoginProxyWiring(unittest.TestCase):
 
 
 class TestProxyWarningSuppress(unittest.TestCase):
-    @patch("requests.request")
+    @patch("requests.Session.request")
     def test_verified_proxy_does_not_disable_security_warnings(self, mock_req):
         # 프록시 경유에서도 인증서 검증을 유지하고 보안 경고를 억제하지 않는다.
         mock_req.return_value = MagicMock(status_code=200, text="ok", headers={})

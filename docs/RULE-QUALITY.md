@@ -35,6 +35,10 @@ python scripts/evaluate-rule-quality.py --engine semgrep --output rule-quality-r
 
 종료 코드는 `0`이면 실행이 완료되고 새 회귀가 없다는 뜻, `1`이면 예상하지 못한 미탐·오탐, `2`이면 실행 미완료다. **코드 0도 모든 사례가 탐지됐거나 모든 규칙이 검증됐다는 뜻은 아니다.** 알려진 미탐·오탐은 `known_limitation`으로 남기되 FN·FP와 precision·recall에 그대로 반영한다.
 
+기본 정답표는 별도의 [baseline-contract.json](../tests/fixtures/rule-quality/baseline-contract.json)과 대조한다. 검토된 28개 사례의 ID·규칙·양/음 기대값·파일명·실제 평가 소스 해시를 보존하며, 사례 삭제·대조군 소실·입력/라벨 교체·기존 사례에 미승인 예외 추가는 엔진 실행 전에 종료 코드 `2`로 보고한다. 새 사례 추가와 탐지기의 실제 개선은 허용하며 TP·FP·FN·TN을 고정된 정답 수치로 만들지 않는다. 의도적으로 기준을 바꾸려면 정답 근거와 계약을 함께 검토해 갱신해야 한다. 평가기가 계약을 자동 재생성하지 않는다.
+
+사용자 지정 정답표는 `--corpus <경로>`로 실행한다. 결과에 `evaluation_scope: custom-corpus`, 계약 `status: not-applied`, `comparable_to_default: false`를 남기며, 엔진 오류로 실패해도 이 구분을 보존한다. 축소된 사용자 정답표의 성공을 기본 28개·12규칙의 검증 실적으로 사용하지 않는다. 기본 정답표에 사례를 추가한 경우도 이전 집계와 그대로 비교하지 않는다.
+
 ## 확인된 한계
 
 - `access-vuln`은 ID를 매개변수로 받은 뒤 상수만 반환한다. ID 패턴을 찾는 대조군이며 IDOR를 입증하지 않는다. `auth-safe`·`access-safe`·`upload-safe`·`ssrf-safe`·`pathtraversal-safe` 5개는 관련 기능 자체가 없는 단순 음성 대조군이다. 정상 방어가 있는 실제 기능을 구별하는 능력은 이 5개로 평가하지 못한다.

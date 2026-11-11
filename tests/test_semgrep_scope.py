@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -100,11 +101,16 @@ def test_kotlin_rule_gap_stays_in_missing_scope_and_gets_explicit_diagnostic(tmp
 @pytest.mark.parametrize('ignores', [False, True])
 def test_real_engine_preserves_test_files_despite_native_ignores(tmp_path, monkeypatch, ignores):
     command = Path(shutil.which('semgrep')).resolve()
-    # Match the runtime's protected executable-directory PATH without passing
-    # the CI host's full environment or changing production version approval.
+    # Match the protected bundle's actual runtime contract: Semgrep's launcher
+    # needs system helpers (including uname) from the approved git directory.
+    # The full host PATH is never inherited.
+    git = shutil.which('git')
+    assert git, 'Real-engine scope verification requires the bundle git dependency'
+    approved = {'semgrep': command, 'git': Path(git).resolve(), 'python': Path(sys.executable).resolve()}
     manifest = tmp_path / 'runtime-provenance.json'
-    manifest.write_text(json.dumps({'schema_version': 1, 'tools': {'semgrep': {
-        'executable': str(command), 'sha256': hashlib.sha256(command.read_bytes()).hexdigest()}}}), encoding='utf-8')
+    manifest.write_text(json.dumps({'schema_version': 1, 'tools': {
+        name: {'executable': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+        for name, path in approved.items()}}), encoding='utf-8')
     monkeypatch.setenv('GXSEC_RUNTIME_MANIFEST', str(manifest))
     root, cfg, inventory = fixture(tmp_path, monkeypatch, ignores=ignores, command=str(command))
     # Only synthetic fixtures are inspected here. Preserve a bounded launcher

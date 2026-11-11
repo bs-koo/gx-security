@@ -211,7 +211,7 @@ def _add_secret_arg(cmd, child_env, flag, key, value, secret_env_names):
 def run_access_dynamic(target, static_result, creds, authorized, *,
                        auth_mode="bearer", id_field=None, pw_field=None, success_path=None, login_path=None,
                        body_template=None, token_path=None, secret_env_names=None):
-    """정적 access-control 후보를 attack_access로 동적 확정한다(개선 D).
+    """정적 access-control 후보를 attack_access로 동적으로 조사한다(개선 D).
 
     계정/토큰 미제공 시 발사하지 않고 'static-only'(정적 추정·동적 미확정)로 표기한다(개선 E).
     IDOR/BFLA는 본질적으로 동적 확정이 필요하므로, 동적을 못 돌리면 High로 단정하지 않는다.
@@ -231,7 +231,8 @@ def run_access_dynamic(target, static_result, creds, authorized, *,
             "confidence": "static-only",
             "candidate_count": len(candidates),
             "note": ("access-control 후보가 있으나 테스트 계정 미제공 → 동적 미확정(정적 추정). "
-                     "--user-a-id/pw(+--user-b-id/pw·--resource-id) 또는 --token-a 제공 시 동적 확정."),
+                     "승인된 --user-a-id/pw(+--user-b-id/pw·--resource-id) 또는 --token-a로 추가 조사 가능. "
+                     "근거가 부족하면 미확정으로 남습니다."),
         }
     import tempfile
     tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
@@ -301,7 +302,7 @@ def run_access_dynamic(target, static_result, creds, authorized, *,
 def run_auth_dynamic(target, creds, probe, authorized, *,
                      auth_mode="bearer", id_field=None, pw_field=None, success_path=None, login_path=None,
                      body_template=None, token_path=None, secret_env_names=None):
-    """정적 추정된 인증/세션/JWT를 attack_auth로 동적 확정한다(FR-2/3).
+    """정적 추정된 인증/세션/JWT를 attack_auth로 동적으로 조사한다(FR-2/3).
 
     계정/토큰 미제공 시 발사하지 않고 'static-only'(정적 추정·동적 미확정)로 표기한다(AC-2).
     발사하더라도 모든 검사가 skip(probe 미지정+쿠키 없음 등)이면 과대표기하지 않고
@@ -371,7 +372,7 @@ def run_auth_dynamic(target, creds, probe, authorized, *,
 def run_ssrf_dynamic(target, creds, redirect_target, ssrf_target, authorized, *,
                      auth_mode="bearer", id_field=None, pw_field=None, success_path=None, login_path=None,
                      body_template=None, token_path=None, secret_env_names=None):
-    """정적 추정된 SSRF/오픈리다이렉트를 attack_ssrf로 동적 확정한다(FR-2/3).
+    """정적 추정된 SSRF/오픈리다이렉트를 attack_ssrf로 동적으로 조사한다(FR-2/3).
 
     표적(--redirect-target/--ssrf-target)과 계정/토큰이 '모두' 있어야 발사한다(PRD1).
     표적 우선 판정: 표적이 없으면 계정 유무와 무관하게 '표적 미지정' static-only(AC-2).
@@ -387,7 +388,7 @@ def run_ssrf_dynamic(target, creds, redirect_target, ssrf_target, authorized, *,
         return {
             "confidence": "static-only",
             "note": ("SSRF/오픈리다이렉트 표적 미지정(--redirect-target/--ssrf-target) → "
-                     "정적 추정. 주입점 지정 시 동적 확정."),
+                     "정적 추정. 승인된 계정과 주입점으로 추가 조사 가능. 근거가 부족하면 미확정으로 남습니다."),
         }
     if not has_creds:
         return {
@@ -450,7 +451,7 @@ def run_pathupload_dynamic(target, creds, traversal_target, upload_target, uploa
                            retrieve_base, allow_destructive, authorized, *,
                            auth_mode="bearer", id_field=None, pw_field=None, success_path=None, login_path=None,
                        body_template=None, token_path=None, secret_env_names=None):
-    """정적 추정된 경로조작·파일업로드를 attack_pathupload로 동적 확정한다(FR-1~5).
+    """정적 추정된 경로조작·파일업로드를 attack_pathupload로 동적으로 조사한다(FR-1~5).
 
     표적(--traversal-target/--upload-target)과 계정/토큰이 '모두' 있어야 발사한다(PRD1).
     표적 우선 판정: 표적이 없으면 계정 유무와 무관하게 '표적 미지정' static-only(AC-6).
@@ -468,7 +469,7 @@ def run_pathupload_dynamic(target, creds, traversal_target, upload_target, uploa
         return {
             "confidence": "static-only",
             "note": ("경로조작/파일업로드 표적 미지정(--traversal-target/--upload-target) → "
-                     "정적 추정. 주입점 지정 시 동적 확정."),
+                     "정적 추정. 승인된 계정과 주입점으로 추가 조사 가능. 근거가 부족하면 미확정으로 남습니다."),
         }
     if not has_creds:
         return {
@@ -582,6 +583,17 @@ def _ssrf_unreached(f):
     return False
 
 
+def _specialist_error(finding):
+    """Render only protocol diagnostic codes, never a request's raw exception."""
+    labels = {'timeout': '시간 초과', 'connection_error': '연결 실패',
+              'request_failed': '요청 실패', 'invalid_response': '응답 형식 확인 필요',
+              'scope_blocked': '허용 범위 밖', 'login_failed': '인증 실패'}
+    code = finding.get('error_type')
+    if not isinstance(code, str) or code not in labels:
+        code = 'request_failed'
+    return f"{labels[code]} ({code})"
+
+
 def _ssrf_finding_line(f):
     """SSRF/오픈리다이렉트 finding 1건을 요약 한 줄 문자열로 렌더한다(테스트 가능 헬퍼).
 
@@ -596,14 +608,14 @@ def _ssrf_finding_line(f):
     if f.get("skipped"):
         return f"    - [{kind}] 미발사({f.get('skipped')})"
     if f.get("error"):
-        return f"    - [{kind}] ⚠ 오류: {f.get('error')}"
+        return f"    - [{kind}] ⚠ 오류: {_specialist_error(f)}"
     if kind == "ssrf":
         if f.get("vulnerable"):
             return f"    - [{kind}] 🔴 취약(OOB 콜백 수신)"
         return f"    - [{kind}] ⚠ 미확정 — 콜백 미수신(원격/비동기 대상이면 취약 가능·안전 단정 금지)"
     if _ssrf_unreached(f):
         return f"    - [{kind}] ⚠ 미확정 — 프로브 미도달(대상 무응답/전변형 오류)"
-    return f"    - [{kind}] {'🔴 취약' if f.get('vulnerable') else '방어'}"
+    return f"    - [{kind}] {_verdict_label(f)}"
 
 
 def render_dynamic_line(d):
@@ -639,9 +651,9 @@ def render_pathupload(res):
 
     SSRF 렌더 블록 미러링 — 판정 우선순위: scope_blocked > login-failed > static-only >
     dynamic > error > skipped. render_dynamic_line 재사용 안 함(그건 sql/xss param 전용).
-    MUST 해소 3건: ①경로조작 미검출은 2xx면 방어, 그 외(non-2xx/None)는 '방어' 아닌
-    '미확정'(미도달/차단) — 404 전량을 방어로 뭉개지 않는다, ②leftover 정리 안내는
-    accepted(2xx 수용)된 업로드만, ③미지정 표적은 '미검사'로 명시(targets 소비).
+    시그니처 미검출·업로드 수용·마커 회수는 보안 정책의 반증이나 실행 취약점 확정이 아니다.
+    미확정 상태와 응답 유실 후 남을 수 있는 마커의 정리 상태를 그대로 보존한다.
+    미지정 표적은 '미검사'로 명시한다(targets 소비).
     res 비-dict 방어.
     """
     if not isinstance(res, dict):
@@ -654,7 +666,7 @@ def render_pathupload(res):
     elif res.get("confidence") == "static-only":  # 과대표기 방지(표적/계정/게이트 사유)
         lines.append(f"[경로조작/파일업로드] 정적 추정(동적 미확정) — {res.get('note')}")
     elif res.get("confidence") == "dynamic":
-        lines.append("[경로조작/파일업로드] 동적 확정 발사")
+        lines.append("[경로조작/파일업로드] 동적 검사 수행")
         result = res.get("result", {})
         if not isinstance(result, dict):  # 자식이 dict 아닌 JSON 반환 시 방어
             result = {}
@@ -668,25 +680,20 @@ def render_pathupload(res):
             if f.get("skipped"):
                 lines.append(f"    - [{kind}] 미발사({f.get('skipped')})")
             elif f.get("error"):
-                lines.append(f"    - [{kind}] ⚠ 오류: {f.get('error')}")
+                lines.append(f"    - [{kind}] ⚠ 오류: {_specialist_error(f)}")
             elif kind == "path-traversal":
-                # MUST#1: 미검출을 무조건 '방어'로 뭉개지 않는다. 정상 2xx 응답에서 시그니처가
-                # 없어야 진짜 방어이고, non-2xx(404/403/5xx)·status None은 미도달/차단 '미확정'.
-                status = f.get("status")
                 if f.get("vulnerable"):
-                    lines.append(f"    - [{kind}] 🔴 취약(파일내용 시그니처 검출)")
-                elif isinstance(status, int) and 200 <= status < 300:
-                    lines.append(f"    - [{kind}] 방어(정상 응답·시그니처 없음)")
+                    lines.append(f"    - [{kind}] 🔴 취약(정상 대조군과 구분되는 표적 파일 내용 검출)")
                 else:
-                    lines.append(f"    - [{kind}] ⚠ 미확정 — 미도달/차단 추정(엔드포인트·주입점 확인)")
+                    lines.append(f"    - [{kind}] ⚠ 미확정 — 파일 누출 미확인(엔드포인트·대조군·표적 확인)")
             elif kind == "file-upload":
-                # FR-2 미확정 3상태: 재조회 확인=취약(High), 2xx 수용-미회수=미확정(방어 아님), 그 외=방어.
+                # Inert marker retrieval proves file delivery, not execution or a policy violation.
                 if f.get("retrievable"):
-                    lines.append(f"    - [{kind}] 🔴 취약(High·웹루트 저장 확인)")
-                elif f.get("undetermined"):
-                    lines.append(f"    - [{kind}] 🟡 미확정(2xx 수용·재조회 미확인 — 서버측 후처리 가능성, 확인 필요)")
+                    lines.append(f"    - [{kind}] 🟡 미확정(마커 회수 관찰 — 제공 정책·실행 설정 검토 필요)")
+                elif f.get("undetermined") or f.get("accepted"):
+                    lines.append(f"    - [{kind}] 🟡 미확정(저장·회수·제공 정책 확인 필요)")
                 else:
-                    lines.append(f"    - [{kind}] 방어(거부)")
+                    lines.append(f"    - [{kind}] 🟡 미확정(업로드 미수용 — 거절 원인·정책 확인 필요)")
             else:
                 # FR-3 등 미확정(무상태 JWT 재사용 등)을 '방어'로 오표기하지 않도록 3상태 라벨 사용.
                 _line = f"    - [{kind}] {_verdict_label(f)}"
@@ -702,10 +709,17 @@ def render_pathupload(res):
             lines.append("    - [파일업로드] 미발사(--allow-destructive 필요)")
         elif not tg.get("upload"):
             lines.append("    - [파일업로드] 표적 미지정(--upload-target) — 미검사")
-        # MUST#2: leftover 정리 안내는 accepted(2xx 수용)된 업로드만 — 거부(403·미기록)엔
-        # 서버에 파일이 남지 않으므로 안내하지 않는다(FR-7/QE-2).
-        leftover = [f.get("leftover") for f in findings
-                    if isinstance(f, dict) and f.get("leftover") and f.get("accepted")]
+        # A lost upload response can leave a marker even without a confirmed 2xx.
+        leftover = []
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            cleanup = finding.get("cleanup")
+            cleanup = cleanup if isinstance(cleanup, dict) else {}
+            marker = cleanup.get("marker") or finding.get("leftover")
+            if marker and (cleanup.get("status") == "manual-required" or finding.get("accepted")):
+                leftover.append(str(marker))
+        leftover = list(dict.fromkeys(leftover))
         if leftover:
             lines.append(f"    [정리 필요] 업로드된 마커 파일: {', '.join(leftover)} — "
                          f"서버에서 수동 삭제 권장")
@@ -777,11 +791,18 @@ def _apply_burp_proxy(burp_proxy, *, strict=False, probe=None):
     """
     if not burp_proxy:
         return {"enabled": False, "proxy_up": None, "strict_abort": False}
+    try:
+        checked_proxy = dyn_session.validate_burp_proxy_url(burp_proxy)
+    except (dyn_session.ScopeError, ValueError):
+        return {"enabled": False, "proxy_up": None, "strict_abort": True,
+                "error": "invalid_burp_proxy"}
     probe = probe or burp_preflight.probe_port
-    host, port = burp_preflight.split_hostport(burp_proxy)
+    host, port = burp_preflight.split_hostport(checked_proxy)
     up = probe(host, port)
     if up:
-        os.environ["SECURITY_PLUGIN_BURP_PROXY"] = burp_proxy
+        os.environ["SECURITY_PLUGIN_BURP_PROXY"] = checked_proxy
+    else:
+        os.environ.pop("SECURITY_PLUGIN_BURP_PROXY", None)
     return {"enabled": up, "proxy_up": up, "strict_abort": bool(strict and not up)}
 
 
@@ -796,7 +817,7 @@ _STATIC_ONLY_LABELS = {
 def _static_only_classes(report):
     """report의 *_dynamic phase 중 confidence=='static-only'인 클래스 라벨 목록.
 
-    계정/표적 미제공으로 동적 확정을 못 한(정적 추정으로 남은) 항목이다. 계정을 준비해
+    계정/표적 미제공으로 동적 조사를 못 한(정적 추정으로 남은) 항목이다. 계정을 준비해
     재실행하면 dynamic으로 전환되는 '보강 재실행' 대상을 SKILL이 파싱 없이 소비하게 한다.
     partial(쿠키만)·login-failed·dynamic·skipped는 보강 대상이 아니므로 제외한다.
     """
@@ -837,16 +858,16 @@ def main():
                                     "미지정 시 JWT·재사용 정적 추정")
     # SSRF/오픈리다이렉트 동적 연계용 주입점 (계정/토큰 플래그 재사용)
     ap.add_argument("--redirect-target", help="오픈리다이렉트 주입점(예: /login?returnUrl=). "
-                                              "지정+계정(--user-a-id/pw 또는 --token-a) 시 동적 확정")
+                                              "지정+계정(--user-a-id/pw 또는 --token-a) 시 동적 검사")
     ap.add_argument("--ssrf-target", help="SSRF 주입점(예: /api/fetch?url=). "
-                                          "동적 확정에는 계정(--user-a-id/pw 또는 --token-a)도 필요")
+                                          "동적 검사에는 계정(--user-a-id/pw 또는 --token-a)도 필요")
     # 경로조작/파일업로드 동적 연계용 주입점 (계정/토큰 플래그 재사용)
     ap.add_argument("--traversal-target", help="경로조작 주입점(예: /download?filePath=). "
-                                              "지정+계정(--user-a-id/pw 또는 --token-a) 시 동적 확정")
+                                              "지정+계정(--user-a-id/pw 또는 --token-a) 시 동적 검사")
     ap.add_argument("--upload-target", help="파일업로드 엔드포인트(예: /api/v1/files). "
                                            "발사에는 계정과 --allow-destructive(파괴적 옵트인)도 필요")
     ap.add_argument("--upload-field", default="file", help="업로드 multipart 필드명(기본 file)")
-    ap.add_argument("--retrieve-base", help="업로드 파일 회수 URL 베이스(웹루트 저장 가중 판정용)")
+    ap.add_argument("--retrieve-base", help="업로드 마커 회수 URL 베이스(파일 제공 관찰용, 코드 실행 미확인)")
     ap.add_argument("--allow-destructive", action="store_true",
                     help="파일업로드(서버에 파일 기록) 허용 — 명시해야 업로드 검사 발사")
     # 인증 방식(cookie=form 로그인+세션쿠키). attack 4종에 패스스루된다.
@@ -888,6 +909,9 @@ def main():
         # Burp 프록시 프리플라이트(하이브리드) — 가동 시 env 세팅, 미가동 시 strict면 중단·아니면 폴백
         _bp = _apply_burp_proxy(args.burp_proxy, strict=args.burp_proxy_strict)
         report["burp_proxy"] = _bp  # 엣지 G: --json 리포트에 경유/폴백 상태 노출
+        if _bp.get("error") == "invalid_burp_proxy":
+            _fatal_input_error(args.json, "invalid_burp_proxy",
+                               "Burp 프록시는 loopback IP의 HTTP(S) 주소만 지원합니다. 프록시 설정을 확인하세요.")
         if _bp.get("strict_abort"):
             print(burp_preflight.onboarding_text(), file=sys.stderr)
             print("[중단] --burp-proxy-strict: Burp 미가동으로 발사를 중단합니다(증거 없는 폴백 금지).",
@@ -1023,7 +1047,7 @@ def main():
         print(f"[접근통제] 동적 미확정(로그인 실패) — {acc.get('detail')}")
     elif acc.get("confidence") == "static-only":
         print(f"[접근통제] 정적 추정(동적 미확정) — 후보 {acc.get('candidate_count')}건. "
-              f"테스트 계정 제공 시 동적 확정")
+              f"승인된 테스트 계정으로 동적 조사 가능(판정 근거 별도 확인)")
     elif acc.get("confidence") == "dynamic":
         res = acc.get("result", {})
         fcount = len(res.get("findings", [])) if isinstance(res, dict) else 0
@@ -1079,7 +1103,7 @@ def main():
     elif ss.get("confidence") == "static-only":  # 과대표기 방지(AC-2/11)
         print(f"[SSRF/오픈리다이렉트] 정적 추정(동적 미확정) — {ss.get('note')}")
     elif ss.get("confidence") == "dynamic":
-        print(f"[SSRF/오픈리다이렉트] 동적 확정 발사")
+        print(f"[SSRF/오픈리다이렉트] 동적 검사 수행")
         res = ss.get("result", {})
         if not isinstance(res, dict):  # 자식이 dict 아닌 JSON 반환 시 방어
             res = {}
@@ -1109,7 +1133,7 @@ def main():
     _so = report.get("static_only_summary") or []
     if _so:
         print(f"\n[정적 추정으로 남음] {', '.join(_so)}")
-        print("  → 계정/주입점을 준비해 재실행하면 이 항목이 동적으로 확정됩니다"
+        print("  → 승인된 계정/주입점으로 추가 조사할 수 있으며, 근거가 부족하면 미확정으로 남습니다"
               " (비밀번호는 read -rs 로 입력 후 --*-env 전달).")
 
     print(f"\n※ {report['next']}")

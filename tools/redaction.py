@@ -8,6 +8,7 @@ _SENSITIVE = re.compile(r"(?i)(?:password|passwd|pwd|secret(?:key|value)?|token|
 _REFERENCE = re.compile(r"(?i)(?:_id|_count|_path|_field|_name|_ref|_type|_location|_budget)$")
 _ASSIGNMENT = re.compile(r'''(?im)(["']?([A-Za-z_$][\w$.-]*)["']?\s*[=:]\s*)(["'][^"'\r\n]*["']|(?:Bearer|Basic)\s+[^\s,;]+|[^\s,;&<>{}\[\]"']+)''')
 _TOKEN = re.compile(r"\b(?:AKIA[A-Z0-9]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|eyJ[\w-]+\.[\w-]+\.[\w-]+)\b")
+_RESPONSE_EXCERPTS = {"response_snippet", "marker_found"}
 
 
 def _sensitive(key):
@@ -67,7 +68,8 @@ def redact(value):
 
     def mask(item, key=None):
         if isinstance(item, dict):
-            result = {str(k): (v if key == "rule_summary" and isinstance(v, int)
+            result = {str(k): (MASK if str(k).lower() in _RESPONSE_EXCERPTS
+                              else v if key == "rule_summary" and isinstance(v, int)
                               else MASK if _sensitive(k) else mask(v, str(k))) for k, v in item.items()}
             # Literal secrecy cannot be inferred from its spelling or rule.
             # Source consumers use the retained file/line to inspect context.

@@ -115,7 +115,7 @@ def _error_text(error):
         "missing_history": "Git 이력을 검사하지 못했습니다.",
         "invalid_history_scope": "선택한 Git 이력 제외 범위를 검증하지 못했습니다.",
         "unsupported_history_scope": "선택 경로의 대소문자 규칙을 보장하려면 고정 Linux 점검 환경을 사용해야 합니다.",
-        "rule_coverage_unavailable": "일부 Kotlin 파일을 검사하지 못했고 현재 규칙 묶음에 Kotlin 전용 규칙이 없습니다.",
+        "rule_coverage_unavailable": "일부 입력에 필요한 언어별 보안 규칙이 없거나 해당 검사 범위가 충족되지 않았습니다.",
         "unresolved_dependencies": "확정 의존성 잠금 파일 또는 SBOM이 필요합니다.",
         "advisory_matching_incomplete": "일부 패키지의 취약점 DB 매칭을 확인하지 못했습니다.",
         "framework_baseline_unverified": "조직이 요구한 SEF 기반 버전과 현재 소스·분석기가 일치하지 않습니다.",

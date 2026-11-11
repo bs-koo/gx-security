@@ -63,6 +63,10 @@ _DENY_NETS = [
     ipaddress.ip_network("0.0.0.0/8"),         # 와일드카드/this-network
     ipaddress.ip_network("fe80::/10"),         # IPv6 링크로컬
     ipaddress.ip_network("::/128"),            # IPv6 unspecified
+    ipaddress.ip_network("224.0.0.0/4"),       # multicast is not an application endpoint
+    ipaddress.ip_network("255.255.255.255/32"),
+    ipaddress.ip_network("ff00::/8"),          # IPv6 multicast
+    ipaddress.ip_network("fd00:ec2::254/128"),  # AWS IPv6 metadata, never a test application
 ]
 
 
@@ -183,13 +187,14 @@ def assert_in_scope(target: str, authorized_flag: bool = False) -> str:
 
 if __name__ == "__main__":
     # CLI 셀프테스트:  python scope_guard.py <target> [--authorized]
-    if len(sys.argv) < 2:
-        print("usage: scope_guard.py <target_url> [--authorized]")
-        sys.exit(2)
-    tgt = sys.argv[1]
-    auth = "--authorized" in sys.argv
+    import argparse
+    parser = argparse.ArgumentParser(description="Check the legacy hostname scope preflight.",
+                                     allow_abbrev=False)
+    parser.add_argument("target_url")
+    parser.add_argument("--authorized", action="store_true")
+    args = parser.parse_args()
     try:
-        print("ALLOW:", assert_in_scope(tgt, auth))
+        print("ALLOW:", assert_in_scope(args.target_url, args.authorized))
     except ScopeError as e:
         print(e)
         sys.exit(1)

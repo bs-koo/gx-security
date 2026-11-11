@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "contract_id": "default-rule-quality-2026-11-10",
+  "description": "Minimum reviewed candidate rule/case pairs. Preserve these inputs and labels; new cases may be added. Changes to this baseline require an explicit reviewed contract update, not regeneration during evaluation. Sources are hashed as materialized UTF-8 text with source-file BOM removal and LF newlines. No accuracy metric or error count is fixed.",
+  "minimum_case_count": 28,
+  "minimum_rule_count": 12,
+  "required_cases": [
+    {
+      "id": "auth-vuln",
+      "rule_id": "sqisoft-spring-bcrypt-not-used",
+      "expected_match": true,
+      "filename": "WeakHash.java",
+      "source_sha256": "c38b89a6576b73e982258c2174b3cb5f0278d54c1b1eb1aac76c46bfd96d10ab",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "auth-safe",
+      "rule_id": "sqisoft-spring-bcrypt-not-used",
+      "expected_match": false,
+      "filename": "NoAuth.java",
+      "source_sha256": "65f2850fe5e0de73c39b9c8560dab60e41061af9fc75c5bb8d0f3aacd53ad766",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "access-vuln",
+      "rule_id": "sqisoft-spring-pathvariable-annotated-id",
+      "expected_match": true,
+      "filename": "Ctrl.java",
+      "source_sha256": "c291b3bcd7cf864ffe35aed943c5bf1c7488e04ef06526f310bb77abec7505b7",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "access-safe",
+      "rule_id": "sqisoft-spring-pathvariable-annotated-id",
+      "expected_match": false,
+      "filename": "Plain.java",
+      "source_sha256": "2a42fa6dcb9abc31d13fdd2a9d34fa641e6de646f3c035288f0c5fc58957c4ff",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "csrf-vuln",
+      "rule_id": "sqisoft-spring-csrf-disabled",
+      "expected_match": true,
+      "filename": "Sec.java",
+      "source_sha256": "4075f28b1b1fe1a6445c32dbfcd52ed86e5859f3cf6170bc4fd49bdddb7ea5f4",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "csrf-safe",
+      "rule_id": "sqisoft-spring-csrf-disabled",
+      "expected_match": false,
+      "filename": "Sec.java",
+      "source_sha256": "91a431656803beafc636b03eccf64b106d3c39d6f2830b708f5d5e16c7c891c5",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "xss-vuln",
+      "rule_id": "sqisoft-spring-servlet-reflected-xss-writer",
+      "expected_match": true,
+      "filename": "Servlet.java",
+      "source_sha256": "597c46f5951baafd52f51964d482643bd274df70b28e54871b11f8c5366f9d1d",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "xss-safe",
+      "rule_id": "sqisoft-spring-servlet-reflected-xss-writer",
+      "expected_match": false,
+      "filename": "Servlet.java",
+      "source_sha256": "aa16c27a63878d24db0ff8e5e07dc3a4915576feb2a9fc6ed802a100e61ac441",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "upload-vuln",
+      "rule_id": "sqisoft-spring-originalfilename-direct-use",
+      "expected_match": true,
+      "filename": "Up.java",
+      "source_sha256": "c457733110783bee0a5f8ee7fd5a41b4db6d129cf635867df1e7dd676d6c94d7",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "upload-safe",
+      "rule_id": "sqisoft-spring-originalfilename-direct-use",
+      "expected_match": false,
+      "filename": "NoUp.java",
+      "source_sha256": "0973943dd6c110e387c92620f650eda940dd9d0c000e3d39fbbe6a08b6f36502",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "ssrf-vuln",
+      "rule_id": "sqisoft-ssrf-resttemplate-var-call",
+      "expected_match": true,
+      "filename": "Fetch.java",
+      "source_sha256": "f977188db13f31d16444694536849d25072aa38b7eb8f5d45b507fabdd0a4b13",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "ssrf-safe",
+      "rule_id": "sqisoft-ssrf-resttemplate-var-call",
+      "expected_match": false,
+      "filename": "NoEgress.java",
+      "source_sha256": "e8bd48c8dc8c923fdd9116989f61aa4d257e540b6dceb841a78796dd31279010",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "pathtraversal-vuln",
+      "rule_id": "sqisoft-spring-requestparam-to-path",
+      "expected_match": true,
+      "filename": "Dl.java",
+      "source_sha256": "5cf2527a4235ebe776baef49225e7cccee201c43f30500ba1c443564f9fb76a7",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "pathtraversal-safe",
+      "rule_id": "sqisoft-spring-requestparam-to-path",
+      "expected_match": false,
+      "filename": "NoFile.java",
+      "source_sha256": "c82e5a7772f21573ba9e5339e71f56f915549d2363485999d2679650e1d31407",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "secrets-vuln",
+      "rule_id": "sqisoft-properties-hardcoded-password",
+      "expected_match": true,
+      "filename": "app.properties",
+      "source_sha256": "6876cfc55c5398ecbd7fd365303d042cd5648420dc0c9bd4ed8316c1d57b83d1",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "secrets-safe",
+      "rule_id": "sqisoft-properties-hardcoded-password",
+      "expected_match": false,
+      "filename": "app.properties",
+      "source_sha256": "daa90a2cd19ab5ef9fb26213a815b4d1a44292047e41dff98e5b134839fe6d18",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "sqli-vuln",
+      "rule_id": "sqisoft-mybatis-xml-dollar-interpolation",
+      "expected_match": true,
+      "filename": "BoardMapper.xml",
+      "source_sha256": "6f08ef14f91486c258ea46c171c99e72319e031337f42a833241b7a96f202d95",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "sqli-safe",
+      "rule_id": "sqisoft-mybatis-xml-dollar-interpolation",
+      "expected_match": false,
+      "filename": "BoardMapper.xml",
+      "source_sha256": "d3c23a67d22358bc17ae184bee490bf920cff63d70a9af095da55c55038fadbb",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "xss-frontend-vuln",
+      "rule_id": "sqisoft-vue-v-html-unsanitized",
+      "expected_match": true,
+      "filename": "Board.vue",
+      "source_sha256": "3acbfdc2722c104d8db024d74c8aedf4d43b5b4b620fd681117a91f5085383a2",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "xss-frontend-safe",
+      "rule_id": "sqisoft-vue-v-html-unsanitized",
+      "expected_match": false,
+      "filename": "Board.vue",
+      "source_sha256": "af24b9fb3b9f2369a8765ffe773690a5f753fd0d8289629293a55d695dbfd36d",
+      "allow_known_limitation": true
+    },
+    {
+      "id": "cors-normal",
+      "rule_id": "sqisoft-spring-cors-wildcard-credentials",
+      "expected_match": true,
+      "filename": "Config.java",
+      "source_sha256": "f377a910ac0e5ca9859fa3a97dbeadede62d0bca1ce83e691c31ebaf4cf77188",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "cors-reverse",
+      "rule_id": "sqisoft-spring-cors-wildcard-credentials",
+      "expected_match": true,
+      "filename": "Config.java",
+      "source_sha256": "4fc403851dc5674c375ce29c76cd3ed4574798401946a8386f141bae5f997ad0",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "cors-different-receivers",
+      "rule_id": "sqisoft-spring-cors-wildcard-credentials",
+      "expected_match": false,
+      "filename": "Config.java",
+      "source_sha256": "a369d801b7dc293855dd6b7c91a34f216f88dcf48d58215ad24efb4a41257637",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "cors-trusted-origin",
+      "rule_id": "sqisoft-spring-cors-wildcard-credentials",
+      "expected_match": false,
+      "filename": "Config.java",
+      "source_sha256": "272a97ac5b41025acc17eb8dafecdc440bb90906ff9016612eb71d755f1eebd1",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "cors-no-credentials",
+      "rule_id": "sqisoft-spring-cors-wildcard-credentials",
+      "expected_match": false,
+      "filename": "Config.java",
+      "source_sha256": "2f11315156ca411c28c40e182c53001e5f7d1863eeda671db89ec7c9f80864bd",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "jdbc-direct",
+      "rule_id": "sqisoft-spring-jdbctemplate-string-concat",
+      "expected_match": true,
+      "filename": "Search.java",
+      "source_sha256": "3ab830b2080264bca829ac38bba3d8a15d2d3aad1abde2d150918f7c1b7c60e4",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "jdbc-parameterized",
+      "rule_id": "sqisoft-spring-jdbctemplate-string-concat",
+      "expected_match": false,
+      "filename": "Search.java",
+      "source_sha256": "85a121e2a62271084dd0e977af492aa15dd3179c3de735b0a7d4ad40266dc664",
+      "allow_known_limitation": false
+    },
+    {
+      "id": "jdbc-helper-risk-retained",
+      "rule_id": "sqisoft-spring-jdbctemplate-string-concat",
+      "expected_match": true,
+      "filename": "Search.java",
+      "source_sha256": "f5a992a7ab7038ea7ccb9d2a0a53458a0f4b1ad83631d2362582190d8ae6586e",
+      "allow_known_limitation": true
+    }
+  ]
+}

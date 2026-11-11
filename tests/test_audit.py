@@ -511,20 +511,23 @@ class TestPathuploadRender(unittest.TestCase):
         self.assertIn("미확정", text)
         self.assertNotIn("방어", text)
 
-    def test_render_traversal_200_defended(self):
-        # MUST#1: status=200·미취약은 진짜 방어(정상 응답·시그니처 없음).
+    def test_render_traversal_200_without_proof_is_undetermined(self):
+        # A successful HTTP response with no signature does not refute traversal.
         text = "\n".join(audit.render_pathupload(
             self._dynamic([{"kind": "path-traversal", "vulnerable": False, "status": 200}])))
-        self.assertIn("방어", text)
+        self.assertIn("미확정", text)
+        self.assertNotIn("방어", text)
         self.assertNotIn("🔴", text)
 
-    def test_render_upload_high_retrievable(self):
-        # AC-11: 회수 성공 → 웹루트 저장 가중(High)
+    def test_render_upload_retrieval_is_an_observation(self):
+        # Retrieval of inert text does not establish execution or a High risk.
         text = "\n".join(audit.render_pathupload(self._dynamic(
             [{"kind": "file-upload", "vulnerable": True, "accepted": True,
               "retrievable": True, "leftover": "gxmarker_x.jsp", "status": 200}])))
-        self.assertIn("🔴", text)
-        self.assertIn("High", text)
+        self.assertIn("미확정", text)
+        self.assertIn("마커 회수", text)
+        self.assertNotIn("High", text)
+        self.assertNotIn("🔴", text)
 
     def test_render_upload_undetermined_accepted(self):
         # FR-2/AC-3: 2xx 수용·재조회 미확인 → 실제 자식 계약(vulnerable=False, undetermined=True) →

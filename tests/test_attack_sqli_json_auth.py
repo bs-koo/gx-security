@@ -1,8 +1,7 @@
 """attack_sqli JSON 바디 주입(D4)·인증(D3) 배선 단위 검증.
 
-점진적 위임: 인증 인자(token/session)가 주어지거나 --content-type json일 때만
-dyn_session.request()로 발사한다. 그 외(무인증·form)는 기존 requests.get/post
-경로 그대로(하위호환 — test_attack_sqli_verdict.py의 기존 mock이 계속 적중해야 한다).
+인증/JSON 경로는 dyn_session.request를 사용한다. 무인증 form 경로도 환경을
+상속하지 않는 공통 _client로 발사하며 원응답 인터페이스와 GET/POST 주입은 보존한다.
 """
 import importlib.util
 import os
@@ -77,20 +76,20 @@ class TestSendAuthMode(unittest.TestCase):
         self.assertIn("id=1%27+OR+%271%27%3D%271", url)
 
 
-class TestSendBackwardCompat(unittest.TestCase):
-    """신규 인자 미사용 시 기존 requests.get/post 경로 그대로(회귀 방지)."""
+class TestSendIsolatedRawResponse(unittest.TestCase):
+    """Raw-response compatibility must pass through the isolated session, not global requests."""
 
     @patch("tools.dyn_session.request")
-    @patch("requests.get")
-    def test_default_form_get_uses_requests_get_not_dyn_session(self, mock_get, mock_dyn):
+    @patch("requests.Session.request")
+    def test_default_form_get_uses_isolated_raw_client(self, mock_get, mock_dyn):
         mock_get.return_value = MagicMock(status_code=200, text="", content=b"")
         attack_sqli._send("http://app.local/board?id=1", "id", "1' OR '1'='1", "get", {})
         mock_dyn.assert_not_called()
         mock_get.assert_called_once()
 
     @patch("tools.dyn_session.request")
-    @patch("requests.post")
-    def test_default_form_post_uses_requests_post_not_dyn_session(self, mock_post, mock_dyn):
+    @patch("requests.Session.request")
+    def test_default_form_post_uses_isolated_raw_client(self, mock_post, mock_dyn):
         mock_post.return_value = MagicMock(status_code=200, text="", content=b"")
         attack_sqli._send("http://app.local/login", "username", "admin'--",
                           "post", {"password": "x"})

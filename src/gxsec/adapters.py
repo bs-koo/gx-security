@@ -4,9 +4,10 @@ import math
 import copy
 import hashlib
 import hmac
+from fnmatch import fnmatchcase
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import secrets
 import shutil
@@ -48,6 +49,17 @@ KNOWN_COMMANDS = {
 }
 PINS = {'semgrep': '1.172.0', 'osv': '2.7.0', 'gitleaks': '8.30.1'}
 SAST_SUFFIXES = {'.java', '.jsp', '.jspx', '.xml', '.yml', '.yaml', '.properties', '.js', '.jsx', '.ts', '.tsx', '.vue', '.html', '.htm', '.py', '.kt', '.kts'}
+SAST_LANGUAGES = {
+    '.java': 'java', '.kt': 'kotlin', '.kts': 'kotlin', '.py': 'python', '.xml': 'xml',
+    '.js': 'javascript', '.jsx': 'javascript', '.ts': 'typescript', '.tsx': 'typescript',
+    '.vue': 'vue', '.jsp': 'jsp', '.jspx': 'jsp', '.html': 'html', '.htm': 'html',
+    '.yml': 'yaml', '.yaml': 'yaml', '.properties': 'properties',
+}
+SAST_LANGUAGE_ALIASES = {'kotlin': {'kotlin', 'kt'}, 'javascript': {'javascript', 'js'},
+                         'typescript': {'typescript', 'ts'}, 'python': {'python', 'py'}}
+SAST_SYNTAX_REQUIRED = {'java', 'kotlin', 'python'}
+SAST_LANGUAGE_REQUIRED = SAST_SYNTAX_REQUIRED | {'xml'}
+KOTLIN_BUILD_METADATA = {'build.gradle.kts', 'settings.gradle.kts'}
 LOCK_NAMES = {'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'poetry.lock', 'uv.lock', 'Pipfile.lock', 'requirements.txt', 'go.sum', 'Cargo.lock', 'Gemfile.lock', 'composer.lock', 'gradle.lockfile', 'packages.lock.json'}
 
 def _env(extra=None):
@@ -258,6 +270,71 @@ def _rule_guidance(rule_id, catalog):
     guidance = ' '.join(sentences[1:]) or message
     return title, message, guidance, trusted.get('metadata') or {}, trusted.get('category', 'sast')
 
+def _rule_targets_file(rule, path):
+    """Account for rule path restrictions separately from engine file reads."""
+    restrictions = rule.get('paths') or {}
+    includes = restrictions.get('include') or []
+    excludes = restrictions.get('exclude') or []
+    # Bundled rules use basename globs. Native directory anchoring/globstar
+    # semantics are not approximated with fnmatch's slash-crossing wildcard:
+    # unmodeled path scopes cannot establish required language coverage.
+    if any('/' in pattern or '\\' in pattern or pattern.startswith('!') for pattern in includes + excludes):
+        return False
+
+    def matches(pattern):
+        return any(fnmatchcase(part, pattern) for part in PurePosixPath(path).parts)
+
+    return (not includes or any(matches(pattern) for pattern in includes)) and not any(matches(pattern) for pattern in excludes)
+
+
+def _rule_uses_ast(value):
+    if isinstance(value, dict):
+        if any(key in value for key in ('pattern', 'pattern-inside', 'pattern-not', 'pattern-not-inside')):
+            return True
+        return any(_rule_uses_ast(value.get(key)) for key in
+                   ('patterns', 'pattern-either', 'pattern-sources', 'pattern-sinks', 'pattern-sanitizers', 'pattern-propagators'))
+    if isinstance(value, list):
+        return any(_rule_uses_ast(nested) for nested in value)
+    return False
+
+
+def _sast_rule_coverage(eligible, catalog):
+    """A generic secret match does not establish Kotlin application analysis."""
+    languages, supported, unsupported, build_metadata = {}, [], [], []
+    for path in eligible:
+        language = SAST_LANGUAGES[Path(path).suffix.lower()]
+        aliases = SAST_LANGUAGE_ALIASES.get(language, {language})
+        language_rules = sorted(rule_id for rule_id, rule in catalog.items()
+                                if aliases & set(rule['languages']) and _rule_targets_file(rule, path))
+        ast = [rule_id for rule_id in language_rules if catalog[rule_id]['uses_ast']]
+        regex_rules = [rule_id for rule_id in language_rules if not catalog[rule_id]['uses_ast']]
+        generic = sorted(rule_id for rule_id, rule in catalog.items()
+                         if 'generic' in rule['languages'] and _rule_targets_file(rule, path))
+        row = languages.setdefault(language, {'language': language,
+            'required_mode': 'language-specific' if language in SAST_LANGUAGE_REQUIRED else 'targeted-generic-or-language-specific',
+            'required_analysis': 'syntax-aware' if language in SAST_SYNTAX_REQUIRED else 'language-targeted' if language == 'xml' else 'targeted-patterns',
+            'language_rule_ids': set(), 'ast_rule_ids': set(), 'regex_rule_ids': set(), 'generic_rule_ids': set(), 'source_files': [],
+            'build_metadata_files': [], 'supported_files': [], 'unsupported_files': []})
+        row['ast_rule_ids'].update(ast)
+        row['language_rule_ids'].update(language_rules)
+        row['regex_rule_ids'].update(regex_rules)
+        row['generic_rule_ids'].update(generic)
+        if Path(path).name in KOTLIN_BUILD_METADATA:
+            row['build_metadata_files'].append(path)
+            build_metadata.append(path)
+        else:
+            row['source_files'].append(path)
+        available = bool(ast if language in SAST_SYNTAX_REQUIRED else language_rules or
+                         (language not in SAST_LANGUAGE_REQUIRED and generic))
+        row['supported_files' if available else 'unsupported_files'].append(path)
+        (supported if available else unsupported).append(path)
+    rows = []
+    for _, row in sorted(languages.items()):
+        rows.append({key: sorted(value) if isinstance(value, (set, list)) else value for key, value in row.items()})
+    return {'complete': False, 'supported_files': sorted(supported),
+            'unsupported_files': sorted(unsupported), 'build_metadata_files': sorted(build_metadata), 'languages': rows}
+
+
 def _sast(source, config, inventory, profile):
     check = make_check('sast')
     options = config.get('tools', {}).get('semgrep', {})
@@ -275,25 +352,45 @@ def _sast(source, config, inventory, profile):
     rule_docs = []
     rule_ids = []
     rule_catalog = {}
-    rule_languages = set()
     for path in rules:
         try:
             doc = yaml.safe_load(path.read_text(encoding='utf-8-sig'))
             for rule in doc['rules']:
+                languages = rule.get('languages')
+                path_filters = rule.get('paths', {})
+                if (not isinstance(languages, list) or not languages or not all(isinstance(value, str) for value in languages)
+                        or not isinstance(path_filters, dict)
+                        or any(not isinstance(patterns, list) or not all(isinstance(value, str) for value in patterns)
+                               for patterns in path_filters.values())):
+                    raise ValueError('Unsupported rule language or path scope')
                 rule_ids.append(rule['id'])
-                rule_catalog[rule['id']] = {'message': rule.get('message'), 'metadata': rule.get('metadata') or {}, 'category': SAST_CATEGORIES.get(path.parent.parent.name, 'sast')}
-                rule_languages.update(value for value in rule.get('languages', []) if isinstance(value, str))
+                rule_catalog[rule['id']] = {'message': rule.get('message'), 'metadata': rule.get('metadata') or {},
+                    'category': SAST_CATEGORIES.get(path.parent.parent.name, 'sast'),
+                    'languages': languages, 'paths': path_filters, 'uses_ast': _rule_uses_ast(rule)}
             rule_docs.append(
                 {'path': path.relative_to(ROOT).as_posix(), 'hash': hashlib.sha256(path.read_bytes()).hexdigest()},
             )
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
             check['errors'].append({'type': 'rule_load_failed', 'path': str(path), 'message': str(exc)})
+    required = _sast_rule_coverage(eligible, rule_catalog)
+    check['coverage']['required_coverage'] = required
+    for row in required['languages']:
+        if row['unsupported_files']:
+            check['errors'].append({'type': 'rule_coverage_unavailable', 'language': row['language'],
+                'reason': 'no_language_specific_rules' if row['required_mode'] == 'language-specific' else 'no_targeted_rules',
+                'files': row['unsupported_files']})
     command = _probe('semgrep', options, source, check, trust_source=config.get('_source_boundary', source))
     check['engine'].update(
         {
             'rules_hash': content_hash(rule_docs),
             'rule_files': rule_docs,
             'rule_ids': rule_ids,
+            'rule_support': {
+                'ast_languages': sorted({value for rule in rule_catalog.values() if rule['uses_ast']
+                                         for value in rule['languages'] if value != 'generic'}),
+                'generic_rule_ids': sorted(rule_id for rule_id, rule in rule_catalog.items() if 'generic' in rule['languages']),
+                'path_scope_mode': 'unrestricted-or-basename-globs',
+            },
             'asset_root': str(ROOT),
             'asset_mode': 'bundled' if ROOT.name == '_assets' else 'checkout-or-runtime',
             'limitations': ['Semgrep CE does not establish complete cross-file data flow or full JSP coverage.'],
@@ -335,11 +432,6 @@ def _sast(source, config, inventory, profile):
                         'missing': sorted(set(eligible) - set(scanned)),
                     },
                 )
-                kotlin_missing = [path for path in check['coverage']['missing']
-                                  if Path(path).suffix.lower() in {'.kt', '.kts'}]
-                if kotlin_missing and not {'kotlin', 'kt'} & rule_languages:
-                    check['errors'].append({'type': 'rule_coverage_unavailable', 'language': 'kotlin',
-                                            'reason': 'no_language_specific_rules', 'files': kotlin_missing})
                 cache = {}
                 occurrences = {}
                 local_key = _local_hmac_key(source, config)
@@ -385,7 +477,9 @@ def _sast(source, config, inventory, profile):
         check['errors'].append({'type': 'empty_scope', 'message': 'No supported SAST source files'})
     elif not command and options.get('fallback', True):
         findings = _fallback(source, check, trust_source=config.get('_source_boundary', source))
-    check['status'] = 'complete' if not check['errors'] and check['coverage']['eligible'] > 0 and (check['coverage']['scanned'] >= check['coverage']['eligible']) else 'incomplete'
+    required['complete'] = bool(not check['errors'] and eligible and check['coverage']['scanned'] >= len(eligible)
+                                and not required['unsupported_files'])
+    check['status'] = 'complete' if required['complete'] else 'incomplete'
     check['findings'] = [f['finding_id'] for f in findings]
     return (check, findings)
 

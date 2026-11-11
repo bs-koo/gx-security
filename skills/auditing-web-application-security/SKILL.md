@@ -1,11 +1,10 @@
 ---
 name: auditing-web-application-security
 description: >-
-  SQIsoft 웹 애플리케이션을 정적·동적 한 번에 통합 점검하는 오케스트레이터 스킬.
-  소스 경로(필수)와 실행 중인 스테이징/로컬 URL(선택)을 받아, 9종 취약점(CSRF·XSS·SQLi·
-  파일업로드·Path Traversal·접근통제·인증세션·민감정보·SSRF)을 정적 스캐너로 일괄 도출하고
-  AI가 오탐을 거른 뒤, 대상 URL이 있으면 실제 페이로드를 발사해 악용을 확정하여 통합 리포트를
-  만든다. "전체 점검", "보안 점검", "취약점 다 봐줘" 요청 시 이 스킬을 쓴다.
+  SQIsoft 웹 애플리케이션의 기존 audit.py 전문가 경로를 다루는 보조 스킬.
+  정적 9종의 후보와 명시적으로 승인된 동적 관찰을 모으고 근거·미확정·미검사 범위를
+  보고한다. 일반적인 보안 점검·출시 점검은 gx-security 통합 스킬을 우선 사용한다.
+  URL 제공만으로 동적 실행이나 취약 확정을 부여하지 않으며 새 출시 판정을 대신하지 않는다.
 domain: cybersecurity
 subdomain: web-application-security
 tags: [audit, owasp, sast, dast, orchestrator, sqisoft, full-scan]
@@ -45,7 +44,7 @@ SEF 또는 공통 방어가 관련된 후보는 [공유 SEF 문맥 검토](../ch
 ## Workflow
 
 ### 0단계 — 입력 확인 · 스캔 루트 탐색(모노레포 대응)
-- 소스 경로 확보. 동적까지 할지(대상 URL 유무) 결정.
+- 소스 경로 확보. 동적 실행은 대상 URL과 명시적 승인·준비 조건을 함께 확인해 결정한다.
 - 대상 URL이 운영처럼 보이면 중단하고 사용자에게 스테이징/로컬을 요청.
 - **다중 루트 자동 탐색**: 모노레포일 수 있으므로 스캔 루트를 나눠 찾는다(`node_modules`·`dist`·`.nuxt`·`.output` 제외).
   - **백엔드 루트**(9종 풀스캔): `build.gradle*`/`pom.xml`이 있는 디렉토리. 예 sef-2026 → `private/backend`, `public`.
@@ -142,21 +141,21 @@ python skills/auditing-web-application-security/scripts/audit.py "<소스경로>
 
 ### 2단계 — 정적 후보 AI 검증 (오탐 제거)
 후보가 많은 취약점 클래스부터, 해당 `detecting-<X>` 스킬의 2단계(컨텍스트 검증) 기준으로
-실제 소스를 읽어 **오탐을 제거하고 확정 취약점만 남긴다**. (예: `csrf().disable()`이 STATELESS면 의도된 예외)
+실제 소스를 읽어 **후보·확인한 근거·미확정과 반대 근거를 구분해 기록한다**. `csrf().disable()`과 STATELESS 설정만으로 CSRF 방어의 적용 불가를 확정하지 않고 실제 인증 경로를 확인한다. 공식 반증·위험 수용에는 보호된 검토 절차를 적용한다.
 - 참조: 각 `skills/detecting-<X>/references/stack-patterns.md`
 
-### 3단계 — 동적 결과 종합 (악용 확정)
-대상 URL이 있었다면 `phases.dynamic`의 결과로 **실제 악용 여부**를 확정한다.
+### 3단계 — 동적 관찰과 판정 근거 종합
+승인된 동적 실행이 있었다면 `phases.dynamic`의 관찰을 정상 대조군·실제 소스·검사 범위와 대조해 **확정·미확정·미검사**를 구분한다.
 미확정 후보 중 중요한 것은 해당 `exploiting-<X>` 스킬로 추가 발사(파라미터 지정)한다.
-- **접근통제(IDOR/BFLA)**는 정적 후보(`by_skill`)를 받아 연계하며, **테스트 계정(권한 교차용) 유무**로 판정 수준이 갈린다 — `run_access_dynamic`이 계정이 없으면 정적 후보만 남기는 `static-only`, 계정이 있으면 실제 권한 교차 호출로 확정하는 `dynamic`으로 구분한다.
+- **접근통제(IDOR/BFLA)**는 정적 후보(`by_skill`)를 받아 연계하며, 계정이 없으면 `static-only`, 계정이 있어 실제 권한 교차 호출을 수행하면 `dynamic`으로 표시한다. 실행 표시는 취약점 확정이 아니며 신원·객체 귀속·권한 의도·응답 oracle을 별도로 검토한다.
 - **인증·세션·JWT**도 마찬가지로 `run_auth_dynamic`이 **계정과 보호 엔드포인트(`--probe`) 유무**로 판정 수준이 갈린다 — probe와 로그인 계정이 모두 있으면 JWT 변조·토큰 재사용·쿠키 속성을 실제 발사하는 `dynamic`, **로그인 계정(`--user-a-id/pw`)만 있고 probe가 없으면** 로그인 응답 쿠키 속성만 발사하는 `partial`(JWT·재사용은 정적 추정), 계정이 전무하면 발사하지 않는 `static-only`로 구분한다. **`--token-a`(토큰 직접 주입)는 로그인을 생략해 Set-Cookie가 없으므로 쿠키 검사도 건너뛴다** — probe가 없으면 발사 0건인 `static-only`이고(probe가 있으면 JWT·재사용은 발사되어 `dynamic`), 따라서 `partial`은 실제 로그인(`--user-a-id/pw`)일 때만 성립한다.
-- **SSRF/오픈 리다이렉트**도 `run_ssrf_dynamic`이 **표적과 계정 유무**로 판정 수준이 갈린다 — 표적(`--redirect-target`/`--ssrf-target`)과 계정(`--token-a-env` 또는 `--user-a-id`+`--user-a-pw-env`)이 **모두** 있으면 리다이렉트 파라미터·SSRF 주입점에 실제 발사하는 `dynamic`, 표적이나 계정이 하나라도 없으면 발사하지 않는 `static-only`로 구분한다(표적을 우선 판정한다). 확정은 `Location`이 외부 호스트면 오픈 리다이렉트, OOB canary 콜백 수신이면 블라인드 SSRF까지 잡는다(비파괴 GET).
-- **경로조작/파일업로드**도 `run_pathupload_dynamic`이 **표적과 계정 유무**로 판정 수준이 갈린다 — 표적(`--traversal-target`/`--upload-target`)과 계정(`--token-a-env` 또는 `--user-a-id`+`--user-a-pw-env`)이 **모두** 있으면 실제 발사하는 `dynamic`, 표적이나 계정이 하나라도 없으면 발사하지 않는 `static-only`로 구분한다(표적을 우선 판정한다). 경로조작은 응답 본문에 파일 내용 시그니처(`root:.*:0:0` 등)가 나오면 취약(비파괴 GET), 미도달(non-2xx)은 방어가 아닌 미확정으로 구분한다. **파일업로드는 서버에 파일을 실제로 기록하는 파괴적 검사이므로 `--allow-destructive` 옵트인 게이트가 없으면 발사하지 않으며**(오케스트레이터·익스플로잇터 이중 게이트), 위험 확장자(.jsp) 마커가 2xx 수용됐으나 회수(웹루트 저장)가 확인되지 않으면 **미확정**(서버측 후처리 — 격리·개명·스캔 가능성으로 취약 단정 불가), 회수까지 확인되면 **취약(High)**으로 확정하고 남은 마커 파일 정리 안내를 노출한다.
+- **SSRF/오픈 리다이렉트**는 승인된 표적과 계정이 준비된 경우에 실행한다. `dynamic`은 실행 경로 표시다. 오픈 리다이렉트는 실제 리디렉션 상태와 입력에 연결된 외부 목적지를 확인하고 정책을 검토한다. SSRF는 실행별 nonce 콜백과 발생 주체를 확인하며, 콜백 미수신은 미확정으로 보존한다.
+- **경로조작/파일업로드**도 승인된 표적과 계정이 있을 때만 실행한다. 경로조작은 정상 대조군과 구분되는 2xx 응답의 해당 표적 파일 시그니처를 확인한다. 미검출·오류·차단은 안전 확정이 아니다. **업로드는 `--allow-destructive` 없이는 실행하지 않는다.** 무해한 `.jsp` 마커의 수용·회수는 파일 제공 관찰이며 코드 실행이나 High 확정 증거가 아니다. 제공 정책·실행 설정을 별도로 검토하고, 응답 유실을 포함해 남을 수 있는 마커의 정리 상태를 보존한다. 삭제 경로를 추측하거나 자동 삭제하지 않는다.
 - XSS는 저장·DOM형이면 Playwright MCP로 브라우저 실제 실행까지 확인한다.
 
-#### static-only 보강 재실행 (계정 확보 후 마저 확정)
+#### static-only 보강 재실행 (승인된 계정 확보 후 추가 조사)
 
-1차 audit 리포트의 **`static_only_summary`** 필드에 계정/주입점 미제공으로 **정적 추정으로 남은 동적 클래스**가 담긴다(예: `["접근통제(IDOR/BFLA)", "인증세션(JWT·재사용)"]`). 계정을 확보하면 **그 항목만** 동적으로 마저 확정한다:
+1차 audit 리포트의 **`static_only_summary`** 필드에 계정/주입점 미제공으로 **정적 추정으로 남은 동적 클래스**가 담긴다(예: `["접근통제(IDOR/BFLA)", "인증세션(JWT·재사용)"]`). 승인된 계정을 확보하면 **그 항목만** 추가 조사하며, 근거가 부족하면 미확정으로 남긴다:
 
 1. 1차 리포트의 `static_only_summary`를 사용자에게 그대로 보여준다("이 항목들이 정적 추정으로 남았습니다").
 2. 승인된 동적 확인에 계정이 실제 필요한 경우에만 위 env 입력을 사용한다. 기존 정적 후보와 당시 source/revision을 보존하고 필요한 동적 검증을 실행한다. 정적 검사를 했다는 사실을 취약 확정으로 해석하지 않는다.
@@ -190,7 +189,7 @@ python skills/auditing-web-application-security/scripts/audit.py "<소스경로>
 | 저장형·DOM XSS 브라우저 실행 | `attack_xss.py`는 HTTP 응답 반사만 검사 — 저장 후 조회 시 실행·클라이언트 DOM 조작은 서버 응답에 반사되지 않아 미확인 | `exploiting-xss` 2단계-b의 Playwright MCP로 브라우저 실제 실행 확인 |
 | 접근통제/인증 교차검증 | 권한 교차용 테스트 계정(A/B)이 없으면 실제 교차 호출 불가 → `static-only`(정적 후보만) | `--user-a-id/pw`·`--user-b-id/pw` 또는 `--token-a-env`/`--token-b-env`로 계정 제공해 `dynamic` 판정 |
 | 파괴적 파일업로드 | `--allow-destructive` 게이트가 없으면 미발사, 있어도 `--retrieve-base`가 없으면 회수(웹루트 저장) 미확인 → **미확정** | 격리 스테이징에서 `--allow-destructive` + `--retrieve-base` 지정(전용 테스트 계정) |
-| 비-sef 로그인 흐름 | 프리셋 로그인 시퀀스는 sef-2026 기준 — 비표준 로그인 앱은 자동 로그인이 실패해 인증·접근통제 동적이 `login-failed`/`static-only`로 남음 | `--login-path`·`--login-body`·`--token-path` 등으로 앱별 로그인 오버라이드 지정 |
+| 비-sef 로그인 흐름 | 프리셋 로그인 시퀀스는 sef-2026 기준 — 비표준 로그인 앱은 자동 로그인이 실패해 인증·접근통제 동적이 `login-failed`/`static-only`로 남음 | `--login-path`·`--body-template`·`--token-path` 등으로 앱별 로그인 오버라이드 지정. 템플릿에는 비밀 대신 `{id}`/`{pw}`만 사용 |
 | grep-폴백 낮은 탐지율 | `semgrep` 미설치 시 정규식 폴백 — recall(탐지율)이 낮아 미탐 위험이 큼 | `pip install semgrep` 설치 후 재실행(**후보 0건 ≠ 안전**) |
 
 ## Output Format
@@ -227,7 +226,7 @@ python skills/auditing-web-application-security/scripts/audit.py "<소스경로>
 ## Verification
 - [ ] 소스의 스택이 정확히 감지됐는가(혼합 시 디렉토리별 처리)
 - [ ] 후보가 많은 클래스를 빠짐없이 AI 검증했는가(오탐 제거 근거 명시)
-- [ ] 대상 URL이 있었다면 동적 결과(악용 확정/증거)를 반영했는가
+- [ ] 승인된 동적 실행의 확정·미확정·미검사 및 근거를 반영했는가
 - [ ] 동적은 스테이징/로컬에만 발사했는가(운영 차단 확인)
 - [ ] 통합 리포트가 `reports/`에 저장됐는가
 

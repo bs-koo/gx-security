@@ -16,7 +16,7 @@ from .source import reject_reparse_path
 from .config import FRAMEWORK_CONTRACTS, framework_requirement
 
 
-VERSION = '1.1.0'
+VERSION = '1.1.1'
 MAX_FILES = 20000
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_TOTAL_BYTES = 32 * 1024 * 1024
@@ -545,6 +545,22 @@ def _candidate(rule, doc, offset, symbol, facts, evidence, prerequisites, counte
     return finding
 
 
+def _method_guard_applicability(method):
+    """Source-compatible proxy shape is necessary, never runtime proof."""
+    # Declaration annotations may split the recognizer's signature prefix;
+    # modifiers before them remain part of the same member declaration.
+    signature = _lex(method['annotations'] + method['signature'].split('(', 1)[0])[1]
+    owner = method['class']
+    reasons = [name + '-method' for name in ('private', 'final', 'static')
+               if re.search(r'\b' + name + r'\b', signature)]
+    if owner is None:
+        reasons.append('unknown-declaring-class')
+    elif re.search(r'\bfinal\b', _lex(owner['header'])[1]):
+        reasons.append('final-declaring-class')
+    return {'state': 'unknown' if reasons else 'source-compatible', 'reasons': reasons,
+            'limitations': ['Proxy type, invocation path and effective runtime interception require independent review.']}
+
+
 def _controller_contracts(doc, active, activation, url_rules, fallbacks, dynamic):
     contracts, findings = [], []
     text = doc['clean']
@@ -584,15 +600,23 @@ def _controller_contracts(doc, active, activation, url_rules, fallbacks, dynamic
         predicate = method_guard if guard_present else class_guard
         predicate_present = guard_present or class_guard_present
         guard_kind = _guard_kind(predicate, predicate_present)
-        explicit_guard = active and _role_guard(predicate)
+        applicability = _method_guard_applicability(method)
+        interceptable = applicability['state'] == 'source-compatible'
+        explicit_guard = active and interceptable and _role_guard(predicate)
         matching = next((r for r in url_rules if _matches(r['pattern'], route)), None)
         url_guard = matching and not dynamic and not matching['conditional'] and matching['effect'] in {'hasRole', 'hasAuthority'} and re.fullmatch(r'\s*"(?:ROLE_)?ADM"\s*', matching['argument'])
+        unsupported_method_guard = bool(active and predicate_present and not interceptable)
+        independent_url_guard = bool(matching and matching['registered'] and not dynamic and not matching['conditional']
+                                     and matching['effect'] in {'authenticated', 'hasRole', 'hasAuthority', 'denyAll'})
         admin = route == '/adm' or route.startswith('/adm/') or 'AdminController' in owner['name']
         if admin:
             evidence = [entry] + activation + ([matching['evidence']] if matching else [])
             state = 'guard-observed' if explicit_guard or url_guard else 'unknown' if predicate_present or dynamic else 'guard-not-observed'
             contracts.append({'id': 'admin-boundary', 'state': state, 'symbol': symbol,
                               'route': route, 'guard_kind': guard_kind, 'predicate_present': predicate_present, 'evidence': evidence,
+                              'method_guard_applicability': applicability,
+                              'guard_basis': (['method-role-guard'] if explicit_guard else []) + (['url-role-guard'] if url_guard else []),
+                              'coverage_error': bool(unsupported_method_guard and not url_guard),
                               'limitations': ['Service-side authorization and proxy applicability require review.']})
             # Emit for routed mutations only; a route/class name is not itself a vulnerability.
             mutation = bool(verbs & {'POST', 'PUT', 'PATCH', 'DELETE'})
@@ -608,14 +632,16 @@ def _controller_contracts(doc, active, activation, url_rules, fallbacks, dynamic
                      'Unmodeled service guards, custom annotations and dynamic rules may enforce authorization.',
                      'Observed guard kind: ' + guard_kind],
                     'Enforce the intended administrator permission on the same mutation and independently review the full service path.'))
-        recognized_predicate = active and (_role_guard(predicate) or predicate == 'isAuthenticated()'
+        recognized_predicate = active and interceptable and (_role_guard(predicate) or predicate == 'isAuthenticated()'
                                             or bool(re.fullmatch(r"hasMenuAuthority\(\s*#\w+\s*,\s*'[RCUD]'\s*\)", predicate or '')))
         if dynamic:
             contracts.append({'id': 'url-scope-entrypoint', 'state': 'unknown', 'symbol': symbol,
                               'route': route, 'evidence': [entry]})
         if not matching and fallbacks and not recognized_predicate and not dynamic:
-            contracts.append({'id': 'route-boundary', 'state': 'unknown' if dynamic else 'unmatched',
-                              'symbol': symbol, 'route': route, 'evidence': [entry] + fallbacks + dynamic})
+            contracts.append({'id': 'route-boundary', 'state': 'unknown' if unsupported_method_guard else 'unmatched',
+                              'symbol': symbol, 'route': route, 'evidence': [entry] + fallbacks + dynamic,
+                              'method_guard_applicability': applicability,
+                              'coverage_error': unsupported_method_guard})
             findings.append(_candidate('SEF-ROUTE-01', doc, method['start'], symbol,
                 ['Mapped controller route is outside modeled literal URL matchers: ' + route,
                  'A permitAll fallback is present; no supported active entrypoint authorization predicate was recognized.'],
@@ -628,9 +654,12 @@ def _controller_contracts(doc, active, activation, url_rules, fallbacks, dynamic
         else:
             # A required route boundary must distinguish an examined literal
             # entrypoint from a missing/unsupported URL-security observation.
-            unresolved = bool(dynamic or (not matching and not recognized_predicate))
+            unsupported_route_guard = unsupported_method_guard and not independent_url_guard
+            unresolved = bool(dynamic or unsupported_route_guard or (not matching and not recognized_predicate))
             contracts.append({'id': 'route-boundary', 'state': 'unknown' if unresolved else 'modeled',
                               'symbol': symbol, 'route': route, 'coverage_unresolved': unresolved,
+                              'method_guard_applicability': applicability,
+                              'coverage_error': unsupported_route_guard,
                               'evidence': [entry] + ([matching['evidence']] if matching else []) + dynamic,
                               'limitations': ['Modeled entrypoint coverage is not proof of effective runtime authorization.']})
         menu = re.search(r'hasMenuAuthority\s*\(\s*#(\w+)\s*,', predicate or '')

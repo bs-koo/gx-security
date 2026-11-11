@@ -6,12 +6,14 @@ third-party subprocesses. Environment proxy settings are deliberately ignored.
 from __future__ import annotations
 
 import http.client
+import io
 import ipaddress
 import json
 import math
 import re
 import socket
 import ssl
+import sys
 import threading
 import time
 from urllib.parse import unquote, urljoin, urlsplit
@@ -19,6 +21,16 @@ from urllib.parse import unquote, urljoin, urlsplit
 
 class TransportError(RuntimeError):
     """A scope, budget, or HTTP execution precondition failed."""
+
+
+def _prohibited_address(address):
+    address = ipaddress.ip_address(address)
+    address = getattr(address, 'ipv4_mapped', None) or address
+    return (getattr(address, 'scope_id', None) is not None
+            or address.is_unspecified or address.is_multicast or address.is_link_local
+            or (address.version == 4 and (address in ipaddress.ip_network('0.0.0.0/8')
+                                         or address == ipaddress.ip_address('255.255.255.255')))
+            or address == ipaddress.ip_address('fd00:ec2::254'))
 
 
 def parse_url(url):
@@ -47,11 +59,63 @@ def parse_url(url):
     return p, (p.scheme, host, port), path
 
 
+def _deadline_timeout(timeout, remaining):
+    seconds = remaining()
+    if seconds <= 0:
+        raise TransportError("Duration budget exhausted")
+    return min(timeout, seconds)
+
+
+class _DeadlineReader(io.RawIOBase):
+    """Apply the absolute budget to every receive hidden by HTTP buffering."""
+    def __init__(self, sock, timeout, remaining):
+        self._socket = sock
+        self._timeout = timeout
+        self._remaining = remaining
+        self._raw = sock.makefile("rb", buffering=0)
+
+    def readable(self):
+        return True
+
+    def fileno(self):
+        return self._raw.fileno()
+
+    def readinto(self, buffer):
+        self._socket.settimeout(_deadline_timeout(self._timeout, self._remaining))
+        return self._raw.readinto(buffer)
+
+    def close(self):
+        try:
+            self._raw.close()
+        finally:
+            super().close()
+
+
+class _DeadlineSocket:
+    def __init__(self, sock, timeout, remaining):
+        self._socket = sock
+        self._timeout = timeout
+        self._remaining = remaining
+
+    def __getattr__(self, name):
+        return getattr(self._socket, name)
+
+    def sendall(self, data):
+        self._socket.settimeout(_deadline_timeout(self._timeout, self._remaining))
+        return self._socket.sendall(data)
+
+    def makefile(self, mode):
+        if mode != "rb":
+            raise ValueError("HTTP response requires a binary reader")
+        return io.BufferedReader(_DeadlineReader(self._socket, self._timeout, self._remaining))
+
+
 class _PinnedHTTP(http.client.HTTPConnection):
-    def __init__(self, host, port, address, *, timeout, use_tls=False):
+    def __init__(self, host, port, address, *, timeout, remaining, use_tls=False):
         super().__init__(host, port=port, timeout=timeout)
         self.address = address
         self.use_tls = use_tls
+        self.remaining = remaining
 
     def connect(self):
         # address is already numeric and authorized. No hostname is re-resolved
@@ -59,11 +123,12 @@ class _PinnedHTTP(http.client.HTTPConnection):
         family = socket.AF_INET6 if ipaddress.ip_address(self.address).version == 6 else socket.AF_INET
         sock = socket.socket(family, socket.SOCK_STREAM)
         try:
-            sock.settimeout(self.timeout)
+            sock.settimeout(_deadline_timeout(self.timeout, self.remaining))
             sock.connect((self.address, self.port))
             if self.use_tls:
+                sock.settimeout(_deadline_timeout(self.timeout, self.remaining))
                 sock = ssl.create_default_context().wrap_socket(sock, server_hostname=self.host)
-            self.sock = sock
+            self.sock = _DeadlineSocket(sock, self.timeout, self.remaining)
         except BaseException:
             sock.close()
             raise
@@ -88,6 +153,8 @@ class BoundedTransport:
             raise TransportError("Allowed IPs must be literal addresses") from None
         if not self.allowed_ips:
             raise TransportError("Explicit destination IPs are required")
+        if any(_prohibited_address(address) for address in self.allowed_ips):
+            raise TransportError("Prohibited destination IP cannot be approved")
         b = budgets or {}
         self.max_requests = self._limit(b.get("max_requests", 50), "max_requests", 500)
         self.max_bytes = self._limit(b.get("max_response_bytes", 1024 * 1024), "max_response_bytes", 8 * 1024 * 1024)
@@ -107,12 +174,20 @@ class BoundedTransport:
         self.observed_paths = set()
         self.lease_expires_at = lease_expires_at
         self.started = time.monotonic()
+        if lease_expires_at is not None:
+            if (isinstance(lease_expires_at, bool) or not isinstance(lease_expires_at, (int, float))
+                    or not math.isfinite(lease_expires_at)):
+                raise TransportError("Invalid lease expiry")
+            self._lease_deadline = self.started + max(0, lease_expires_at - time.time())
+        else:
+            self._lease_deadline = None
         self._next_request = self.started
 
     def remaining_seconds(self):
         remaining = self.max_seconds - (time.monotonic() - self.started)
         if self.lease_expires_at is not None:
-            remaining = min(remaining, self.lease_expires_at - time.time())
+            remaining = min(remaining, self._lease_deadline - time.monotonic(),
+                            self.lease_expires_at - time.time())
         return remaining
 
     def allowance(self):
@@ -187,9 +262,10 @@ class BoundedTransport:
             if remaining <= 0:
                 raise TransportError("Duration budget exhausted")
             connection = _PinnedHTTP(origin[1], origin[2], address,
-                                     timeout=min(timeout, remaining), use_tls=origin[0] == "https")
+                                     timeout=timeout, remaining=self.remaining_seconds, use_tls=origin[0] == "https")
             self.requests_sent += 1
             self._next_request = time.monotonic() + 1 / self.requests_per_second
+            response = None
             try:
                 request_path = (parsed.path or "/") + ("?" + parsed.query if parsed.query else "")
                 connection.request(method, request_path, body=body, headers=headers)
@@ -221,7 +297,20 @@ class BoundedTransport:
             except (OSError, http.client.HTTPException, ValueError):
                 raise TransportError("HTTP request failed") from None
             finally:
-                connection.close()
+                pending_error = sys.exc_info()[0] is not None
+                cleanup_failed = False
+                try:
+                    if response is not None:
+                        response.close()
+                except Exception:
+                    cleanup_failed = True
+                finally:
+                    try:
+                        connection.close()
+                    except Exception:
+                        cleanup_failed = True
+                if cleanup_failed and not pending_error:
+                    raise TransportError("HTTP request cleanup failed") from None
             location = next((value for key, value in result["headers"].items() if key.lower() == "location"), None)
             if not follow_redirects or result["status"] not in {301, 302, 303, 307, 308} or not location:
                 return result

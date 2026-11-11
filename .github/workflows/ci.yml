@@ -3,6 +3,10 @@ on:
   push:
     branches: [main]
   pull_request:
+
+permissions:
+  contents: read
+
 jobs:
   test:
     env:
@@ -16,8 +20,10 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Install deps
@@ -44,8 +50,10 @@ jobs:
             experimental: true
     continue-on-error: ${{ matrix.experimental }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Install deps (${{ matrix.semgrep_spec }})
@@ -65,7 +73,7 @@ jobs:
           SEMGREP_ENABLE_VERSION_CHECK: "0"
       - name: Preserve measured coverage and known misses
         if: ${{ always() && !matrix.experimental }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: pinned-rule-quality
           path: ${{ runner.temp }}/rule-quality.json
@@ -75,9 +83,25 @@ jobs:
   bundle:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Build hash-locked Linux runtime
         run: docker build --platform linux/amd64 -t gx-security:test .
+      - name: Verify wheel installation and current-source runtime parity offline
+        run: >-
+          docker run --rm --network none --read-only --cap-drop ALL
+          --security-opt no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,size=1g
+          --entrypoint python gx-security:test /opt/gx-security/scripts/verify-wheel.py
+          > "${{ runner.temp }}/wheel-verification.json"
+      - name: Preserve wheel digest and installation evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wheel-verification
+          path: ${{ runner.temp }}/wheel-verification.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Verify installed engine versions without network
         run: >-
           docker run --rm --network none --read-only --cap-drop ALL
