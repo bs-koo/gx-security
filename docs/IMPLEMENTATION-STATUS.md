@@ -1,16 +1,21 @@
 # GX Security 0.10.3 프리뷰 구현·검증 현황
 
-> **현재 작업 저장 상태: 3차는 부분 구현·검증 미완료입니다.** 사용자의 요청으로 추가 개선을 중지하고 1·2차 완료 변경과 현재 3차 작업을 초안 PR로 보존합니다. 아래 1·2차 전체 회귀 수치는 그 시점의 검증이며 현재 3차 변경의 전체 통과 수치가 아닙니다. 3차 기존 영향 검사에 **22 failed / 313 passed / 36 subtests passed**가 남아 있어 병합·운영 적용 준비 완료로 사용하면 안 됩니다.
+> **현재 저장 상태: Windows 재검증 결과로 PR을 갱신하며 Linux 추가 검증은 보류합니다.** 사용자가 Windows 결과를 기준으로 커밋·push·[PR #39](https://github.com/bs-koo/gx-security/pull/39) 반영까지 진행하도록 요청했습니다. Linux 전체 통과·신규 wheel 재검증·사업부 파일럿·배포 완료를 주장하지 않습니다. PR은 초안으로 보존합니다.
 
-## 3차 전문 전송 작업의 재개 지점
+## 3차 전문 전송 보수
 
 - 구현: 새 `tools/specialist_transport.py`의 숫자 IP 연결·원 Host/SNI·CONNECT·wire/decoded 예산과 `dyn_session`/6개 CLI의 진단 context·세션 원점 바인딩을 반영했습니다. 일반 도메인은 `SECURITY_PLUGIN_TARGET_IPS`의 원점별 승인 IP 목록이 필요하며, HTTPS proxy와 다른 원점의 업로드 회수는 현재 명시적으로 거부합니다.
-- 부분 검증: core **72 passed**, 신규 통합 **13 passed**, 독립 실제 TLS/CONNECT **5 passed**, 보호 전송기·scope 관련 **56 passed / 32 subtests passed**. 서로 겹치는 범위이므로 합산하지 않습니다. 전체 회귀·최종 wheel·전체 독립 검토는 미실행입니다.
-- 미해결: 기존 프록시 fixture의 CONNECT 지원, HTTPS proxy 이전 양성 기대, 가짜 hostname의 승인 IP 구성, `verify` 인자 기대를 새 계약에 맞춘 뒤 **22개 실패를 다시 검증**해야 합니다. 실패를 임의 skip하거나 통과로 간주하지 않습니다.
-- 검토: 새 core의 초기 읽기 검토와 TLS 실행 증거는 있으나 전체 독립 검토는 중단됐습니다. `_tls_context` 내부 변경 가능성은 검토자가 남긴 **미확인 가설**이며 아직 확정 결함이 아닙니다.
-- 재개 자료: [3차 실행 계획](superpowers/plans/2026-11-11-specialist-pinned-transport.md). 로컬 증적은 `D:\Temp\gx-security-phase3-20261111-1403a9a708f1401c8e4ccebcdc34eef5`에 보관합니다. 특히 `integration/affected-initial.txt`의 실패 목록부터 확인합니다.
+- 중간 저장: core **72 passed**, 신규 통합 **13 passed**, 실제 TLS/CONNECT **5 passed**, 보호 전송기·scope **56 passed / 32 subtests passed**. 당시 영향 묶음 **22 failed / 313 passed / 36 subtests passed**와 원격 CI의 추가 인증 fixture 2실패를 보존했습니다.
+- 재개 보수: 실제 CONNECT를 중계하는 시험 프록시, 승인 가능한 로컬 mock 대상, 명시적 TLS 검증 기대를 적용했습니다. 미지원 HTTPS proxy는 감사 TCP probe 전에도 거부하며, 변경된 TLS 검증 비활성 상태는 socket 생성 전에 차단합니다. 정리 오류가 원래 시간/용량 한도 오류를 덮어쓰지 않고 socket을 닫는지도 RED→GREEN으로 확인했습니다.
+- Windows 검증: 전체 **1,860 passed / 25 skipped / 337 subtests passed**, **923.97초**, `GXSEC_NO_SEMGREP=1`. 이후 시험 상태 폴더를 입력 밖으로 분리한 관련 파일도 **25 passed**입니다. Windows 전체 실행 이후 바뀐 구현·설정·스킬 파일은 없고 해당 시험 파일만 변경됐음을 해시로 대조했습니다. 앞선 보수 **206 passed**, core/통합/TLS/감사 **104 passed**와 겹치므로 합산하지 않습니다.
+- 최종 독립 검토: 68개 변경 파일에서 주요 문제 1건(전문 CLI·로그인의 고정 오류 코드 소실)을 확인했습니다. 30개 RED 사례를 보수 후 **30 passed**와 위 전체 Windows 검사로 확인했습니다. 수정 전 Linux 전체 검사는 46%에서 의도적으로 중단(exit 137)했으며 통과 실적으로 세지 않습니다. 수정은 회귀 시험으로 검증하고 두 번째 검토를 반복하지 않습니다.
+- 경미한 후속 2건: 직접 `BoundedAdapter.send(stream=True)` 호출은 거부 대신 완전한 제한 응답을 반환합니다(6개 CLI는 호출 전에 거부하므로 한도 우회는 아님). Burp 스킬의 선택 문단에는 자동 실행을 지원하지 않는 sqlmap의 우위를 말하는 과거 문구가 남아 있습니다. 두 항목은 별도 후속으로 보존합니다.
+- Linux 실행 환경·시험 보수: Windows 공유 폴더 대기(`p9_client_rpc`)로 중단한 실행과, 해시로 대조한 319개 파일의 Linux 내부 복사본 검사를 구분합니다. 내부 복사본의 전체 시도는 **1 failed / 1,421 passed / 99 skipped** 상태에서 중단했습니다. 실제 Gitleaks가 시험 입력 안에 상태 폴더를 생성해 검사 범위가 달라진 것이 실패 원인이었으며, 상태를 입력 밖으로 분리했습니다. Windows 전체 검사 이후 바뀐 것은 이 시험 설정 한 파일이며 제품 코드는 같습니다. 해당 실패를 임의 제외하지 않고 Linux 영향 묶음에 포함해 재검증합니다. 중단한 전체 검사는 성공으로 집계하지 않습니다.
+- Linux 보류 시점: 상태 폴더 보수 후 영향 묶음은 **1 failed / 498 passed**, **591.23초**로 종료됐습니다. 수정한 framework 관련 25개는 이 묶음에서도 모두 통과했습니다. 남은 실패는 `test_attested_zap_runner_fixed_command_and_native_alert_import`: checkout의 `gxsec.py`가 import 진입점이 되면 패키지 경로는 있으나 `ModuleSpec.submodule_search_locations`가 비어 있어 검증용 bundle 구성 코드가 실패합니다. 단독 실행은 **1 passed**, 같은 파일 수집 순서에서는 **1 failed / 718 deselected**로 재현했습니다. 보호 runtime 파일 목록에 미치는 영향과 수정은 미완료입니다. 사용자의 요청으로 추가 Linux 실행을 중단하며 실패를 제외하거나 전체 성공으로 간주하지 않습니다.
+- 최종 기계적 점검: Windows에서 스킬 YAML·이름 **22/22**, 중복 제거한 로컬 참조 **89건**, 임시 소비 폴더의 절대 경로 CLI 도움말 **16/16**을 확인했습니다. 실제 호스트 AI 행동 시험은 별도이며, 사업부 프로젝트 파일럿은 사용자가 이후 수행할 예정입니다. 이번 저장 시점에 새 wheel을 다시 빌드하지 않았습니다. 기존 1·2차 wheel 결과를 새 전문 전송 모듈의 설치 검증으로 소급하지 않습니다.
+- 자료: [3차 실행 계획](superpowers/plans/2026-11-11-specialist-pinned-transport.md). 초기 로그는 `D:\Temp\gx-security-phase3-20261111-1403a9a708f1401c8e4ccebcdc34eef5`, 재개 RED/GREEN과 최종 증적은 `D:\Temp\gx-security-phase3-resume-20261111-6463c40c11854e928d4102e6a03dcf9a`에 보관합니다.
 
-개발자가 실행하고 QA·PM이 결과를 공유하는 사전 보안 점검 도구입니다. 2026-11-11 로컬 0.10.3 및 미배포 1·2차 보수 작업본 기준이며 조직의 출시 승인이나 보안 적합성 인증을 대신하지 않습니다. 원격 배포·GitHub Pages 반영은 별도 상태입니다.
+개발자가 실행하고 QA·PM이 결과를 공유하는 사전 보안 점검 도구입니다. 2026-11-11 로컬 0.10.3 및 미배포 보수 작업본 기준이며 조직의 출시 승인이나 보안 적합성 인증을 대신하지 않습니다. 원격 배포·GitHub Pages 반영은 별도 상태입니다.
 
 0.10.3은 실패 진단·부분 결과 보존, 실행 예산·진행 표시, 스트리밍 사본 검증, Windows Git 복제, 명시한 검사 범위와 재검증 설정 보존을 보강합니다. 최종 검증 상태는 PR의 해당 커밋 CI를 확인합니다. 아래 0.10.2 수치는 과거 검증 기록이며 새 버전의 실프로젝트 검사 성공으로 소급하지 않습니다.
 
@@ -38,7 +43,7 @@
 
 실행 증적은 `D:\Temp\gx-security-phase2-20261111-352c8905d25c49e2bad1d00a1c4c6cba`에 보관합니다. 코드·설정·스킬 계약 229개 파일의 해시가 최종 검사 중 유지됐음을 대조했습니다. 초기 전체 회귀의 실패 로그와 수정 전 순서 재현도 보존하고, 중간에 중지한 검사를 통과 실적으로 세지 않습니다. 서로 겹치는 환경·회차·집계는 합산하지 않습니다. CI 설정만 보수했으며 원격 CI·커밋·push·배포·사용자 스킬 등록은 실행하지 않았습니다.
 
-전문 경로의 DNS/IP 고정·rebinding 방어와 전체 응답 시간/용량 예산은 아직 통합하지 않았습니다. 보호된 `gxsec.transport`와 같은 보장으로 표현하지 않습니다. 전체 88규칙의 정확도 확대, 실제 호스트 행동 8개 시나리오 및 사업부 프로젝트 파일럿도 남아 있습니다. [2차 실행 계획](superpowers/plans/2026-11-11-second-pass-reliability.md)에 완료 범위와 제약을 구분합니다.
+이 2차 종료 시점에는 전문 경로의 DNS/IP 고정·rebinding 방어와 전체 응답 시간/용량 예산이 미통합 상태였습니다. 후속 3차 상태는 문서 상단을 따릅니다. 보호된 `gxsec.transport`의 별도 준비·인증·경로 승인 보장과 같게 표현하지 않습니다. 전체 88규칙의 정확도 확대, 실제 호스트 행동 8개 시나리오 및 사업부 프로젝트 파일럿도 남아 있습니다. [2차 실행 계획](superpowers/plans/2026-11-11-second-pass-reliability.md)에 당시 완료 범위와 제약을 구분합니다.
 
 ## 2026-11-11 1차 신뢰성 보수 작업본
 

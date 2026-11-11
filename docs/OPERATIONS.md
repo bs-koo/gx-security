@@ -14,11 +14,25 @@
 
 전문 검사 HTTP 요청은 공통 클라이언트에서 `trust_env=False`를 사용합니다. `HTTP_PROXY`·`HTTPS_PROXY`·`ALL_PROXY`, `.netrc`, `REQUESTS_CA_BUNDLE`·`CURL_CA_BUNDLE`을 암묵적으로 가져오지 않습니다. 전달된 세션의 미검증 proxy 설정도 제거하지만 의도적으로 제공한 인증과 쿠키는 유지합니다. 로그인 실패 시 내부에서 만든 세션을 닫고, 성공 후 재사용할 쿠키 세션과 호출자가 제공한 세션의 수명은 보존합니다.
 
-명시적인 Burp 경유는 `http://127.0.0.1:8080`처럼 실제 loopback IP를 사용하는 HTTP(S) proxy만 지원합니다. hostname·원격 IP·인증정보·경로·query·fragment가 있는 proxy URL은 전송 전에 거절합니다. 감사 실행기의 TCP 사전 확인도 같은 검증을 먼저 적용하며, proxy가 내려가 직접 실행으로 돌아갈 때 이전 proxy 설정을 남기지 않습니다. TLS 검증은 유지하고 명시적인 로컬 Burp CA는 `SECURITY_PLUGIN_BURP_CA`로 제공합니다.
+명시적인 Burp 경유는 `http://127.0.0.1:8080`처럼 실제 loopback IP를 사용하는 HTTP CONNECT proxy만 지원합니다. HTTP·HTTPS 대상 모두 승인된 숫자 IP로 CONNECT하며 원래 Host와 HTTPS SNI·인증서 검증을 유지합니다. HTTPS proxy 자체와 hostname·원격 IP·인증정보·경로·query·fragment가 있는 proxy URL은 전송 전에 거절합니다. 감사 실행기의 TCP 사전 확인도 같은 검증을 먼저 적용하며, proxy가 내려가 직접 실행으로 돌아갈 때 이전 proxy 설정을 남기지 않습니다. 명시적인 로컬 Burp CA는 `SECURITY_PLUGIN_BURP_CA`로 제공합니다.
 
-이 환경 격리는 전문 도구의 DNS/IP 고정이나 전체 응답 시간·용량 예산을 구현한 것이 아닙니다. 호스트 문자열 사전 확인인 `scope_guard`와 보호된 `gxsec.transport`의 보장을 같게 표현하지 않습니다. 출시 목적의 동적 검증은 승인된 통합 전송 경로를 사용하며, 전문 경로의 추가 전송 경계 통합은 후속 과제로 남깁니다. `scope_guard.py`의 CLI는 알 수 없는 인자·축약 인자를 거부하며 검사기 옵션을 대신 받지 않습니다.
+`scope_guard.py`의 CLI는 알 수 없는 인자·축약 인자를 거부하며 검사기 옵션을 대신 받지 않습니다. 2차의 환경 격리에 이어 전문 경로의 IP·예산 경계를 아래 3차 계약으로 통합했습니다. 출시 목적의 동적 검증은 별도의 준비·인증·경로 승인도 강제하는 공통 `gxsec` 경로를 사용합니다.
 
 CI는 공식 Actions의 검증한 commit SHA를 사용하고 기본 저장소 권한을 읽기 전용으로 제한합니다. 문서 발행에 필요한 쓰기 권한은 해당 작업에만 부여하고 checkout에 자격증명을 남기지 않습니다. 설치 패키지 검증은 준비된 빌드 환경의 `python scripts/verify-wheel.py`로 수행합니다. 사전 설치한 빌드 도구만 사용해 임시 경로에서 wheel을 만들고, core·정적 검사·비Python 리소스까지 원본 바이트와 대조한 뒤 소스 폴더 밖에 설치해 import합니다. 누락·추가 패키지·중복 ZIP·오래된 파일을 거부하고 wheel SHA256을 기록합니다. CI에서는 이 검사를 네트워크 차단·읽기 전용 컨테이너로 실행하고 결과를 보존합니다. CI 구성 변경과 실제 원격 CI 성공 여부는 별도입니다.
+
+## 3차 전문 검사 접속·응답 한도
+
+6개 `attack_*.py` 진입점은 로그인부터 대조군·공격·회수까지 하나의 진단 context를 사용합니다. 도메인은 DNS를 조회하지 않고 `SECURITY_PLUGIN_TARGET_IPS`에 지정한 승인 IP에 직접 연결합니다. 키는 스킴·호스트·명시적 포트를 포함한 정확한 원점이며 경로는 포함하지 않습니다. 예를 들어 합성 로컬 시험은 다음처럼 설정합니다.
+
+```powershell
+$env:SECURITY_PLUGIN_TARGET_IPS = '{"http://fixture.test:8080":["127.0.0.1"]}'
+```
+
+이 매핑은 실행 승인을 부여하지 않습니다. 원래 호스트와 숫자 IP 모두 기존 범위 승인이 필요하며 metadata·link-local·multicast 등 절대 금지 주소는 허용 목록으로 해제할 수 없습니다. IP URL은 그 IP에, `localhost`는 loopback에만 연결합니다. 일반 도메인은 승인 IP 매핑이 없으면 연결 전에 중단합니다. 여러 IP를 나열해도 현재는 첫 번째 IP만 사용하며 자동 재시도하지 않습니다. Host·HTTPS SNI·인증서 검증·쿠키 원점은 원래 URL을 유지합니다.
+
+기본 한도는 전문 CLI 호출별 **100요청·120초**, 응답별 **wire 1MiB·디코딩 후 1MiB**, 호출 전체 **wire 8MiB·디코딩 후 8MiB**입니다. 로그인·무인증 대조군·새 세션·실패한 연결도 같은 예산을 사용합니다. 상태줄·헤더·chunk·CONNECT 응답도 wire에 집계하고 gzip/deflate는 제한된 크기로 해제합니다. 과도·불완전·모호한 응답은 부분 본문을 성공으로 반환하지 않습니다. 이 wire 집계는 HTTP 수신 바이트이며 TLS 레코드·TCP 헤더·요청 본문 용량은 포함하지 않습니다.
+
+`response_limit`·`budget_exhausted`·`timeout`은 검사 실패/미확정으로 보고하며 안전 판정으로 바꾸지 않습니다. 세션·자격은 정확한 원점(포트 포함)에 묶이고 자동 리디렉션·응답 스트리밍·다른 원점의 업로드 회수는 지원하지 않습니다. 다른 원점 회수는 로그인·업로드 전에 거부합니다. 이 경계는 Python 프로세스 내부의 악성 코드까지 격리하는 장치가 아니며 실제 호스트 행동 평가·사업부 파일럿을 대신하지 않습니다.
 
 ## 실행 규모와 한도
 

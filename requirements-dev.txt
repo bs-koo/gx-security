@@ -6,3 +6,4 @@ PyYAML==6.0.3
 semgrep==1.172.0
 
 pytest==8.4.2
+cryptography==50.0.0

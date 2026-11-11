@@ -14,7 +14,7 @@ def _resp(status, headers=None):
 
 class TestLocationMatches(unittest.TestCase):
     def test_absolute_url(self):
-        self.assertTrue(dyn_session._location_matches("http://h/home", "/home"))
+        self.assertTrue(dyn_session._location_matches("http://localhost/home", "/home"))
 
     def test_relative_path(self):
         self.assertTrue(dyn_session._location_matches("/home", "/home"))
@@ -32,7 +32,7 @@ class TestLocationMatches(unittest.TestCase):
 
     def test_success_path_full_url(self):
         # success_path 가 전체 URL 이어도 path 비교
-        self.assertTrue(dyn_session._location_matches("/home", "http://h/home/"))
+        self.assertTrue(dyn_session._location_matches("/home", "http://localhost/home/"))
 
     def test_mismatch(self):
         self.assertFalse(dyn_session._location_matches("/login", "/home"))
@@ -49,7 +49,7 @@ class TestFormLoginTransport(unittest.TestCase):
         mock = MagicMock()
         mock.request.return_value = _resp(302, {"Location": "/home"})
         dyn_session.form_login(
-            "http://h", "/login", {"id": "u", "pw": "p"},
+            "http://localhost", "/login", {"id": "u", "pw": "p"},
             success_path="/home", session=mock)
         kwargs = mock.request.call_args.kwargs
         self.assertEqual(kwargs["data"], {"username": "u", "password": "p"})
@@ -62,7 +62,7 @@ class TestFormLoginTransport(unittest.TestCase):
         mock = MagicMock()
         mock.request.return_value = _resp(302, {"Location": "/home"})
         dyn_session.form_login(
-            "http://h", "/login", {"id": "u", "pw": "p"},
+            "http://localhost", "/login", {"id": "u", "pw": "p"},
             id_field="j_username", pw_field="j_password",
             success_path="/home", session=mock)
         kwargs = mock.request.call_args.kwargs
@@ -72,11 +72,11 @@ class TestFormLoginTransport(unittest.TestCase):
         mock = MagicMock()
         mock.request.return_value = _resp(302, {"Location": "/home"})
         dyn_session.form_login(
-            "http://h/", "/login", {"id": "u", "pw": "p"},
+            "http://localhost/", "/login", {"id": "u", "pw": "p"},
             success_path="/home", session=mock)
         args, _ = mock.request.call_args
         self.assertEqual(args[0], "POST")
-        self.assertEqual(args[1], "http://h/login")
+        self.assertEqual(args[1], "http://localhost/login")
 
 
 class TestFormLoginVerdict(unittest.TestCase):
@@ -84,7 +84,7 @@ class TestFormLoginVerdict(unittest.TestCase):
         mock = MagicMock()
         mock.request.return_value = resp
         return dyn_session.form_login(
-            "http://h", "/login", {"id": "u", "pw": "p"},
+            "http://localhost", "/login", {"id": "u", "pw": "p"},
             session=mock, **kw)
 
     def test_success_302_match_returns_session(self):
@@ -92,7 +92,7 @@ class TestFormLoginVerdict(unittest.TestCase):
         mock.request.return_value = _resp(
             302, {"Location": "/home", "Set-Cookie": "SID=abc; HttpOnly"})
         out = dyn_session.form_login(
-            "http://h", "/login", {"id": "u", "pw": "p"},
+            "http://localhost", "/login", {"id": "u", "pw": "p"},
             success_path="/home", session=mock)
         self.assertIs(out["session"], mock)
         self.assertEqual(out["set_cookie"], "SID=abc; HttpOnly")
@@ -135,7 +135,7 @@ class TestFormLoginVerdict(unittest.TestCase):
         mock.request.side_effect = ValueError("boom")
         with self.assertRaises(RuntimeError) as ctx:
             dyn_session.form_login(
-                "http://h", "/login", {"id": "u", "pw": "p"},
+                "http://localhost", "/login", {"id": "u", "pw": "p"},
                 success_path="/home", session=mock)
         self.assertIn("로그인 요청 실패", str(ctx.exception))
 
@@ -146,7 +146,7 @@ class TestRequestSession(unittest.TestCase):
         mock_session = MagicMock()
         mock_session.request.return_value = MagicMock(
             status_code=200, text="ok", headers={})
-        out = dyn_session.request("GET", "http://h/x", session=mock_session)
+        out = dyn_session.request("GET", "http://localhost/x", session=mock_session)
         self.assertEqual(out["status"], 200)
         mock_session.request.assert_called_once()
         _, kwargs = mock_session.request.call_args
@@ -157,7 +157,7 @@ class TestRequestSession(unittest.TestCase):
     def test_request_no_session_uses_isolated_client_with_bearer(self, mock_req):
         # Session.request is the isolated dispatch seam; bearer wiring remains explicit.
         mock_req.return_value = MagicMock(status_code=200, text="ok", headers={})
-        out = dyn_session.request("GET", "http://h/x", token="TKN")
+        out = dyn_session.request("GET", "http://localhost/x", token="TKN")
         self.assertEqual(out["status"], 200)
         mock_req.assert_called_once()
         _, kwargs = mock_req.call_args

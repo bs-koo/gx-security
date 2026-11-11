@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install deps
-        run: pip install requests==2.34.2 PyYAML==6.0.3 pytest==8.4.2
+        run: pip install requests==2.34.2 PyYAML==6.0.3 pytest==8.4.2 cryptography==50.0.0
       - name: Run regression and release-check suite
         run: python -m pytest -q -p no:cacheprovider
 
@@ -46,7 +46,7 @@ jobs:
         include:
           - semgrep_spec: "-r requirements-dev.txt"   # pinned 1.172.0 — 하드 게이트
             experimental: false
-          - semgrep_spec: "requests PyYAML semgrep pytest"    # latest — 비차단 호환성 경보
+          - semgrep_spec: "requests PyYAML semgrep pytest cryptography==50.0.0"    # latest — 비차단 호환성 경보
             experimental: true
     continue-on-error: ${{ matrix.experimental }}
     steps:

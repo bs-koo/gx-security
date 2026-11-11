@@ -259,7 +259,7 @@ class TestRunCrashDefense(unittest.TestCase):
         mock_req.side_effect = ConnectionError("connection refused")
         parser = attack_auth._build_parser()
         args = parser.parse_args(
-            ["http://h", "--token-a", "a.b.c", "--probe", "/api/v1/users/me", "--json"])
+            ["http://localhost", "--token-a", "a.b.c", "--probe", "/api/v1/users/me", "--json"])
         attack_auth.run(args)  # uncaught 예외/SystemExit 없이 정상 종료해야 함
         self.assertTrue(mock_emit.called)
         payload = mock_emit.call_args[0][0]
@@ -275,7 +275,7 @@ class TestRunCrashDefense(unittest.TestCase):
             self, mock_scope, mock_cands, mock_pick, mock_emit):
         # probe 자동 선택 단계(pick_probe)의 연결 예외도 uncaught 종료 대신 error finding으로 격리
         parser = attack_auth._build_parser()
-        args = parser.parse_args(["http://h", "--token-a", "a.b.c", "--scan", "dummy.json", "--json"])
+        args = parser.parse_args(["http://localhost", "--token-a", "a.b.c", "--scan", "dummy.json", "--json"])
         attack_auth.run(args)
         self.assertTrue(mock_emit.called)
         payload = mock_emit.call_args[0][0]

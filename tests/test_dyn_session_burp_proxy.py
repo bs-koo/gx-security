@@ -23,15 +23,15 @@ class TestBurpProxyResolution(unittest.TestCase):
 
 class TestRequestProxyWiring(unittest.TestCase):
     @patch("requests.Session.request")
-    def test_request_no_env_no_proxies_kwarg(self, mock_req):
-        # 하위호환: env 없으면 proxies/verify 키를 아예 넘기지 않는다(바이트 불변).
+    def test_request_no_env_retains_explicit_tls_verification(self, mock_req):
+        # Direct requests have no proxy and explicitly retain certificate checks.
         mock_req.return_value = MagicMock(status_code=200, text="ok", headers={})
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("SECURITY_PLUGIN_BURP_PROXY", None)
             dyn_session.request("GET", "http://localhost:7171/x", token="TKN")
         _, kwargs = mock_req.call_args
         self.assertNotIn("proxies", kwargs)
-        self.assertNotIn("verify", kwargs)
+        self.assertIs(kwargs["verify"], True)
 
     @patch("requests.Session.request")
     def test_request_env_sets_proxies_and_verified_tls(self, mock_req):

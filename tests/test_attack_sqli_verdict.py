@@ -39,14 +39,14 @@ class TestSendNoRedirect(unittest.TestCase):
     @patch("requests.Session.request")
     def test_get_no_follow_redirect(self, mock_get):
         mock_get.return_value = MagicMock(status_code=200, text="", content=b"")
-        attack_sqli._send("http://app.local/board?id=1", "id", "1' OR '1'='1", "get", {})
+        attack_sqli._send("http://localhost/board?id=1", "id", "1' OR '1'='1", "get", {})
         _, kwargs = mock_get.call_args
         self.assertFalse(kwargs["allow_redirects"])
 
     @patch("requests.Session.request")
     def test_post_no_follow_redirect(self, mock_post):
         mock_post.return_value = MagicMock(status_code=200, text="", content=b"")
-        attack_sqli._send("http://app.local/login", "username", "admin'--",
+        attack_sqli._send("http://localhost/login", "username", "admin'--",
                           "post", {"password": "x"})
         _, kwargs = mock_post.call_args
         self.assertFalse(kwargs["allow_redirects"])

@@ -587,7 +587,8 @@ def _specialist_error(finding):
     """Render only protocol diagnostic codes, never a request's raw exception."""
     labels = {'timeout': '시간 초과', 'connection_error': '연결 실패',
               'request_failed': '요청 실패', 'invalid_response': '응답 형식 확인 필요',
-              'scope_blocked': '허용 범위 밖', 'login_failed': '인증 실패'}
+              'scope_blocked': '허용 범위 밖', 'login_failed': '인증 실패',
+              'response_limit': '응답 한도 초과', 'budget_exhausted': '전체 검사 한도 초과'}
     code = finding.get('error_type')
     if not isinstance(code, str) or code not in labels:
         code = 'request_failed'
@@ -793,6 +794,8 @@ def _apply_burp_proxy(burp_proxy, *, strict=False, probe=None):
         return {"enabled": False, "proxy_up": None, "strict_abort": False}
     try:
         checked_proxy = dyn_session.validate_burp_proxy_url(burp_proxy)
+        if not checked_proxy.startswith('http://'):
+            raise ValueError('Unsupported proxy transport')
     except (dyn_session.ScopeError, ValueError):
         return {"enabled": False, "proxy_up": None, "strict_abort": True,
                 "error": "invalid_burp_proxy"}
@@ -911,7 +914,7 @@ def main():
         report["burp_proxy"] = _bp  # 엣지 G: --json 리포트에 경유/폴백 상태 노출
         if _bp.get("error") == "invalid_burp_proxy":
             _fatal_input_error(args.json, "invalid_burp_proxy",
-                               "Burp 프록시는 loopback IP의 HTTP(S) 주소만 지원합니다. 프록시 설정을 확인하세요.")
+                               "Burp 프록시는 loopback IP의 HTTP CONNECT 프록시만 지원합니다. 프록시 설정을 확인하세요.")
         if _bp.get("strict_abort"):
             print(burp_preflight.onboarding_text(), file=sys.stderr)
             print("[중단] --burp-proxy-strict: Burp 미가동으로 발사를 중단합니다(증거 없는 폴백 금지).",

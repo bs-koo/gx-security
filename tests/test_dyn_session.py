@@ -68,7 +68,7 @@ class TestLogin(unittest.TestCase):
         # JSON 중괄호가 있는 body-template이 KeyError 없이 동작 (H1 회귀)
         mock_post.return_value = MagicMock(status_code=200, json=lambda: {"tok": "X"})
         tok = dyn_session.login(
-            "http://h", "/login", {"id": "a", "pw": "b"},
+            "http://localhost", "/login", {"id": "a", "pw": "b"},
             body_template='{"u":"{id}","p":"{pw}"}', token_json_path="tok")
         self.assertEqual(tok, "X")
         _, kwargs = mock_post.call_args

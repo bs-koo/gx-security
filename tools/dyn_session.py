@@ -3,8 +3,8 @@
 tools/dyn_session.py — 동적 침투 스킬 공용 엔진.
 로그인 자동화·토큰 보관·인증 HTTP·표준 출력·scope 위임을 제공한다.
 모든 exploiting-* 스킬이 공유하며, 클래스별 공격 로직은 포함하지 않는다.
-Legacy specialist path: hostname preflight does not enforce destination IPs.
-Release checks use gxsec.transport and trusted readiness instead.
+Specialist requests use approved numeric IPs and shared absolute budgets.
+Release checks also require gxsec.transport's separate trusted readiness contract.
 """
 import sys
 import os
@@ -86,8 +86,20 @@ def request_error_type(error):
     return "request_failed"
 
 
+class RequestFailure(RuntimeError):
+    """Carry a fixed cause through legacy RuntimeError and CLI boundaries."""
+    def __init__(self, error, message="요청 실패"):
+        self.code = request_error_type(error)
+        super().__init__(f"{message}: {self.code}")
+
+
+def login_error_type(error):
+    code = getattr(error, "code", None)
+    return code if isinstance(code, str) and code in ERROR_TYPES else "login_failed"
+
+
 def validate_burp_proxy_url(val):
-    """Validate and normalize one explicit local proxy without changing the environment."""
+    """Normalize local proxy syntax; the transport additionally requires HTTP CONNECT."""
     try:
         if not isinstance(val, str) or not val:
             raise ValueError
@@ -238,7 +250,7 @@ def login(base_url, login_path, cred, *, body_template=None,
         resp = _client("POST", url, json=body, timeout=timeout, allow_redirects=False)
     except Exception as e:
         hint = " (Burp 프록시 경유 중 — Burp 가동·Intercept OFF 확인)" if os.environ.get("SECURITY_PLUGIN_BURP_PROXY", "").strip() else ""
-        raise RuntimeError(f"로그인 요청 실패: {request_error_type(e)}{hint}") from None
+        raise RequestFailure(e, f"로그인 요청 실패{hint}") from None
     if not (200 <= resp.status_code < 300):
         raise RuntimeError(f"로그인 실패(HTTP {resp.status_code}): {url} — "
                            f"2xx 아님(3xx 리다이렉트·4xx 거부 포함). 자격/요청형식 확인")
@@ -275,7 +287,7 @@ def login_response(base_url, login_path, cred, *, body_template=None,
         resp = _client("POST", url, json=body, timeout=timeout, allow_redirects=False)
     except Exception as e:
         hint = " (Burp 프록시 경유 중 — Burp 가동·Intercept OFF 확인)" if os.environ.get("SECURITY_PLUGIN_BURP_PROXY", "").strip() else ""
-        raise RuntimeError(f"로그인 요청 실패: {request_error_type(e)}{hint}") from None
+        raise RequestFailure(e, f"로그인 요청 실패{hint}") from None
     if not (200 <= resp.status_code < 300):
         raise RuntimeError(f"로그인 실패(HTTP {resp.status_code}): {url} — "
                            f"2xx 아님(3xx 리다이렉트·4xx 거부 포함). 자격/요청형식 확인")
@@ -331,9 +343,11 @@ def form_login(base_url, login_path, cred, *, id_field=None, pw_field=None,
     owns_session = session is None
     session = session if session is not None else new_session()
 
-    def fail_login(message):
+    def fail_login(message, error=None):
         if owns_session:
             session.close()
+        if error is not None:
+            raise RequestFailure(error, message) from None
         raise RuntimeError(message) from None
 
     url = base_url.rstrip("/") + login_path
@@ -341,7 +355,7 @@ def form_login(base_url, login_path, cred, *, id_field=None, pw_field=None,
     try:
         resp = _client("POST", url, session=session, data=form, timeout=timeout, allow_redirects=False)
     except Exception as e:
-        fail_login(f"로그인 요청 실패: {request_error_type(e)}")
+        fail_login("로그인 요청 실패", e)
     status = resp.status_code
     location = resp.headers.get("Location", "")
     if 300 <= status < 400:

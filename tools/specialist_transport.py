@@ -18,6 +18,7 @@ import os
 import re
 import socket
 import ssl
+import sys
 import threading
 import time
 import zlib
@@ -544,6 +545,9 @@ class BoundedAdapter(HTTPAdapter):
         request_deadline = time.monotonic() + seconds
         operation = self.operation
         origin = operation.ensure_origin(request.url)
+        tls_context = operation._tls_context
+        if not tls_context.check_hostname or tls_context.verify_mode != ssl.CERT_REQUIRED:
+            raise PolicyError()
         parsed, host, port = _parts(request.url)
         expected_verify = operation.ca_file or True
         if verify != expected_verify or cert is not None or stream not in {True, False}:
@@ -587,7 +591,7 @@ class BoundedAdapter(HTTPAdapter):
                     sock.settimeout(meter.remaining())
                     # Explicit handshake below lets each TLS step share the
                     # absolute request deadline; no hostname socket helper runs.
-                    sock = operation._tls_context.wrap_socket(sock, server_hostname=host, do_handshake_on_connect=False)
+                    sock = tls_context.wrap_socket(sock, server_hostname=host, do_handshake_on_connect=False)
                     sock.settimeout(meter.remaining())
                     sock.do_handshake()
                     meter.remaining()
@@ -620,17 +624,22 @@ class BoundedAdapter(HTTPAdapter):
             except (ValueError, http.client.HTTPException, zlib.error, OverflowError):
                 raise TransportError() from None
             finally:
+                error_in_flight = sys.exc_info()[0] is not None
+                cleanup_error = None
                 try:
                     if response is not None:
                         try:
                             response.close()
                         except Exception:
-                            raise TransportError() from None
+                            cleanup_error = TransportError()
                 finally:
                     if sock is not None:
                         try:
                             sock.close()
                         except Exception:
-                            raise NetworkError() from None
+                            if cleanup_error is None:
+                                cleanup_error = NetworkError()
+                if cleanup_error is not None and not error_in_flight:
+                    raise cleanup_error from None
         finally:
             operation._lock.release()

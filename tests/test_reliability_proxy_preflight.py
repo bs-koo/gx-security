@@ -32,7 +32,7 @@ def test_invalid_proxy_never_reaches_preflight_or_changes_environment(monkeypatc
     assert os.environ['SECURITY_PLUGIN_BURP_PROXY'] == original
 
 
-@pytest.mark.parametrize('scheme,port', [('http', 80), ('https', 443)])
+@pytest.mark.parametrize('scheme,port', [('http', 80)])
 def test_preflight_uses_the_same_default_port_as_the_http_client(monkeypatch, scheme, port):
     key = 'SECURITY_PLUGIN_BURP_PROXY'
     present, previous = key in os.environ, os.environ.get(key)

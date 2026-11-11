@@ -22,7 +22,7 @@ class TestSendJsonMode(unittest.TestCase):
     @patch("tools.dyn_session.request")
     def test_json_body_defaults_inject_path_to_param(self, mock_req):
         mock_req.return_value = {"status": 200, "body": "{}", "headers": {}, "elapsed": 0.01}
-        attack_sqli._send("http://app.local/api/search", "q", "1' OR '1'='1",
+        attack_sqli._send("http://localhost/api/search", "q", "1' OR '1'='1",
                           "post", None, content_type="json")
         _, kwargs = mock_req.call_args
         self.assertEqual(kwargs["json_body"], {"q": "1' OR '1'='1"})
@@ -30,7 +30,7 @@ class TestSendJsonMode(unittest.TestCase):
     @patch("tools.dyn_session.request")
     def test_json_body_uses_explicit_inject_path(self, mock_req):
         mock_req.return_value = {"status": 200, "body": "{}", "headers": {}, "elapsed": 0.01}
-        attack_sqli._send("http://app.local/api/search", "q", "X",
+        attack_sqli._send("http://localhost/api/search", "q", "X",
                           "post", None, content_type="json", inject_path="data.query")
         _, kwargs = mock_req.call_args
         self.assertEqual(kwargs["json_body"], {"data": {"query": "X"}})
@@ -38,7 +38,7 @@ class TestSendJsonMode(unittest.TestCase):
     @patch("tools.dyn_session.request")
     def test_json_mode_dispatches_to_dyn_session_request(self, mock_req):
         mock_req.return_value = {"status": 200, "body": "{}", "headers": {}, "elapsed": 0.01}
-        result = attack_sqli._send("http://app.local/api/search", "q", "X",
+        result = attack_sqli._send("http://localhost/api/search", "q", "X",
                                    "post", None, content_type="json")
         mock_req.assert_called_once()
         self.assertIsNotNone(result)
@@ -50,7 +50,7 @@ class TestSendAuthMode(unittest.TestCase):
     @patch("tools.dyn_session.request")
     def test_token_forwarded_to_dyn_session(self, mock_req):
         mock_req.return_value = {"status": 200, "body": "", "headers": {}, "elapsed": 0.01}
-        attack_sqli._send("http://app.local/board", "id", "1' OR '1'='1",
+        attack_sqli._send("http://localhost/board", "id", "1' OR '1'='1",
                           "get", None, token="T")
         _, kwargs = mock_req.call_args
         self.assertEqual(kwargs["token"], "T")
@@ -59,7 +59,7 @@ class TestSendAuthMode(unittest.TestCase):
     def test_session_forwarded_to_dyn_session(self, mock_req):
         mock_req.return_value = {"status": 200, "body": "", "headers": {}, "elapsed": 0.01}
         fake_session = object()
-        attack_sqli._send("http://app.local/board", "id", "1",
+        attack_sqli._send("http://localhost/board", "id", "1",
                           "get", None, session=fake_session)
         _, kwargs = mock_req.call_args
         self.assertIs(kwargs["session"], fake_session)
@@ -68,7 +68,7 @@ class TestSendAuthMode(unittest.TestCase):
     def test_auth_mode_get_still_injects_query_string(self, mock_req):
         # 인증만 붙고 form(기본)이면 기존처럼 쿼리스트링에 파라미터를 주입해야 한다.
         mock_req.return_value = {"status": 200, "body": "", "headers": {}, "elapsed": 0.01}
-        attack_sqli._send("http://app.local/board?id=1", "id", "1' OR '1'='1",
+        attack_sqli._send("http://localhost/board?id=1", "id", "1' OR '1'='1",
                           "get", None, token="T")
         args, _ = mock_req.call_args
         method, url = args[0], args[1]
@@ -83,7 +83,7 @@ class TestSendIsolatedRawResponse(unittest.TestCase):
     @patch("requests.Session.request")
     def test_default_form_get_uses_isolated_raw_client(self, mock_get, mock_dyn):
         mock_get.return_value = MagicMock(status_code=200, text="", content=b"")
-        attack_sqli._send("http://app.local/board?id=1", "id", "1' OR '1'='1", "get", {})
+        attack_sqli._send("http://localhost/board?id=1", "id", "1' OR '1'='1", "get", {})
         mock_dyn.assert_not_called()
         mock_get.assert_called_once()
 
@@ -91,7 +91,7 @@ class TestSendIsolatedRawResponse(unittest.TestCase):
     @patch("requests.Session.request")
     def test_default_form_post_uses_isolated_raw_client(self, mock_post, mock_dyn):
         mock_post.return_value = MagicMock(status_code=200, text="", content=b"")
-        attack_sqli._send("http://app.local/login", "username", "admin'--",
+        attack_sqli._send("http://localhost/login", "username", "admin'--",
                           "post", {"password": "x"})
         mock_dyn.assert_not_called()
         mock_post.assert_called_once()

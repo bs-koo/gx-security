@@ -39,6 +39,7 @@ SEF 또는 공통 방어가 관련된 후보는 [공유 SEF 문맥 검토](../ch
 - **소스 경로**(필수): 예 `D:\SQ\sqisoft-sef-2026`
 - **대상 URL**(선택, 동적까지 하려면): 실행 중인 **스테이징/로컬**. 예 `http://localhost:8080`
   - 운영 환경 금지 — `tools/scope_guard.py`가 코드로 차단한다. → [ATTACK_SAFETY.md](../../ATTACK_SAFETY.md)
+  - 일반 도메인은 `SECURITY_PLUGIN_TARGET_IPS`에 정확한 원점별 승인 IP도 필요하다. 숫자 IP 연결·TLS·HTTP CONNECT·진단별 요청/시간/응답 한도는 [운영 계약](../../docs/OPERATIONS.md#3차-전문-검사-접속응답-한도)을 따른다. 매핑은 실행 승인을 대신하지 않는다.
 - Python 3. (선택) `semgrep` 설치 시 정적 정밀도 향상, 없으면 grep 폴백.
 
 ## Workflow

@@ -3,7 +3,10 @@ import contextlib
 import http.server
 import importlib.util
 import json
+import ipaddress
 import os
+import select
+import socket
 from pathlib import Path
 from types import SimpleNamespace
 import threading
@@ -24,6 +27,34 @@ SPEC.loader.exec_module(SQLI)
 
 
 class ProbeHandler(http.server.BaseHTTPRequestHandler):
+    def do_CONNECT(self):
+        """A real loopback tunnel, not a proxy which fabricates the target body."""
+        parsed = urlsplit('http://' + self.path)
+        address = ipaddress.ip_address(parsed.hostname)
+        if not address.is_loopback:
+            self.send_error(403)
+            return
+        self.server.tunnels.append({'target': self.path, 'headers': dict(self.headers)})
+        family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+        with socket.socket(family, socket.SOCK_STREAM) as upstream:
+            upstream.settimeout(2)
+            upstream.connect((str(address), parsed.port))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.flush()
+            try:
+                while True:
+                    ready, _, _ = select.select([self.connection, upstream], [], [], 2)
+                    if not ready:
+                        return
+                    for source in ready:
+                        data = source.recv(65536)
+                        if not data:
+                            return
+                        (upstream if source is self.connection else self.connection).sendall(data)
+            except OSError:
+                return
+
     def respond(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         self.server.observed.append({"path": self.path, "authorization": self.headers.get("Authorization"),
@@ -63,6 +94,7 @@ class ProbeHandler(http.server.BaseHTTPRequestHandler):
 def probe_server(label):
     with http.server.ThreadingHTTPServer(("127.0.0.1", 0), ProbeHandler) as server:
         server.observed = []
+        server.tunnels = []
         server.label = label
         server.url = f"http://127.0.0.1:{server.server_port}"
         thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
@@ -154,11 +186,13 @@ def test_explicit_loopback_proxy_still_receives_the_intended_request(pair, monke
     monkeypatch.setenv("NETRC", str(netrc))
     monkeypatch.setenv("SECURITY_PLUGIN_BURP_PROXY", proxy.url)
     result = dyn_session.request("GET", target.url + "/observe", token="intentional-bearer") if lane == "request" else invoke(lane, target.url)
-    assert json.loads(result["body"] if lane == "request" else result[2])["source"] == "ambient-proxy"
-    assert target.observed == []
-    assert len(proxy.observed) == 1
-    assert proxy.observed[0]["path"].startswith(target.url + "/observe")
-    assert proxy.observed[0]["authorization"] == ("Bearer intentional-bearer" if lane == "request" else None)
+    assert json.loads(result["body"] if lane == "request" else result[2])["source"] == "target"
+    assert len(target.observed) == 1
+    assert proxy.observed == []
+    assert len(proxy.tunnels) == 1
+    assert proxy.tunnels[0]['target'] == urlsplit(target.url).netloc
+    assert 'Authorization' not in proxy.tunnels[0]['headers']
+    assert target.observed[0]["authorization"] == ("Bearer intentional-bearer" if lane == "request" else None)
 
 
 def test_passed_session_preserves_explicit_auth_and_cookie_but_not_its_unvalidated_proxy(pair):
@@ -223,9 +257,9 @@ def test_owned_dispatch_session_is_closed_on_success_and_failure(failed, monkeyp
 
 
 def test_explicit_proxy_ca_is_the_only_ca_override(monkeypatch, tmp_path):
-    monkeypatch.setenv("SECURITY_PLUGIN_BURP_PROXY", "https://127.0.0.1:8443")
-    ca = tmp_path / "explicit-burp.pem"
-    ca.write_text("fixture public CA\n", encoding="utf-8")
+    monkeypatch.setenv("SECURITY_PLUGIN_BURP_PROXY", "http://127.0.0.1:8080")
+    # The new operation loads/validates the CA before dispatch, even at a mock seam.
+    ca = Path(requests.certs.where())
     monkeypatch.setenv("SECURITY_PLUGIN_BURP_CA", str(ca))
     monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(tmp_path / "ambient.pem"))
     captured = {}
@@ -240,7 +274,7 @@ def test_explicit_proxy_ca_is_the_only_ca_override(monkeypatch, tmp_path):
     dyn_session.request("GET", "https://127.0.0.1/")
     assert captured["trust_env"] is False
     assert captured["verify"] == str(ca)
-    assert captured["proxies"] == {"http": "https://127.0.0.1:8443", "https": "https://127.0.0.1:8443"}
+    assert captured["proxies"] == {"http": "http://127.0.0.1:8080", "https": "http://127.0.0.1:8080"}
 
 
 @pytest.mark.parametrize("lane", ["request", "xss_get"])
