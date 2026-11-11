@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="description" content="GX Security 0.10.3 프리뷰 작업본. 한 번의 요청에서 준비 확인, 정적 보안 점검, 문맥 검토와 보고서까지. 실행기·스킬 등록과 최초 실행 환경 준비가 필요합니다.">
+<title>GX Security — 한 번의 요청으로 시작하는 보안 점검</title>
+<style>
+/* Existing institutional identity. Tone: variance 3 / motion 2 / density 5.
+   Primary task: choose and copy an instructional request; no scan runs here. */
+:root{--bg:#faf9f5;--ink:#141413;--muted:#575751;--line:rgba(20,20,19,.17);--paper:#fff;--inverse:#fff;--inverse-muted:#c5c5bf;--inverse-line:rgba(255,255,255,.22);--sans:"Segoe UI",-apple-system,BlinkMacSystemFont,Arial,sans-serif;--mono:ui-monospace,Consolas,"Cascadia Code","SFMono-Regular",Menlo,monospace;--radius:8px;--wrap:1140px}
+*,*::before,*::after{box-sizing:border-box}html{-webkit-text-size-adjust:100%}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 var(--sans);letter-spacing:-.2px;-webkit-font-smoothing:antialiased}h1,h2,h3,p,ul,ol,dl,dd{margin:0}a{color:inherit;text-underline-offset:4px}button,select,textarea{font:inherit}button,select{cursor:pointer}button{color:inherit}code,.mono{font-family:var(--mono);letter-spacing:0}code{overflow-wrap:anywhere}svg{display:block}[hidden]{display:none!important}:focus-visible{outline:2px solid var(--ink);outline-offset:4px}.on-dark :focus-visible{outline-color:var(--inverse)}
+.wrap{width:min(100%,var(--wrap));padding-inline:32px;margin-inline:auto}.ico{width:20px;height:20px;stroke:currentColor;stroke-width:1.6;fill:none;stroke-linecap:round;stroke-linejoin:round;flex:none}.skip{position:absolute;top:-100px;left:20px;z-index:100;padding:12px 18px;background:var(--ink);color:var(--inverse);border-radius:var(--radius)}.skip:focus{top:12px}
+.nav{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line)}.nav__in{min-height:68px;display:flex;align-items:center;justify-content:space-between;gap:28px}.brand{display:inline-flex;align-items:center;gap:11px;text-decoration:none;font:600 16px/1.5 var(--mono);white-space:nowrap}.brand .ico{width:23px;height:23px}.nav__links{display:flex;align-items:center;gap:24px}.nav__links a{display:inline-flex;align-items:center;min-height:44px;color:var(--muted);text-decoration:none;font-size:15px;white-space:nowrap}
+.preview{margin-top:28px;padding:18px 22px;border:1px solid var(--line);border-radius:var(--radius);display:grid;grid-template-columns:145px 1fr;gap:18px;font-size:15px;line-height:1.6}.preview strong{font-weight:650}.preview p{color:var(--muted)}
+.hero{padding-block:50px 64px}.hero__grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:56px;align-items:center}h1{font-size:clamp(38px,4.2vw,54px);line-height:1.17;letter-spacing:-1.7px;font-weight:700}.hero__sub{max-width:490px;margin-top:24px;font-size:17px;line-height:1.7;color:var(--muted);word-break:keep-all}.hero__actions{display:flex;flex-wrap:wrap;align-items:center;gap:16px 22px;margin-top:30px}.text-link{display:inline-flex;align-items:center;gap:8px;min-height:44px;font-weight:600}.button{display:inline-flex;align-items:center;justify-content:center;gap:9px;min-height:48px;padding:10px 18px;border:1px solid var(--ink);border-radius:var(--radius);background:var(--ink);color:var(--inverse);font-size:16px;font-weight:600;text-decoration:none;transition:transform 120ms ease-out,opacity 120ms ease-out}.button:active,.host-tab:active{transform:scale(.98)}
+.composer{min-width:0;padding:26px;background:var(--ink);color:var(--inverse);border-radius:20px;scroll-margin-top:92px}.composer__head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px 16px;margin-bottom:19px}.composer__head h2{flex-shrink:0;white-space:nowrap;font-size:19px;font-weight:600;letter-spacing:-.4px}.composer__head span{white-space:nowrap;font-size:14px;color:var(--inverse-muted)}.host-tabs{display:flex;gap:4px;border-bottom:1px solid var(--inverse-line)}.host-tab{flex:1;min-height:46px;padding:8px 10px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--inverse-muted);font-weight:600;transition:transform 120ms ease-out,opacity 120ms ease-out}.host-tab[aria-selected="true"]{border-bottom-color:var(--inverse);color:var(--inverse)}.field-label{display:block;margin:20px 0 8px;font-size:15px;font-weight:600}.task-select{width:100%;min-height:46px;padding:9px 12px;border:1px solid var(--inverse-line);border-radius:var(--radius);background:var(--bg);color:var(--ink)}.request-output{display:block;width:100%;min-height:132px;resize:vertical;padding:14px;border:1px solid var(--inverse-line);border-radius:var(--radius);background:transparent;color:var(--inverse);font:15px/1.7 var(--mono);overflow-wrap:anywhere}.composer__copy{width:100%;margin-top:15px;background:var(--bg);color:var(--ink);border-color:var(--bg)}.feedback{min-height:50px;margin-top:10px;color:var(--inverse-muted);font-size:14px;line-height:1.65}.task-note{margin-top:16px;padding-top:16px;border-top:1px solid var(--inverse-line);color:var(--inverse-muted);font-size:15px;line-height:1.65}
+.section{border-top:1px solid var(--line);padding-block:68px;scroll-margin-top:88px}.section__head{max-width:720px}h2{font-size:34px;line-height:1.3;letter-spacing:-1px;font-weight:700;word-break:keep-all}.lead{max-width:690px;margin-top:18px;color:var(--muted);font-size:17px;line-height:1.7;word-break:keep-all}.flow{list-style:none;padding:0;margin-top:34px;border-top:1px solid var(--line)}.flow li{display:grid;grid-template-columns:34px 205px 1fr;gap:20px;padding-block:24px;border-bottom:1px solid var(--line)}.flow__n{padding-top:2px;color:var(--muted);font:15px/1.7 var(--mono)}.flow h3{font-size:19px;line-height:1.5;letter-spacing:-.3px}.flow p{color:var(--muted)}.flow p strong{font-weight:600;color:var(--ink)}.section-note{margin-top:22px;color:var(--muted)}.section-note strong{color:var(--ink);font-weight:600}
+.setup-grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,.8fr);gap:40px;margin-top:34px;align-items:start}.setup-list{border-top:1px solid var(--line)}.setup-list>div{display:grid;grid-template-columns:155px 1fr;gap:22px;padding-block:22px;border-bottom:1px solid var(--line)}.setup-list dt{font-weight:600}.setup-list dd{color:var(--muted)}.aside{padding:25px;border:1px solid var(--line);border-radius:16px}.aside .ico{margin-bottom:16px;width:24px;height:24px}.aside h3{font-size:20px;line-height:1.5;letter-spacing:-.4px}.aside p{margin-top:12px;color:var(--muted)}
+.statuses{margin-top:32px;border-top:1px solid var(--line)}.statuses>div{display:grid;grid-template-columns:220px 1fr;gap:28px;padding-block:19px;border-bottom:1px solid var(--line)}.statuses dt{font:600 15px/1.7 var(--mono)}.statuses dd{color:var(--muted)}.status-block dt{font-weight:750}.role-grid{display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:40px}.role{border-top:2px solid var(--ink);padding-top:20px}.role h3{display:flex;align-items:center;gap:10px;font-size:21px}.role p{margin-top:12px;color:var(--muted)}.role code{color:var(--ink);font-size:15px}.report-paths{padding:24px 26px;margin-top:36px;border:1px solid var(--line);border-radius:16px}.report-paths h3{font-size:19px;margin-bottom:16px}.report-paths dl>div{display:grid;grid-template-columns:145px minmax(0,1fr);gap:18px;margin-top:12px}.report-paths dt{color:var(--muted)}.report-paths code{font-size:15px}.report-paths p{margin-top:16px;color:var(--muted);font-size:15px}
+.scope-grid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:60px;margin-top:34px;align-items:start}.scope-intro p{color:var(--muted)}.scope-intro p+p{margin-top:18px}.boundaries{border-top:1px solid var(--line)}.boundaries>div{padding-block:17px;border-bottom:1px solid var(--line)}.boundaries dt{font-weight:600}.boundaries dd{margin-top:5px;color:var(--muted)}.engine-note{margin-top:34px;padding-top:22px;border-top:1px solid var(--line);color:var(--muted)}.engine-note strong{color:var(--ink)}
+.faq{max-width:850px;margin-top:30px;border-top:1px solid var(--line)}.faq details{border-bottom:1px solid var(--line)}.faq summary{cursor:pointer;position:relative;padding:20px 34px 20px 0;list-style:none;font-size:18px;font-weight:600}.faq summary::-webkit-details-marker{display:none}.faq summary::after{content:"+";position:absolute;right:4px;top:18px;font:24px/1.3 var(--mono);font-weight:400}.faq details[open] summary::after{content:"−"}.faq details p{padding:0 28px 22px 0;color:var(--muted);line-height:1.75}
+.footer{padding-block:38px;background:var(--ink);color:var(--inverse)}.footer__grid{display:grid;grid-template-columns:1fr 1.3fr;gap:40px}.footer p{margin-top:12px;color:var(--inverse-muted);font-size:15px}.footer__links{display:grid;grid-template-columns:1fr 1fr;gap:8px 26px}.footer__links a{display:inline-flex;align-items:center;gap:8px;min-height:44px;font-size:15px}.footer__links .ico{width:17px;height:17px}.footer__note{margin-top:28px!important;padding-top:20px;border-top:1px solid var(--inverse-line)}
+@media(hover:hover) and (pointer:fine){.button:hover,.host-tab:hover{opacity:.8}.nav__links a:hover{color:var(--ink);text-decoration:underline}.faq summary:hover{text-decoration:underline;text-underline-offset:5px}}
+@media(max-width:900px){.hero__grid{gap:30px}.nav__links{gap:16px}.flow li{grid-template-columns:30px 160px 1fr;gap:16px}.setup-grid{gap:28px;grid-template-columns:1.2fr 1fr}.setup-list>div{grid-template-columns:1fr;gap:6px}.scope-grid{gap:34px}}
+@media(max-width:700px){.wrap{padding-inline:22px}.nav__in{flex-wrap:wrap;gap:0;padding-top:14px}.brand{min-height:30px}.nav__links{width:100%;justify-content:space-between;gap:10px;padding-block:3px 4px}.nav__links a{font-size:14px}.preview{margin-top:20px;grid-template-columns:1fr;gap:5px;padding:15px 17px;font-size:14px}.hero{padding-block:34px 44px}.hero__grid{grid-template-columns:1fr;gap:30px}h1{font-size:40px;letter-spacing:-1.5px}.hero__sub{margin-top:18px;font-size:16px}.hero__actions{margin-top:22px;gap:12px 20px}.composer{padding:22px;border-radius:16px;scroll-margin-top:112px}.composer__head{margin-bottom:15px}.composer__head span{font-size:13px}.section{padding-block:44px;scroll-margin-top:112px}h2{font-size:28px;letter-spacing:-.7px}.lead{font-size:16px;margin-top:15px}.flow{margin-top:26px}.flow li{grid-template-columns:28px 1fr;gap:5px 12px;padding-block:20px}.flow p{grid-column:2}.flow h3{font-size:18px}.setup-grid,.role-grid,.scope-grid,.footer__grid{grid-template-columns:1fr;gap:28px}.setup-grid,.scope-grid{margin-top:26px}.setup-list>div{padding-block:19px}.aside{padding:22px}.statuses>div{grid-template-columns:1fr;gap:5px;padding-block:18px}.role-grid{margin-top:30px}.report-paths{padding:22px;margin-top:28px}.report-paths dl>div{grid-template-columns:1fr;gap:3px;margin-top:16px}.report-paths code{font-size:14px}.scope-grid{gap:26px}.faq summary{font-size:17px}.footer__links{grid-template-columns:1fr;gap:2px}}
+@media(prefers-reduced-motion:reduce){.button,.host-tab{transition:opacity 100ms ease-out}.button:active,.host-tab:active{transform:none}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">본문으로 건너뛰기</a>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+<defs>
+<symbol id="i-mark" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M8 12h8M12 8v8"/></symbol>
+<symbol id="i-source" viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.2-2.9 7.9-7 9-4.1-1.1-7-4.8-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></symbol>
+<symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9l-6-6z"/><path d="M13 3v6h6"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></symbol>
+<symbol id="i-book" viewBox="0 0 24 24"><path d="M4 4h7a3 3 0 0 1 3 3v14a4 4 0 0 0-3-2H4V4zM14 7a3 3 0 0 1 3-3h3v15h-3a4 4 0 0 0-3 2"/></symbol>
+</defs>
+</svg>
+<header class="nav">
+  <div class="wrap nav__in">
+    <a class="brand" href="#main" aria-label="GX Security 처음으로"><svg class="ico" aria-hidden="true"><use href="#i-mark"/></svg>GX Security</a>
+    <nav class="nav__links" aria-label="주요 안내">
+      <a href="#request">요청 예시</a><a href="#how">진행 흐름</a><a href="#reports">보고서</a><a href="#scope">점검 범위</a><a href="#faq">FAQ</a>
+    </nav>
+  </div>
+</header>
+<main id="main" tabindex="-1">
+  <div class="wrap">
+    <aside class="preview" aria-label="버전 및 공개 상태 안내">
+      <strong>0.10.3 프리뷰 작업본</strong>
+      <p><strong>통합 진입점 · 스킬 22개</strong>를 제공합니다. 실행기·스킬 패키지를 함께 등록하고 검사 실행 환경은 처음 한 번 준비합니다.</p>
+    </aside>
+  </div>
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="wrap hero__grid">
+      <div>
+        <h1 id="hero-title">보안 점검을<br>한 번의 요청으로.</h1>
+        <p class="hero__sub">프로젝트에서 목적을 말하면 준비 확인부터 보고서까지 이어갑니다. 개발자는 수정 근거를, QA·PM은 범위와 남은 조건을 확인합니다.</p>
+        <div class="hero__actions">
+          <a class="button" href="#request">요청 예시 만들기 <svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          <a class="text-link" href="#how">진행 흐름 읽기</a>
+        </div>
+      </div>
+      <div class="composer on-dark" id="request" aria-labelledby="request-title">
+        <div class="composer__head"><h2 id="request-title">내 요청 예시</h2><span>안내 예시 · 실행 없음</span></div>
+        <div class="host-tabs" role="tablist" aria-label="사용하는 개발 도구">
+          <button type="button" class="host-tab" id="tab-claude" role="tab" aria-selected="true" aria-controls="request-panel" tabindex="0" data-host="claude">Claude Code</button>
+          <button type="button" class="host-tab" id="tab-codex" role="tab" aria-selected="false" aria-controls="request-panel" tabindex="-1" data-host="codex">Codex</button>
+        </div>
+        <div id="request-panel" role="tabpanel" aria-labelledby="tab-claude">
+          <label class="field-label" for="task-select">이번에 할 일</label>
+          <select class="task-select" id="task-select">
+            <option value="release">처음 / 출시 전 점검</option><option value="change">변경한 부분 점검</option><option value="retest">수정 후 재검증</option><option value="report">기존 보고서 설명</option>
+          </select>
+          <label class="field-label" for="request-output">개발 도구에 붙여 넣을 요청문</label>
+          <textarea class="request-output" id="request-output" rows="4" readonly spellcheck="false" aria-describedby="task-note copy-feedback">/gx-security:gx-security 이 프로젝트를 출시 전에 보안 점검해줘.</textarea>
+          <button class="button composer__copy" id="copy-request" type="button"><svg class="ico" aria-hidden="true"><use href="#i-copy"/></svg>요청 예시 복사</button>
+          <p class="feedback" id="copy-feedback" role="status" aria-live="polite" aria-atomic="true">0.10.3이 등록된 Claude Code에 붙여 넣으세요.</p>
+          <p class="task-note" id="task-note">기본은 정적 출시 점검입니다. 실행 중인 서비스에 공격 요청을 보내지 않습니다.</p>
+        </div>
+        <noscript><p class="task-note">예시 선택과 자동 복사에는 JavaScript가 필요합니다. 위 기본 요청문을 직접 선택해 복사할 수 있습니다.</p></noscript>
+      </div>
+    </div>
+  </section>
+  <section class="section" id="how" aria-labelledby="how-title">
+    <div class="wrap">
+      <div class="section__head">
+        <h2 id="how-title">준비부터 보고서까지,<br>요청 뒤에서 이어집니다.</h2>
+        <p class="lead">프로젝트마다 setup·init·설정 파일을 먼저 만들 필요 없이, 요청과 기존 이력에 맞춰 진행합니다.</p>
+      </div>
+      <ol class="flow">
+        <li><span class="flow__n">01</span><h3>내부 준비 확인</h3><p>설치 위치와 실제 도구를 확인하고, <strong>준비된 환경·설정·상태를 재사용</strong>합니다.</p></li>
+        <li><span class="flow__n">02</span><h3>소스·의존성·시크릿 검사</h3><p>기본은 정적 출시 점검입니다. 변경 기준과 재검증의 <strong>발견 ID·원래 프로파일·이력</strong>을 보존합니다.</p></li>
+        <li><span class="flow__n">03</span><h3>문맥과 반대 근거 검토</h3><p>업무 의도를 질문하고 실제 근거와 대조합니다. 상태코드·답변·미검출만으로 안전이나 수정 완료를 확정하지 않습니다.</p></li>
+        <li><span class="flow__n">04</span><h3>역할별 보고서 전달</h3><p>판정·검사 범위·미완료 사유와 역할별 보고서의 실제 위치를 전달합니다.</p></li>
+      </ol>
+      <p class="section-note"><strong>명확한 요청은 바로 진행합니다.</strong> 목적·대상이 모호할 때만 짧게 확인하며, 보고서 설명은 저장된 결과만 읽습니다.</p>
+    </div>
+  </section>
+  <section class="section" id="first-use" aria-labelledby="first-use-title">
+    <div class="wrap">
+      <div class="section__head">
+        <h2 id="first-use-title">새 노트북에서는 한 번만 준비하세요.</h2>
+        <p class="lead">플러그인 설치·등록은 한 번 필요합니다. 이후에는 준비된 실행 환경을 이어 씁니다.</p>
+      </div>
+      <div class="setup-grid">
+        <dl class="setup-list">
+          <div><dt>플러그인 등록 전</dt><dd><a href="https://github.com/bs-koo/gx-security/blob/main/README.md#설치와-배포-상태">설치·배포 상태</a>를 확인합니다. 이 페이지의 통합 요청에는 0.10.3 설치·등록이 필요합니다.</dd></div>
+          <div><dt>실행 환경 준비됨</dt><dd>직접 실행 환경 또는 준비된 Windows Docker를 사용합니다. Docker 경로에는 호스트 Python이 필요 없습니다.</dd></div>
+          <div><dt>Docker만 설치됨</dt><dd>Docker 실행 상태와 고정 Linux 이미지까지 실제로 확인합니다.</dd></div>
+          <div><dt>실행 환경 없음</dt><dd>부족 항목과 일회성 설치 경로를 안내합니다. OS 설치·이미지 pull·DB 준비를 알림 없이 진행하지 않습니다.</dd></div>
+        </dl>
+        <aside class="aside">
+          <svg class="ico" aria-hidden="true"><use href="#i-shield"/></svg>
+          <h3>준비 확인은<br>보안 통과가 아닙니다.</h3>
+          <p>취약점 DB·확정 의존성·독립 검토 등 필수 조건이 부족하면 전체 출시 판정은 미완료일 수 있습니다.</p>
+        </aside>
+      </div>
+    </div>
+  </section>
+  <section class="section" id="reports" aria-labelledby="reports-title">
+    <div class="wrap">
+      <div class="section__head">
+        <h2 id="reports-title">판정과 범위부터 읽으세요.</h2>
+        <p class="lead">건수는 검토할 후보의 수입니다. 확정 취약점으로 읽지 말고, 실행 시점·프로파일·필수 검사 완료 여부를 함께 확인하세요.</p>
+      </div>
+      <dl class="statuses" aria-label="보고서의 네 가지 판정">
+        <div><dt>PASS</dt><dd>해당 범위의 필수 검사 완료·차단 사유 없음. 전체 안전의 보증은 아닙니다.</dd></div>
+        <div class="status-block"><dt>BLOCK</dt><dd>정책상 차단 사유가 있습니다. 필요한 수정·검토를 확인합니다.</dd></div>
+        <div><dt>INCOMPLETE</dt><dd>필수 검사·입력·검토가 미완료입니다. 누락 조건을 먼저 해결합니다.</dd></div>
+        <div><dt>PASS_WITH_EXCEPTION</dt><dd>승인된 예외 포함. 적용 범위·담당·만료 조건을 확인합니다.</dd></div>
+      </dl>
+      <div class="role-grid">
+        <article class="role"><h3><svg class="ico" aria-hidden="true"><use href="#i-source"/></svg>개발자</h3><p><code>developer.md</code>에서 발견 ID·근거·수정 방향·남은 질문을 확인하고, 같은 이력과 프로파일로 재검증합니다.</p></article>
+        <article class="role"><h3><svg class="ico" aria-hidden="true"><use href="#i-file"/></svg>QA · PM</h3><p><code>report.html</code>로 범위를 공유하고, <code>qa-checklist.md</code>에 계정·리소스·취약 경로·정상 기능 확인을 기록합니다.</p></article>
+      </div>
+      <div class="report-paths">
+        <h3>보고서가 저장되는 위치</h3>
+        <dl>
+          <div><dt>직접 실행 기본 경로</dt><dd><code>.gxsec/reports/&lt;run-id&gt;/report.html</code></dd></div>
+          <div><dt>Windows Docker</dt><dd><code>.gxsec-container/report/report.html</code></dd></div>
+        </dl>
+        <p>검사 대상 프로젝트 기준입니다. <code>developer.md</code>·<code>qa-checklist.md</code>도 같은 폴더에 저장합니다. 별도 출력 경로를 지정했다면 그 경로를 사용합니다.</p>
+      </div>
+    </div>
+  </section>
+  <section class="section" id="scope" aria-labelledby="scope-title">
+    <div class="wrap">
+      <div class="section__head">
+        <h2 id="scope-title">SEF의 보안 경계를 살핍니다.</h2>
+        <p class="lead">소스에서 public·private·mixed 기반을 관측하고, 근거가 부족하면 undetermined로 남깁니다. SEF가 아니어도 일반 검사는 이어갑니다.</p>
+      </div>
+      <div class="scope-grid">
+        <div class="scope-intro">
+          <p>다섯 보안 경계와 MyBatis의 include·property·SQL 바인딩·호출 문맥을 제한된 문법 범위에서 검토합니다.</p>
+          <p><strong>문맥 분석은 검토 제안입니다.</strong> helper의 존재·기반 일치·미검출을 공식 검증·반증·출시 승인으로 바꾸지 않습니다. 동적 설정·생성 코드·배포 조건 등은 추가 검토가 필요할 수 있습니다.</p>
+        </div>
+        <dl class="boundaries" aria-label="SEF의 다섯 보안 경계">
+          <div><dt>관리자 기능의 권한</dt><dd>같은 관리자 변경을 막는 실효 권한 검사가 있는가?</dd></div>
+          <div><dt>JWT의 발급·소비 목적</dt><dd>토큰을 발급한 목적과 사용하는 목적이 일치하는가?</dd></div>
+          <div><dt>메뉴와 객체의 접근 권한</dt><dd>같은 요청에서 메뉴·객체·사용자의 귀속을 확인하는가?</dd></div>
+          <div><dt>업무 라우트의 보호 범위</dt><dd>매핑·메서드·동적 URL의 미지원·미확인 경로가 남아 있는가?</dd></div>
+          <div><dt>파일 저장소의 경계</dt><dd>경로 문자열뿐 아니라 실제 저장 경계와 실행 조건을 지키는가?</dd></div>
+        </dl>
+      </div>
+      <p class="engine-note"><strong>기본 연동: Semgrep · OSV · Gitleaks.</strong> CodeQL·ZAP 등은 선택적 경로이며 조직 실환경 검증은 별도로 필요합니다. 기본 정적 출시 점검은 능동 공격을 하지 않습니다.</p>
+    </div>
+  </section>
+  <section class="section" id="faq" aria-labelledby="faq-title">
+    <div class="wrap">
+      <h2 id="faq-title">시작 전에 자주 묻는 것</h2>
+      <div class="faq">
+        <details><summary>공개 버전을 설치하면 통합 요청을 바로 쓸 수 있나요?</summary><p>0.10.3 프리뷰 작업본의 실행기·스킬 패키지를 함께 설치·등록하면 통합 요청을 사용할 수 있습니다. 기존 설치자는 업데이트 후 세션을 다시 시작합니다. Codex는 전체 패키지를 보관하고 <a href="https://github.com/bs-koo/gx-security/blob/main/USAGE.md#codex-첫-등록--pc에서-한-번">일회성 등록 스크립트</a>로 연결합니다. 검사에는 고정 Docker 이미지 또는 검증된 직접 실행 환경을 별도로 준비해야 하며, 이미지의 자동 다운로드는 제공하지 않습니다.</p></details>
+        <details><summary>프로젝트마다 setup이나 설정 파일이 필요한가요?</summary><p>별도 setup·init·설정 생성은 필수가 아닙니다. 기존 환경·설정·이력을 재사용하며, 설정이 없으면 기본값으로 진행합니다. 조직의 필수 입력과 보호된 정책은 별도로 충족해야 합니다. 기본 Windows Docker 경로는 외부 정책·DB mount를 자동 제공하지 않습니다.</p></details>
+        <details><summary>매번 목적이나 설치 여부를 다시 묻나요?</summary><p>“출시 전에 보안 점검해줘”처럼 목적과 대상이 분명하면 진행합니다. 목적 없는 단독 호출, 여러 검사 대상이나 재검증 항목 중 선택이 필요한 경우에만 짧게 확인합니다. 같은 범위에서 이미 받은 답과 설치 선택은 반복해서 묻지 않습니다.</p></details>
+        <details><summary>“보안 점검해줘”가 서비스 공격까지 포함하나요?</summary><p>일반·출시 전 요청의 기본값은 <code>static-release</code>입니다. 실행 중인 서비스에 능동 공격 요청을 보내지 않습니다. 동적 검사, 소스 수정, 외부 전송·배포는 현재 요청과 기존 정책의 권한 범위 안에서만 수행합니다.</p></details>
+        <details><summary>보고서 설명을 요청해도 다시 검사하나요?</summary><p>저장된 결과만 읽습니다. 준비 확인·새 스캔·설치·설정 생성을 시작하지 않으며, 당시의 시각·범위·판정을 유지해 설명합니다. 결과를 찾을 수 없으면 저장 위치를 확인합니다. 과거 보고서는 현재 소스의 새 검사 결과가 아닙니다.</p></details>
+        <details><summary>후보가 사라지거나 건수가 0이면 안전한가요?</summary><p>미검출만으로 안전이나 수정 완료를 확정하지 않습니다. 지원 범위와 필수 검사 완료 여부를 확인하고, 수정 후에는 원래 발견 ID·프로파일·상태를 연결해 재검증합니다. 문맥 제안과 정식 검토·승인 기록도 구분해서 읽어야 합니다.</p></details>
+      </div>
+    </div>
+  </section>
+</main>
+<footer class="footer on-dark">
+  <div class="wrap">
+    <div class="footer__grid">
+      <div><a class="brand" href="#main"><svg class="ico" aria-hidden="true"><use href="#i-mark"/></svg>GX Security</a><p>개발자의 점검 실행부터<br>QA·PM의 근거 확인까지.</p></div>
+      <nav class="footer__links" aria-label="공개 저장소와 참고 문서">
+        <a href="https://github.com/bs-koo/gx-security"><svg class="ico" aria-hidden="true"><use href="#i-source"/></svg>GitHub 저장소</a>
+        <a href="https://github.com/bs-koo/gx-security/blob/main/README.md"><svg class="ico" aria-hidden="true"><use href="#i-book"/></svg>시작 안내 · README</a>
+        <a href="https://github.com/bs-koo/gx-security/blob/main/USAGE.md"><svg class="ico" aria-hidden="true"><use href="#i-book"/></svg>상세 사용법 · 0.10.3 프리뷰</a>
+        <a href="https://github.com/bs-koo/gx-security/blob/main/REFERENCE.md"><svg class="ico" aria-hidden="true"><use href="#i-book"/></svg>기존 전문 명령 참고서</a>
+      </nav>
+    </div>
+    <p class="footer__note">0.10.3 프리뷰 작업본 · 2026-11-10. 이 페이지의 요청문과 경로는 사용법 예시이며, 실제 사업 소스·결함 위치·검사 결과를 포함하지 않습니다.</p>
+  </div>
+</footer>
+<script>
+(() => {
+  'use strict';
+  const tabs = [...document.querySelectorAll('.host-tab')];
+  const panel = document.getElementById('request-panel');
+  const taskSelect = document.getElementById('task-select');
+  const output = document.getElementById('request-output');
+  const copyButton = document.getElementById('copy-request');
+  const feedback = document.getElementById('copy-feedback');
+  const note = document.getElementById('task-note');
+  const tasks = {
+    release: { request: '이 프로젝트를 출시 전에 보안 점검해줘.', note: '기본은 정적 출시 점검입니다. 실행 중인 서비스에 공격 요청을 보내지 않습니다.' },
+    change: { request: '이 프로젝트에서 변경한 부분을 보안 점검해줘.', note: '지정한 변경 기준을 보존합니다. 비교할 기준이 있다면 요청문에 함께 적으세요.' },
+    retest: { request: '이전 보고서의 <발견 ID> 수정 내용을 같은 프로파일과 이력으로 다시 확인해줘.', note: '<발견 ID>를 실제 보고서의 ID로 바꾸세요. 원래 실행 상태와 프로파일을 이어서 확인합니다.' },
+    report: { request: '지난 보안 점검 보고서를 설명해줘. 검사 범위와 당시 판정, 미완료 항목을 알려줘.', note: '저장된 보고서만 읽습니다. 이 요청으로 준비 확인이나 새 검사를 시작하지 않습니다.' }
+  };
+  let activeHost = 'claude';
+  let requestRevision = 0;
+  function hostName() { return activeHost === 'claude' ? 'Claude Code' : 'Codex'; }
+  function renderRequest(announce = false) {
+    requestRevision += 1;
+    const task = tasks[taskSelect.value];
+    const prefix = activeHost === 'claude' ? '/gx-security:gx-security' : '$gx-security';
+    output.value = prefix + ' ' + task.request;
+    note.textContent = task.note;
+    feedback.textContent = announce ? hostName() + ' · ' + taskSelect.options[taskSelect.selectedIndex].text + ' 예시로 변경했습니다.' : '0.10.3이 등록된 ' + hostName() + '에 붙여 넣으세요.';
+  }
+  function selectHost(tab, focus = false) {
+    activeHost = tab.dataset.host;
+    tabs.forEach(item => {
+      const selected = item === tab;
+      item.setAttribute('aria-selected', String(selected));
+      item.tabIndex = selected ? 0 : -1;
+    });
+    panel.setAttribute('aria-labelledby', tab.id);
+    renderRequest(true);
+    if (focus) tab.focus();
+  }
+  tabs.forEach((tab, index) => {
+    tab.addEventListener('click', () => selectHost(tab));
+    tab.addEventListener('keydown', event => {
+      let next;
+      if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+      if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+      if (event.key === 'Home') next = 0;
+      if (event.key === 'End') next = tabs.length - 1;
+      if (next !== undefined) { event.preventDefault(); selectHost(tabs[next], true); }
+    });
+  });
+  taskSelect.addEventListener('change', () => renderRequest(true));
+  copyButton.addEventListener('click', async () => {
+    const request = output.value;
+    const revision = requestRevision;
+    const destination = hostName();
+    try {
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(request);
+      if (revision === requestRevision) feedback.textContent = '요청 예시를 복사했습니다. 0.10.3이 등록된 ' + destination + '에 붙여 넣으세요.';
+    } catch (_) {
+      if (revision !== requestRevision) return;
+      output.focus();
+      output.select();
+      output.setSelectionRange(0, output.value.length);
+      feedback.textContent = '자동 복사하지 못했습니다. 위 요청문을 선택했습니다. Ctrl+C(맥은 ⌘C) 또는 기기의 복사 메뉴로 복사하세요.';
+    }
+  });
+  renderRequest();
+})();
+</script>
+</body>
+</html>
