@@ -74,6 +74,40 @@ trusted_approvals는 승인 대상 record_id·canonical JSON digest·kind·역�
 
 공식 release에는 clean checkout·artifact digest·보호된 CI 근거와 필수 수동 검토가 필요합니다. 기본 수동 항목은 role-matrix,sensitive-data,external-side-effects,business-logic입니다. 단순 이름 입력이나 프로젝트 내부 JSON은 승인 증거가 아닙니다.
 
+## 다운로드·배포본·CI 설정 점검
+
+기본 정적 검사에서 Java의 경로 정규화 후 파일 리소스 반환 또는 읽기를 검토 후보로 표시합니다. 검토할 때 파일의 실제 경로가 허용 디렉터리에 있고 경계 확인이 실패하면 읽기 전에 접근을 거부하는지 확인합니다.
+
+저장소에 GitHub Actions 워크플로, 선언형 `Jenkinsfile`, 또는 `jenkins.yml`·`jenkins-casc.yml`(각 `.yaml` 포함)이 있으면 `pipeline` 점검을 실행합니다. 워크플로의 SHA 미고정 참조, 과도한 권한, 신뢰되지 않은 PR 코드 체크아웃과 입력 표현식, Jenkins의 파이프라인 전역 자격증명과 인증 없는 권한 설정을 검토 후보로 남깁니다. CI 관리 화면과 공유 라이브러리에만 있는 설정, Jenkins 설치 버전·플러그인·운영 인증 정책은 별도 운영 증거가 필요합니다. [GitHub Actions 보안 가이드](https://docs.github.com/en/actions/reference/security/secure-use) · [Jenkins 자격증명과 권한 관리](https://www.jenkins.io/doc/book/security/credentials/)
+
+JAR·WAR·ZIP 배포 파일은 `--policy`의 보호된 `artifact_secrets`에 연결합니다. 운영용 `.env`와 선택한 AES 키, DB 비밀번호, 설정 복호화 비밀번호의 평문 값을 검사합니다. 변수 참조나 `ENC(...)` 자체는 평문으로 분류하지 않으며, 평문 기본값은 후보로 표시합니다. 보고서는 아카이브 내 순번과 키 유형만 보존합니다. 파싱할 수 없는 설정, 불일치한 파일 해시, 아카이브 한도 초과는 미완료입니다.
+
+정책에 다음 구조를 사용합니다. 꺾쇠 항목은 조직 CI에서 생성한 값으로 채웁니다.
+
+```json
+{
+  "required_checks": ["artifact-secrets"],
+  "artifact_secrets": {
+    "id": "deployment-archive",
+    "source_revision": "<검사 입력의 source.revision>",
+    "artifact": {
+      "path": "/trusted/artifact.zip",
+      "sha256": "<배포 파일의 SHA-256>"
+    }
+  },
+  "trusted_approvals": [
+    {
+      "record_id": "deployment-archive",
+      "kind": "artifact-secret-scan",
+      "roles": ["protected-ci"],
+      "digest": "<artifact_secrets 기록 전체의 canonical JSON SHA-256>"
+    }
+  ]
+}
+```
+
+Windows 실행기는 `-Policy <보호 정책 파일> -Artifact <배포 파일>`로 두 파일을 연결합니다. 직접 실행할 때는 `artifact.path`에 소스와 결과 폴더와 분리된 절대 파일 경로를 사용합니다. 정책의 `required_checks`에 `artifact-secrets`를 지정하면 배포 파일을 제출하지 않은 실행도 미완료입니다. 공식 `release`에서는 정책의 `release_evidence.artifact_digest`를 같은 배포 파일의 SHA-256에 연결합니다.
+
 ## 권한과 조치
 
 개발자가 수정·분석·근거 초안을 작성하고 QA/독립 기술 검토자가 시나리오와 적용 불가를 확인합니다. High/Critical 반증에는 security-reviewer 역할이, 위험 수용에는 security-owner+project-owner 역할이 필요합니다. 역할은 보호된 승인 절차에서 매핑합니다.

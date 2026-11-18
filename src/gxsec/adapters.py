@@ -991,6 +991,30 @@ def _run_snapshot_checks(source, config, inventory, profile):
         checks.append(redact(check))
         findings.extend(redact(items))
     from .optional import ENGINES, run_optional_checks
+    from .pipeline import run_pipeline_check
+    from .artifact_secrets import run_artifact_secret_check
+    trusted = config.get('_trusted_policy') or {}
+    for check_id, runner in (
+        ('pipeline', lambda: run_pipeline_check(source, inventory)),
+        ('artifact-secrets', lambda: run_artifact_secret_check(config.get('_source_boundary', source), inventory, trusted, profile)),
+    ):
+        try:
+            with phase('engine-' + check_id):
+                check, items = runner()
+        except BudgetExceeded as exc:
+            check, items = make_check(check_id, errors=[exc.diagnostic]), []
+        if check is not None:
+            if inventory.get('errors'):
+                check['status'] = 'incomplete'
+                check['errors'].append({'type': 'source_inventory_incomplete'})
+            check['coverage']['signature'] = content_hash({
+                'id': check_id, 'files': check['coverage']['files'],
+                'exclusions': inventory.get('exclusions', []),
+                'artifact_digest': check['coverage'].get('artifact_digest'),
+                'engine': check['engine'],
+            })
+            checks.append(redact(check))
+            findings.extend(redact(items))
     try:
         with phase('engine-optional'):
             optional_checks, optional_findings = run_optional_checks(source, config, profile)

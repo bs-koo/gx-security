@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Java 다운로드의 경로 경계 검토 후보와 배포 아카이브의 .env·SEF AES 키 검사, GitHub Actions·Jenkins 설정 검사를 추가.
 - 전문 검사에 승인 숫자 IP 연결·원 Host/SNI 검증과 요청 수·절대 시간·응답 wire/decoded·누적 용량 제한을 적용. 로그인·대조군·새 세션이 같은 예산을 사용하며, 다른 원점의 자격 재사용·자동 이동·미지원 HTTPS proxy를 차단. loopback HTTP proxy는 숫자 CONNECT로 HTTP/HTTPS 대상을 경유.
 - 한도 초과를 미확정 사유로 보존하고 연결 정리 오류가 원래 오류를 덮어쓰지 않도록 보수. 실제 TLS·프록시 시험을 CI에서도 실행하도록 합성 인증서 생성 의존성을 명시.
 - 전문 HTTP 요청의 환경 proxy·netrc·환경 CA 상속을 제거하고 명시적인 loopback Burp 경유만 검증. 로그인 실패 세션 정리와 감사 preflight의 검증 순서·기본 포트·남은 proxy 설정도 보수.

@@ -24,6 +24,11 @@
       "type": "string",
       "minLength": 1
     },
+    "required_checks": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
     "required_reviews": {
       "type": "array",
       "uniqueItems": true,
@@ -62,7 +67,8 @@
               "not-applicable",
               "release-evidence",
               "dependency-provenance",
-              "framework-baseline"
+              "framework-baseline",
+              "artifact-secret-scan"
             ]
           },
           "roles": {
@@ -95,6 +101,23 @@
           "maxItems": 5,
           "description": "Omission requires all five supported boundaries. Missing controls remain unobserved, not automatically not-applicable.",
           "items": {"enum": ["admin-boundary", "jwt-purpose", "menu-object-association", "route-boundary", "file-confinement"]}
+        }
+      }
+    },
+    "artifact_secrets": {
+      "type": "object",
+      "description": "Approved deployment ZIP, JAR or WAR bound to the inspected source revision.",
+      "required": ["id", "source_revision", "artifact"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "source_revision": {"type": "string", "minLength": 1},
+        "artifact": {
+          "type": "object",
+          "required": ["path", "sha256"],
+          "properties": {
+            "path": {"type": "string", "minLength": 1},
+            "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+          }
         }
       }
     },

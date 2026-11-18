@@ -17,7 +17,7 @@ rules:
       confidence: needs-context
     paths:
       include: [".env", ".env.*", "*.env"]
-    pattern-regex: '(?im)^\s*(?:export\s+)?[\w]*(?:password|passwd|pwd|secret|api_?key|access_?token|auth_?token)[\w]*\s*=\s*["'']?(?!\$)(?!["'']?\s*(?:#|$))[^\s"'']{4,}'
+    pattern-regex: '(?im)^\s*(?:export\s+)?(?:[\w]*(?:password|passwd|pwd|secret|api_?key|access_?token|auth_?token)[\w]*|CRYPTO_AES_KEY_V[0-9]+|CRYPTO_HASH_SALT)\s*=\s*["'']?(?!\$|ENC\()(?!["'']?\s*(?:#|$))[^\s"'']{4,}'
 
   - id: sqisoft-hardcoded-credential-frontend
     languages: [generic]
