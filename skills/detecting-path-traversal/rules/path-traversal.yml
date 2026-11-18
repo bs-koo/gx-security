@@ -7,6 +7,30 @@
 rules:
   # ───────────────────────── spring-modern ─────────────────────────
 
+  - id: sqisoft-download-lexical-boundary
+    languages: [java]
+    severity: WARNING
+    message: >-
+      정규화한 경로가 파일 전송 또는 읽기에 사용됩니다. 해당 경로가 승인 디렉터리의
+      실제 경계 안인지, 경계 검증 실패 시 읽기가 거부되는지 확인하세요.
+    metadata:
+      severity: High
+      cwe: "CWE-22"
+      owasp: "A01:2021"
+      confidence: needs-context
+    patterns:
+      - pattern-inside: |
+          Path $FILE = $ROOT.resolve($NAME).normalize();
+          ...
+      - pattern-either:
+          - pattern: new FileSystemResource($FILE)
+          - pattern: new UrlResource($FILE.toUri())
+          - patterns:
+              - pattern: Files.$READ($FILE, ...)
+              - metavariable-regex:
+                  metavariable: $READ
+                  regex: '^(?:newInputStream|readAllBytes|readString|copy)$'
+
   - id: sqisoft-spring-requestparam-to-path
     languages: [java]
     severity: WARNING

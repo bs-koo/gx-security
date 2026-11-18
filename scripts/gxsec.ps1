@@ -11,6 +11,7 @@ param(
     [string]$Record,
     [string]$Policy,
     [string]$Database,
+    [string]$Artifact,
     [string]$ReviewRecords,
     [string]$ExpectedFramework,
     [string]$TemporarySize='512m',
@@ -234,6 +235,7 @@ if ($PSBoundParameters.ContainsKey('Record') -and
 }
 if (($PSBoundParameters.ContainsKey('Policy') -and $Action -notin @('check','release','retest')) -or
         ($PSBoundParameters.ContainsKey('Database') -and -not $PSBoundParameters.ContainsKey('Policy')) -or
+        ($PSBoundParameters.ContainsKey('Artifact') -and -not $PSBoundParameters.ContainsKey('Policy')) -or
         ($PSBoundParameters.ContainsKey('ReviewRecords') -and -not $PSBoundParameters.ContainsKey('Policy')) -or
         ($PSBoundParameters.ContainsKey('ExpectedFramework') -and
             ($ExpectedFramework -cne 'SEF' -or $Action -notin @('check','release','retest')))) {
@@ -293,6 +295,15 @@ if ($PSBoundParameters.ContainsKey('Database')) {
                 (Test-WithinPath $resolvedOutput $resolvedDatabase)) { throw 'Invalid approved database' }
     }
     catch { Stop-Preparation 'invalid_database' 'The database must be a separate existing directory without reparse entries or mount separators.' 'Select the approved snapshot outside source and output; set sca.offline_db to /advisories in the policy.' }
+}
+if ($PSBoundParameters.ContainsKey('Artifact')) {
+    try {
+        $resolvedArtifact = [IO.Path]::GetFullPath($Artifact)
+        if ($resolvedArtifact.Contains(',') -or -not (Test-Path -LiteralPath $resolvedArtifact -PathType Leaf) -or
+                (Test-ReparseComponents $resolvedArtifact) -or (Test-WithinPath $resolvedArtifact $resolvedSource) -or
+                (Test-WithinPath $resolvedArtifact $resolvedOutput)) { throw 'Invalid deployment artifact' }
+    }
+    catch { Stop-Preparation 'invalid_artifact' 'The deployment archive must be an existing file outside source and output, without reparse entries or mount separators.' 'Select the approved artifact; set artifact_secrets.artifact.path to /trusted/artifact.zip in the policy.' }
 }
 if ($PSBoundParameters.ContainsKey('ReviewRecords')) {
     try {
@@ -386,6 +397,9 @@ if ($PSBoundParameters.ContainsKey('Policy')) {
 }
 if ($PSBoundParameters.ContainsKey('Database')) {
     $dockerArguments += @('--mount',"type=bind,source=$resolvedDatabase,target=/advisories,readonly")
+}
+if ($PSBoundParameters.ContainsKey('Artifact')) {
+    $dockerArguments += @('--mount',"type=bind,source=$resolvedArtifact,target=/trusted/artifact.zip,readonly")
 }
 if ($PSBoundParameters.ContainsKey('ReviewRecords')) {
     $dockerArguments += @('--mount',"type=bind,source=$resolvedReviews,target=/trusted/reviews.json,readonly")

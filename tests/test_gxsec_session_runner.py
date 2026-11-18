@@ -274,6 +274,31 @@ def test_database_cannot_overlap_writable_source_or_output(case, location):
     assert calls(case) == []
 
 
+def test_artifact_is_mounted_read_only_with_protected_policy(case):
+    policy = case[0].parent / 'approved.json'
+    policy.write_text('{}', encoding='utf-8')
+    artifact = case[0].parent / 'packaged app.war'
+    artifact.write_bytes(b'fixture')
+    result = invoke(case, '-Action', 'release', '-Policy', str(policy), '-Artifact', str(artifact), '-Json')
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = calls(case)[-1]
+    assert f'type=bind,source={artifact},target=/trusted/artifact.zip,readonly' in run
+    assert run[run.index('--policy') + 1] == '/trusted/policy.json'
+
+
+@pytest.mark.parametrize('location', ['source', 'output'])
+def test_artifact_cannot_use_input_or_writable_results(case, location):
+    policy = case[0].parent / 'approved.json'
+    policy.write_text('{}', encoding='utf-8')
+    output = case[0].parent / 'results'
+    output.mkdir()
+    artifact = (case[0] if location == 'source' else output) / 'archive.war'
+    artifact.write_bytes(b'fixture')
+    incomplete(invoke(case, '-Action', 'release', '-Output', str(output), '-Policy', str(policy),
+                      '-Artifact', str(artifact), '-Json'), 'invalid_artifact')
+    assert calls(case) == []
+
+
 def test_check_preserves_base_as_one_argument(case):
     result = invoke(case, '-Action', 'check', '-Base', 'feature/demo;literal')
     assert result.returncode == 0, result.stdout + result.stderr

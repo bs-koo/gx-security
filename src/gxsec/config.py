@@ -81,7 +81,7 @@ def load_config(path: Path) -> dict:
         raise ValueError('Unsupported project schema_version')
     if raw.get('data_mode', 'local-only') != 'local-only':
         raise ValueError('Project config cannot authorize external data transfer')
-    forbidden = {'policy', 'trusted_approvals', 'approvals', 'exceptions', 'trusted_scope', 'trusted_evidence', 'organization_policy', 'reviews', 'framework_baseline', 'framework_baselines', 'framework_policy', '_trusted_policy', '_credentials', '_state_dir', '_inventory', '_scan_scope', '_sca_runtime', '_source_boundary', '_snapshot_object', '_snapshot_provenance'}
+    forbidden = {'policy', 'trusted_approvals', 'approvals', 'exceptions', 'trusted_scope', 'trusted_evidence', 'organization_policy', 'reviews', 'framework_baseline', 'framework_baselines', 'framework_policy', 'artifact_secrets', '_trusted_policy', '_credentials', '_state_dir', '_inventory', '_scan_scope', '_sca_runtime', '_source_boundary', '_snapshot_object', '_snapshot_provenance'}
     if forbidden.intersection(raw):
         raise ValueError('Trust and approvals must come from an independent protected policy input')
     if not isinstance(raw.get('project', {}), dict):

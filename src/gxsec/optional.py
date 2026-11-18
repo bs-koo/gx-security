@@ -134,6 +134,7 @@ def _snapshot_file(record, source, destination, budget):
         metadata = os.fstat(original.fileno())
         _require(stat.S_ISREG(metadata.st_mode), 'Snapshot input is not a regular file')
         for block in iter(lambda: original.read(1024 * 1024), b''):
+            checkpoint()
             _require(len(block) <= budget['remaining'], 'Approved private snapshot disk quota exceeded')
             budget['remaining'] -= len(block)
             digest.update(block)
